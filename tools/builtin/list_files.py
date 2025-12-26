@@ -5,7 +5,7 @@ import fnmatch
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
+from prompts.tools_prompts.list_file_prompt import LS_prompt
 from ..base import Tool, ToolParameter
 
 
@@ -43,11 +43,7 @@ class ListFilesTool(Tool):
             project_root: 项目根目录，用于沙箱限制
             working_dir: 工作目录，用于解析相对路径
         """
-        description = (
-            "Lists files and directories with pagination. Supports relative or absolute paths within the project. "
-            "Parameters: path (default '.'), offset (>=0), limit (1-200), include_hidden (bool), ignore (glob list). "
-            "Use this to explore structure; avoid huge listings by paging."
-        )
+        description = LS_prompt
         super().__init__(name=name, description=description)
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")

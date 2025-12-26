@@ -37,10 +37,7 @@ class CodeAgent(Agent):
         )
         # 注册 Glob/search_files_by_name 工具
         self.tool_registry.register_tool(SearchFilesByNameTool(project_root=self.project_root))
-        self.tool_registry.register_tool(
-            SearchFilesByNameTool(name="search_files_by_name", project_root=self.project_root)
-        )
-        # 注册 Grep/search_code 工具
+        # 注册 Grep 工具
         self.tool_registry.register_tool(GrepTool(project_root=self.project_root))
         
         # 【核心点】组合 ReActEngine
@@ -59,8 +56,8 @@ class CodeAgent(Agent):
         """
         show_raw = kwargs.pop("show_raw", False)
 
-        self.logger.info("CodeAgent start")
-        self.logger.info("input_text=%s", input_text)
+        # self.logger.info("CodeAgent start")
+        # self.logger.info("input_text=%s", input_text)
 
         history_lines = "\n".join(
             f"{m.role}: {m.content}" for m in self.get_history()

@@ -5,7 +5,7 @@ import time
 import json
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Optional
-
+from prompts.tools_prompts.glob_prompt import glob_prompt
 from ..base import Tool, ToolParameter
 
 
@@ -49,10 +49,7 @@ class SearchFilesByNameTool(Tool):
             name: 工具名称，默认为 "Glob"
             project_root: 项目根目录，用于沙箱限制
         """
-        description = (
-            "Find files using glob patterns (e.g., 'src/**/*.ts'). "
-            "Matches against relative paths from the search root (path). Returns files only."
-        )
+        description = glob_prompt
         super().__init__(name=name, description=description)
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")

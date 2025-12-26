@@ -18,7 +18,18 @@ class ReActEngine:
 
     DEFAULT_PROMPT_TEMPLATE = """你是一个具备推理和行动能力的AI助手。你需要通过多轮“思考->调用工具->观察->再思考”完成任务。
 
-## 可用工具
+## 可用工具（带参数定义和用法示例）
+下方列出了所有可用工具的：
+- 工具描述
+- 工具用法
+- 参数列表（名称 / 类型 / 是否必填 / 默认值）
+- 调用示例（ToolName[{{...}}]）
+
+调用工具时必须遵守以下规则：
+1. Action 行格式固定为：Action: 工具名[JSON参数]
+2. JSON参数必须是一个合法的 JSON 对象（或数组），键名必须来自该工具的参数列表，不要发明新字段。
+3. 如不确定如何调用某个工具，先查看对应的 Parameters 和 Examples，而不要凭空猜测。
+以下是可用工具列表：
 {tools}
 
 ## 输出格式（必须严格遵守）
@@ -32,6 +43,7 @@ Action 必须单行；如需换行请使用 \\n。
 - Action 里 **工具参数必须是合法 JSON**（对象或数组）。
 - 每次只做一个动作；拿到 Observation 后再继续下一步。
 - 当信息不足时继续调用工具；足够回答时再 Finish。
+- 结束任务时必须使用：Action: Finish[最终答案]（单独输出 Finish[...] 视为不合规）。
 
 ## 任务背景
 {context}
@@ -109,6 +121,13 @@ Question: {question}
                 print()
 
             if not action:
+                finish_payload = self._extract_finish_direct(str(response_text))
+                if finish_payload is not None:
+                    if self.verbose:
+                        print()
+                        print(f"✅ Finish: {finish_payload}")
+                        print()
+                    return finish_payload
                 self._record_observation("⚠️ 未解析到 Action（请模型严格输出 Thought/Action）。")
                 continue
 
@@ -196,6 +215,16 @@ Question: {question}
         last = spans[-1]
         content = text[last.end():].strip()
         return content if content else None
+
+    def _extract_finish_direct(self, text: str) -> Optional[str]:
+        """
+        兜底识别裸 Finish[...]（无 Action 前缀）。
+        """
+        matches = list(re.finditer(r"^Finish\[(.*)\]\s*$", text, flags=re.MULTILINE | re.DOTALL))
+        if not matches:
+            return None
+        payload = matches[-1].group(1).strip()
+        return payload if payload else ""
 
     def _parse_tool_call(self, action: str) -> Tuple[Optional[str], str]:
         m = re.match(r"^([A-Za-z0-9_\-]+)\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)

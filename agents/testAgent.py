@@ -8,7 +8,7 @@ from core.llm import HelloAgentsLLM
 from core.config import Config
 from utils import setup_logger
 from tools.registry import ToolRegistry
-from tools.builtin.calculator import CalculatorTool
+
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
 from tools.builtin.search_code import GrepTool
@@ -37,14 +37,10 @@ class TestAgent(Agent):
         self.tool_registry = tool_registry or ToolRegistry()
         self.project_root = project_root
         # 给 TestAgent 注册计算器工具
-        self.tool_registry.register_tool(CalculatorTool())
         self.tool_registry.register_tool(
             ListFilesTool(project_root=self.project_root, working_dir=self.project_root)
         )
         self.tool_registry.register_tool(SearchFilesByNameTool(project_root=self.project_root))
-        self.tool_registry.register_tool(
-            SearchFilesByNameTool(name="search_files_by_name", project_root=self.project_root)
-        )
         self.tool_registry.register_tool(GrepTool(project_root=self.project_root))
         # 以 ReActEngine 作为核心
         self.engine = ReActEngine(

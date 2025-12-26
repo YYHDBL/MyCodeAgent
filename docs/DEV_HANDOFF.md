@@ -10,7 +10,7 @@
 - `tools/builtin/`：内置工具
   - `list_files.py`：`ListFilesTool` (LS) - 目录浏览工具。
   - `search_files_by_name.py`：`SearchFilesByNameTool` (Glob) - 文件搜索工具。
-  - `search_code.py`：`GrepTool` (search_code) - 代码内容搜索工具。
+  - `search_code.py`：`GrepTool` (Grep) - 代码内容搜索工具。
   - `calculator.py`：`CalculatorTool` - 数学计算工具。
 - `scripts/`：交互脚本（`chat_test_agent.py`）。
 - `prompts/tools_prompts/`：工具提示词（`list_file_prompt.md`、`glob_prompt.md`、`grep_prompt.md`）。
@@ -22,8 +22,8 @@
 
 2. **工具体系完善**
    - **LS（list_files）**：支持安全目录浏览、分页、隐藏文件控制、软链安全展示。
-   - **Glob（search_files_by_name）**：支持 glob 模式搜索、双熔断（访问数+时间）、确定性结果。
-   - **Grep（search_code）**：支持正则内容搜索、rg 优先、mtime 排序与超时保护。
+   - **Glob（tool name: Glob）**：支持 glob 模式搜索、双熔断（访问数+时间）、确定性结果。
+   - **Grep（tool name: Grep）**：支持正则内容搜索、rg 优先、mtime 排序与超时保护。
    - **Calculator（python_calculator）**：支持安全的数学表达式计算，使用 AST 解析。
    - 所有工具统一由框架注入 `project_root`，避免各自猜测根目录导致沙箱不一致。
    - 工具通过 `ToolRegistry` 统一管理，支持 Tool 对象和函数两种注册方式。
@@ -125,7 +125,7 @@
 
 ---
 
-## 2) Glob 工具（search_files_by_name）
+## 2) Glob 工具（tool name: Glob）
 **文件**：`tools/builtin/search_files_by_name.py`
 
 ### 设计目标
@@ -203,7 +203,7 @@
 
 ---
 
-## 4) Grep 工具（search_code）
+## 4) Grep 工具（tool name: Grep）
 **文件**：`tools/builtin/search_code.py`
 
 ### 设计目标

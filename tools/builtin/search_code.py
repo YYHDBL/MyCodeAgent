@@ -1,4 +1,4 @@
-"""代码内容搜索工具 (search_code / GrepTool)"""
+"""代码内容搜索工具 (GrepTool)"""
 
 import json
 import os
@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, TypedDict
-
+from prompts.tools_prompts.grep_prompt import grep_prompt
 from ..base import Tool, ToolParameter
 
 
@@ -50,10 +50,8 @@ class GrepTool(Tool):
     # 搜索超时时间（秒）
     TIMEOUT_SEC = 2.0
 
-    def __init__(self, name: str = "search_code", project_root: Optional[Path] = None):
-        description = (
-            "Search file contents using regex. Returns matches sorted by file modification time (newest first)."
-        )
+    def __init__(self, name: str = "Grep", project_root: Optional[Path] = None):
+        description = grep_prompt
         super().__init__(name=name, description=description)
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -361,8 +359,8 @@ class GrepTool(Tool):
                     continue
 
                 # 检查超时
-                # if self._is_timed_out(start_time):
-                if False:
+                if self._is_timed_out(start_time):
+                # if False:
                     return matches, "timeout"
 
                 rel_match_path = Path(current_root).resolve().relative_to(abs_root) / filename
@@ -388,8 +386,7 @@ class GrepTool(Tool):
                 except (OSError, UnicodeError):
                     continue
 
-                # if self._is_timed_out(start_time):
-                if False:
+                if self._is_timed_out(start_time):
                     return matches, "timeout"
 
         return matches, aborted_reason
