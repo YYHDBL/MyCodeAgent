@@ -125,7 +125,7 @@ Question: {question}
                 if finish_payload is not None:
                     if self.verbose:
                         print()
-                        print(f"✅ Finish: {finish_payload}")
+                        print("✅ Finish")
                         print()
                     return finish_payload
                 self._record_observation("⚠️ 未解析到 Action（请模型严格输出 Thought/Action）。")
@@ -136,7 +136,7 @@ Question: {question}
                 final_answer = self._parse_bracket_payload(action)
                 if self.verbose:
                     print()
-                    print(f"✅ Finish: {final_answer}")
+                    print("✅ Finish")
                     print()
                 return final_answer
 

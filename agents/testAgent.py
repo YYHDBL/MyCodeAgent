@@ -107,6 +107,7 @@ class TestAgent(Agent):
         assistant_message = Message(content=response_text, role="assistant")
         self.add_message(assistant_message)
 
-        self.logger.info("response=%s", response_text)
+        # Avoid duplicating full assistant output in stdout; keep detailed content at DEBUG.
+        self.logger.debug("response=%s", response_text)
         self.logger.info("history_size=%d", len(self.get_history()))
         return response_text

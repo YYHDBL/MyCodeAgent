@@ -77,9 +77,12 @@ def main() -> None:
                 use_react=args.use_react,
                 show_raw=args.show_raw,
             )
-        print(f"assistant> {response}")
+        print("\n=== assistant ===")
+        print(response)
+        print("====================")
 
         if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
+            print()
             print("----- raw response -----")
             print(json.dumps(agent.last_response_raw, ensure_ascii=False, indent=2))
             print("------------------------")
