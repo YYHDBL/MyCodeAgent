@@ -1,16 +1,12 @@
-"""智能文件浏览器工具 (list_files / LS)
-
-遵循《通用工具响应协议》，返回标准化结构。
-"""
+"""智能文件浏览器工具 (list_files / LS)"""
 
 import os
 import fnmatch
-import time
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
 from prompts.tools_prompts.list_file_prompt import LS_prompt
-from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
+from ..base import Tool, ToolParameter
 
 
 class ListFilesTool(Tool):
@@ -47,19 +43,13 @@ class ListFilesTool(Tool):
             project_root: 项目根目录，用于沙箱限制
             working_dir: 工作目录，用于解析相对路径
         """
+        description = LS_prompt
+        super().__init__(name=name, description=description)
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
-        
-        # 调用基类初始化（注入 project_root 和 working_dir）
-        super().__init__(
-            name=name,
-            description=LS_prompt,
-            project_root=project_root,
-            working_dir=working_dir if working_dir else project_root,
-        )
-        
-        # 保持向后兼容的内部变量
-        self._root = self._project_root
+        self._root = Path(project_root).resolve()
+        # 工作目录：用于解析相对路径（默认为 cwd）
+        self._working_dir = Path(working_dir).resolve() if working_dir else Path.cwd().resolve()
 
     def run(self, parameters: Dict[str, Any]) -> str:
         """
@@ -74,13 +64,8 @@ class ListFilesTool(Tool):
                 - ignore: 要忽略的 glob 模式列表（默认为空）
 
         Returns:
-            JSON 格式的响应字符串（遵循《通用工具响应协议》）
+            格式化的文件列表字符串
         """
-        start_time = time.monotonic()
-        
-        # 保存原始参数用于 context.params_input
-        params_input = dict(parameters)
-        
         path = parameters.get("path", ".")
         offset = parameters.get("offset", 0)
         limit = parameters.get("limit", 100)
@@ -89,86 +74,43 @@ class ListFilesTool(Tool):
 
         # 参数校验
         if not isinstance(offset, int) or offset < 0:
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message="offset must be a non-negative integer.",
-                params_input=params_input,
-            )
+            return self._error_response("Error: offset must be a non-negative integer.")
         if not isinstance(limit, int) or limit < 1 or limit > 200:
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message="limit must be an integer between 1 and 200.",
-                params_input=params_input,
-            )
+            return self._error_response("Error: limit must be an integer between 1 and 200.")
         if not isinstance(ignore, list):
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message="ignore must be a list of glob patterns.",
-                params_input=params_input,
-            )
+            return self._error_response("Error: ignore must be a list of glob patterns.")
 
         # 路径解析与沙箱校验
         try:
             input_path = Path(path)
             if input_path.is_absolute():
+                # 绝对路径直接解析
                 target = input_path.resolve()
             else:
+                # 相对路径基于 working_dir 而非 root
                 target = (self._working_dir / input_path).resolve()
 
-            # 沙箱安全检查
+            # 仅允许项目根目录内路径（沙箱安全检查）
             target.relative_to(self._root)
         except ValueError:
-            return self.create_error_response(
-                error_code=ErrorCode.ACCESS_DENIED,
-                message="Access denied. Path must be within the project root.",
-                params_input=params_input,
-            )
+            return self._error_response("Error: Access denied. Path must be within the project root.")
         except OSError as e:
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message=f"Invalid path - {e}",
-                params_input=params_input,
-            )
-
-        # 计算解析后的相对路径
-        rel_path = "."
-        try:
-            rel_path = str(target.relative_to(self._root)) or "."
-        except Exception:
-            rel_path = str(target)
+            return self._error_response(f"Error: Invalid path - {e}")
 
         if not target.exists():
-            return self.create_error_response(
-                error_code=ErrorCode.NOT_FOUND,
-                message=f"Path '{path}' does not exist.",
-                params_input=params_input,
-                path_resolved=rel_path,
-            )
+            return self._error_response(f"Error: Path '{path}' does not exist.")
         if not target.is_dir():
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message=f"'{path}' is a file, not a directory. Use 'Read' tool to view its content.",
-                params_input=params_input,
-                path_resolved=rel_path,
+            return self._error_response(
+                f"Error: '{path}' is a file, not a directory. Use 'read_file' to view its content."
             )
 
         # 列出目录内容
         try:
             items = self._list_items(target, include_hidden, ignore)
         except PermissionError:
-            return self.create_error_response(
-                error_code=ErrorCode.ACCESS_DENIED,
-                message=f"Permission denied accessing '{path}'.",
-                params_input=params_input,
-                path_resolved=rel_path,
-            )
+            return self._error_response(f"Error: Permission denied accessing '{path}'.")
         except OSError as e:
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Failed to list directory - {e}",
-                params_input=params_input,
-                path_resolved=rel_path,
-            )
+            return self._error_response(f"Error: Failed to list directory - {e}")
 
         # 计算分页范围
         total = len(items)
@@ -176,15 +118,18 @@ class ListFilesTool(Tool):
         end = min(offset + limit, total)
         page_items = items[start:end]
 
+        # 计算相对路径用于显示
+        rel_path = "."
+        try:
+            rel_path = str(target.relative_to(self._root)) or "."
+        except Exception:
+            rel_path = str(target)
+
         # 统计各类条目数量
         dirs_count = sum(1 for i in items if i["type"] == "dir")
         files_count = sum(1 for i in items if i["type"] == "file")
         links_count = sum(1 for i in items if i["type"] == "link")
 
-        # 计算耗时
-        time_ms = int((time.monotonic() - start_time) * 1000)
-
-        # 构建响应
         return self._format_response(
             rel_path=rel_path,
             total=total,
@@ -194,8 +139,6 @@ class ListFilesTool(Tool):
             start=start,
             end=end,
             items=page_items,
-            params_input=params_input,
-            time_ms=time_ms,
         )
 
     def _list_items(self, target: Path, include_hidden: bool, ignore: List[str]):
@@ -208,36 +151,36 @@ class ListFilesTool(Tool):
             ignore: 要忽略的 glob 模式列表
 
         Returns:
-            包含文件信息的字典列表，每个字典包含 name, type, path, is_dir 键
+            包含文件信息的字典列表，每个字典包含 name, type, display, is_dir 键
         """
         items = []
         with os.scandir(target) as it:
             for entry in it:
                 name = entry.name
                 # 条目相对于 root / target 的路径（用于 ignore glob 匹配）
-                # 注意：不使用 resolve()，保留原始路径，避免 symlink 指向目标路径
                 try:
-                    entry_path_obj = Path(entry.path)
-                    # 不使用 resolve()，直接计算相对路径
-                    entry_rel_root = entry_path_obj.relative_to(self._root).as_posix()
+                    entry_rel_root = Path(entry.path).resolve().relative_to(self._root).as_posix()
                 except Exception:
                     entry_rel_root = name
                 entry_rel_target = Path(name).as_posix()
 
                 # include_hidden=False 时，跳过隐藏文件和默认忽略列表
                 if not include_hidden:
+                    # 跳过以点开头的隐藏文件/目录
                     if name.startswith("."):
                         continue
+                    # 跳过默认忽略的目录/文件
                     if name in self.DEFAULT_IGNORE:
                         continue
 
-                # 用户自定义 ignore 模式匹配
+                # 用户自定义 ignore 模式匹配（支持相对路径和 basename）
                 if ignore and self._matches_ignore(name, entry_rel_root, entry_rel_target, ignore):
                     continue
 
                 is_symlink = entry.is_symlink()
 
-                # 判断是否为目录
+                # 判断是否为目录：
+                # 对于 symlink，需要 resolve 后判断（同时验证沙箱）
                 if is_symlink:
                     is_dir = self._symlink_points_to_dir_safe(entry)
                 else:
@@ -251,13 +194,23 @@ class ListFilesTool(Tool):
                 else:
                     item_type = "file"
 
-                # 条目的相对路径（用于 data.entries）
-                entry_path = entry_rel_root
+                # 构建显示名称
+                display_name = name
+                if is_symlink:
+                    display_name = f"{name}@"  # 符号链接标记
+                    if is_dir:
+                        display_name += "/"
+                elif is_dir:
+                    display_name = f"{name}/"
+
+                # 添加符号链接目标信息
+                if is_symlink:
+                    display_name = f"{display_name} -> {self._format_symlink_target(entry)}"
 
                 items.append({
                     "name": name,
                     "type": item_type,
-                    "path": entry_path,
+                    "display": display_name,
                     "is_dir": is_dir,
                 })
 
@@ -266,32 +219,83 @@ class ListFilesTool(Tool):
         return items
 
     def _matches_ignore(self, name: str, rel_root: str, rel_target: str, patterns: List[str]) -> bool:
-        """检查条目是否匹配任一 ignore 模式"""
+        """
+        检查条目是否匹配任一 ignore 模式（支持相对路径和 basename）
+
+        Args:
+            name: 文件/目录名称
+            rel_root: 相对于项目根目录的路径
+            rel_target: 相对于目标目录的路径
+            patterns: glob 模式列表
+
+        Returns:
+            如果匹配任一模式则返回 True，否则返回 False
+        """
         for pattern in patterns:
+            # 如果 pattern 包含路径分隔符，则按相对路径匹配
             if "/" in pattern or "\\" in pattern:
                 if fnmatch.fnmatch(rel_root, pattern) or fnmatch.fnmatch(rel_target, pattern):
                     return True
+                # 也支持 **/ 开头的递归模式
                 if pattern.startswith("**/"):
                     if fnmatch.fnmatch(name, pattern[3:]):
                         return True
                     if fnmatch.fnmatch(rel_root, pattern[3:]) or fnmatch.fnmatch(rel_target, pattern[3:]):
                         return True
             else:
+                # 仅按 basename 匹配
                 if fnmatch.fnmatch(name, pattern):
                     return True
         return False
 
     def _symlink_points_to_dir_safe(self, entry) -> bool:
-        """安全检查 symlink 是否指向目录（必须在沙箱内）"""
+        """
+        安全检查 symlink 是否指向目录（必须在沙箱内）
+
+        Args:
+            entry: 目录条目对象
+
+        Returns:
+            如果 symlink 指向目录且在沙箱内则返回 True，否则返回 False
+        """
         try:
             resolved = Path(entry.path).resolve()
+            # 验证在 root 内
             resolved.relative_to(self._root)
             return resolved.is_dir()
         except (ValueError, OSError):
+            # 指向沙箱外或无法解析，视为非目录
             return False
 
-    def get_parameters(self) -> List[ToolParameter]:
-        """获取工具参数定义"""
+    def _format_symlink_target(self, entry) -> str:
+        """
+        格式化 symlink 目标显示
+
+        Args:
+            entry: 目录条目对象
+
+        Returns:
+            格式化后的 symlink 目标路径字符串
+        """
+        try:
+            real_path = Path(entry.path).resolve()
+            real_path.relative_to(self._root)
+            rel = os.path.relpath(real_path, start=Path(entry.path).parent)
+            return rel
+        except ValueError:
+            return "<Outside Sandbox>"
+        except OSError:
+            return "<Broken Link>"
+        except Exception:
+            return "<Unknown>"
+
+    def get_parameters(self):
+        """
+        获取工具参数定义
+
+        Returns:
+            ToolParameter 对象列表，描述工具支持的参数
+        """
         return [
             ToolParameter(
                 name="path",
@@ -324,9 +328,9 @@ class ListFilesTool(Tool):
             ToolParameter(
                 name="ignore",
                 type="array",
-                description="Optional list of glob patterns to ignore",
+                description="Optional list of glob patterns to ignore (supports basename like '*.log' or relative path like 'dist/**')",
                 required=False,
-                default=None,
+                default=None,  # 避免可变默认值
             ),
         ]
 
@@ -339,74 +343,55 @@ class ListFilesTool(Tool):
         links_count: int,
         start: int,
         end: int,
-        items: List[dict],
-        params_input: Dict[str, Any],
-        time_ms: int,
+        items: list[dict],
     ) -> str:
-        """
-        构建标准化响应（遵循《通用工具响应协议》）
-        
-        顶层字段仅包含：status, data, text, stats, context
-        """
-        # 判断是否截断
-        truncated = end < total
-        
-        # 构建 data.entries（对象数组，每项包含 path 和 type）
-        entries = [{"path": item["path"], "type": item["type"]} for item in items]
-        
-        # 构建 data
-        data = {
-            "entries": entries,
-            "truncated": truncated,
-        }
-        
-        # 构建 text（人类可读摘要）
         lines = []
-        lines.append(f"Listed {len(entries)} entries in '{rel_path}'")
-        lines.append(f"(Total: {total} items - {dirs_count} dirs, {files_count} files, {links_count} links)")
-        
-        if truncated:
-            remaining = total - end
-            lines.append(f"[Truncated: Showing {start}-{end} of {total}. {remaining} more items available.]")
-            lines.append(f"Use offset={end} to view next page.")
-        
+        lines.append(f"Directory: {rel_path}")
+        lines.append(
+            f"[Summary: {total} items (dirs={dirs_count}, files={files_count}, links={links_count}). "
+            f"Showing {start}-{end}.]"
+        )
         lines.append("")
         for item in items:
-            # 显示格式：path + 类型标记
-            display = item["path"]
-            if item["type"] == "dir":
-                display += "/"
-            elif item["type"] == "link":
-                display += "@"
-            lines.append(display)
-        
-        text = "\n".join(lines)
-        
-        # 构建 extra_stats
-        extra_stats = {
-            "total_entries": total,
-            "dirs": dirs_count,
-            "files": files_count,
-            "links": links_count,
-            "returned": len(entries),
+            lines.append(item["display"])
+
+        remaining = total - end
+        warnings = []
+        if remaining > 0:
+            lines.append("")
+            lines.append("[Navigation]")
+            lines.append(f"There are {remaining} more items.")
+            lines.append(f'{self.name}[{{"path": "{rel_path}", "offset": {end}}}]')
+            warnings.append("Listing truncated. Use offset/limit to view more items.")
+
+        payload = {
+            "items": [i["display"] for i in items],
+            "context": {
+                "root_resolved": rel_path,
+            },
+            "stats": {
+                "total": total,
+                "dirs": dirs_count,
+                "files": files_count,
+                "links": links_count,
+                "start": start,
+                "end": end,
+            },
+            "flags": {
+                "truncated": end < total,
+            },
+            "warnings": warnings,
+            "text": "\n".join(lines),
         }
-        
-        # 根据截断状态选择 success 或 partial
-        if truncated:
-            return self.create_partial_response(
-                data=data,
-                text=text,
-                params_input=params_input,
-                time_ms=time_ms,
-                extra_stats=extra_stats,
-                path_resolved=rel_path,
-            )
-        else:
-            return self.create_success_response(
-                data=data,
-                text=text,
-                params_input=params_input,
-                time_ms=time_ms,
-                extra_stats=extra_stats,
-                path_resolved=rel_path,
-            )
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def _error_response(self, message: str) -> str:
+        payload = {
+            "error": message,
+            "items": [],
+            "context": {},
+            "stats": {},
+            "flags": {},
+            "text": message,
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)

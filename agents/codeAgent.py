@@ -45,7 +45,7 @@ class CodeAgent(Agent):
         self.engine = ReActEngine(
             llm=llm,
             tool_registry=self.tool_registry,
-            max_steps=20, # Code 任务通常需要更多步骤
+            max_steps=50, # Code 任务通常需要更多步骤
             verbose=True
         )
 

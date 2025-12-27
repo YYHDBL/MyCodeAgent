@@ -3,6 +3,7 @@ Tool name: Grep
 Tool description:
 Searches file contents using regular expressions. Results are sorted by file modification time (newest first).
 Prefers rg (ripgrep) when available and falls back to a Python implementation.
+Follows the Universal Tool Response Protocol (顶层字段仅: status/data/text/error/stats/context).
 
 Usage
 - ALWAYS use Grep for searching inside file contents.
@@ -21,6 +22,23 @@ Parameters (JSON object)
 - case_sensitive (boolean, optional, default false)
   false -> case-insensitive (default)
   true  -> case-sensitive
+
+Response Structure
+- status: "success" | "partial" | "error"
+  - "success": search completed normally
+  - "partial": results truncated (>100 matches), timed out with partial results, or using Python fallback
+  - "error": no results AND timed out, or invalid regex pattern
+- data.matches: Array<{file: string, line: number, text: string}>
+  List of matches with file path, line number, and matched text.
+- data.truncated: boolean
+  true if results were truncated (>100 matches).
+- data.fallback_used: boolean (optional)
+  true if Python fallback was used instead of ripgrep.
+- data.fallback_reason: "rg_not_found" | "rg_failed" (optional)
+  Reason for using Python fallback.
+- text: Human-readable summary with match list.
+- stats: {time_ms, matched_files, matched_lines}
+- context: {cwd, params_input, path_resolved, pattern, sorted_by}
 
 Examples
 1) Find TODO comments in all TypeScript files

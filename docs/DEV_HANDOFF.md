@@ -5,15 +5,16 @@
 - `agents/`：Agent 实现（`TestAgent`、`CodeAgent`）。
 - `agentEngines/`：推理引擎（`ReActEngine`）。
 - `tools/`：工具系统
-  - `base.py`：`Tool` 抽象基类 + `ToolParameter` 数据模型。
-  - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）。
+  - `base.py`：`Tool` 抽象基类 + `ToolParameter` 数据模型 + 响应协议支持。
+  - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）+ 旧格式适配器。
 - `tools/builtin/`：内置工具
   - `list_files.py`：`ListFilesTool` (LS) - 目录浏览工具。
   - `search_files_by_name.py`：`SearchFilesByNameTool` (Glob) - 文件搜索工具。
   - `search_code.py`：`GrepTool` (Grep) - 代码内容搜索工具。
-  - `calculator.py`：`CalculatorTool` - 数学计算工具。
+  - `calculator.py`：`CalculatorTool` - 数学计算工具（demo 工具，未遵循新协议）。
 - `scripts/`：交互脚本（`chat_test_agent.py`）。
-- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.md`、`glob_prompt.md`、`grep_prompt.md`）。
+- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`）。
+- `docs/`：文档（`DEV_HANDOFF.md`、`通用工具响应协议.md`）。
 
 ## 当前进度摘要
 1. **Agent 运行链路打通**
@@ -24,16 +25,17 @@
    - **LS（list_files）**：支持安全目录浏览、分页、隐藏文件控制、软链安全展示。
    - **Glob（tool name: Glob）**：支持 glob 模式搜索、双熔断（访问数+时间）、确定性结果。
    - **Grep（tool name: Grep）**：支持正则内容搜索、rg 优先、mtime 排序与超时保护。
-   - **Calculator（python_calculator）**：支持安全的数学表达式计算，使用 AST 解析。
-   - 所有工具统一由框架注入 `project_root`，避免各自猜测根目录导致沙箱不一致。
+   - 所有工具统一由框架注入 `project_root` 与 `working_dir`，确保沙箱一致性。
    - 工具通过 `ToolRegistry` 统一管理，支持 Tool 对象和函数两种注册方式。
 
-3. **关键 Bug 修复**
+3. **响应协议重构**
+   - 所有内置工具（LS/Glob/Grep）已遵循《通用工具响应协议》（`docs/通用工具响应协议.md`）。
+   - 统一顶层字段：`status`、`data`、`text`、`error`（仅 error 时存在）、`stats`、`context`。
+   - 框架层提供旧格式适配器，支持渐进式迁移。
+
+4. **关键 Bug 修复**
    - Glob：匹配锚点改为相对 `path`；修复 `**/*.md` 根目录匹配问题；`project_root` 强制注入。
    - LS：安全过滤、分页、软链安全展示与 ignore 行为已对齐设计说明。
-
-4. **输出格式**
-   - LS / Glob / Grep 均返回 JSON 结构化数据（`context/stats/flags/text`），便于框架解析。
 
 ## 关键使用方式
 - 运行交互式测试：
@@ -51,15 +53,51 @@
 
 ## 工具系统架构
 
+### 响应协议
+所有工具返回必须遵循《通用工具响应协议》（详见 `docs/通用工具响应协议.md`）。
+
+**顶层字段白名单**（禁止添加自定义顶层字段）：
+- `status`: `"success"` | `"partial"` | `"error"`
+- `data`: 核心载荷（对象，不允许 null）
+- `text`: 给 LLM 阅读的格式化摘要
+- `error`: 结构化错误（仅 `status="error"` 时存在）
+- `stats`: 运行统计（必含 `time_ms`）
+- `context`: 上下文信息（必含 `cwd`、`params_input`）
+
+**状态判定规则**：
+| 状态 | 条件 |
+|------|------|
+| `success` | 任务完全按预期完成，无截断、无回退、无错误 |
+| `partial` | 结果可用但有折扣：截断(truncated)、回退(fallback)、干运行(dry-run)、部分失败 |
+| `error` | 无法提供有效结果：权限不足、参数非法、超时且无结果 |
+
 ### Tool 基类（`tools/base.py`）
 所有工具继承自 `Tool` 抽象基类，该基类提供：
-- **`ToolParameter`**：使用 Pydantic 定义工具参数（name, type, description, required, default）。
-- **抽象方法**：
-  - `run(parameters: Dict[str, Any]) -> str`：执行工具逻辑。
-  - `get_parameters() -> List[ToolParameter]`：返回工具参数定义。
-- **工具方法**：
-  - `validate_parameters(parameters: Dict[str, Any]) -> bool`：校验参数完整性。
-  - `to_dict() -> Dict[str, Any]`：序列化为字典（name、description、parameters）。
+
+**枚举类型**：
+- `ToolStatus`：`SUCCESS` | `PARTIAL` | `ERROR`（序列化为小写字符串）
+- `ErrorCode`：`NOT_FOUND` | `ACCESS_DENIED` | `INVALID_PARAM` | `TIMEOUT` | `INTERNAL_ERROR`
+
+**初始化参数**：
+- `name`：工具名称
+- `description`：工具描述
+- `project_root`：项目根目录（沙箱边界）
+- `working_dir`：当前工作目录（用于解析相对路径）
+
+**抽象方法**：
+- `run(parameters: Dict[str, Any]) -> str`：执行工具逻辑，返回 JSON 字符串。
+- `get_parameters() -> List[ToolParameter]`：返回工具参数定义。
+
+**响应辅助方法**：
+- `get_cwd_rel() -> str`：获取相对项目根的工作目录路径。
+- `create_success_response(data, text, stats, context) -> str`：创建成功响应。
+- `create_partial_response(data, text, stats, context) -> str`：创建部分成功响应。
+- `create_error_response(code, message, stats, context, data) -> str`：创建错误响应。
+- `_build_response(status, data, text, stats, context, error) -> str`：内部构建方法。
+
+**工具方法**：
+- `validate_parameters(parameters: Dict[str, Any]) -> bool`：校验参数完整性。
+- `to_dict() -> Dict[str, Any]`：序列化为字典（name、description、parameters）。
 
 ### ToolRegistry（`tools/registry.py`）
 工具注册表支持两种注册方式：
@@ -70,12 +108,41 @@
    - 适用于简单工具，函数签名为 `func(input: str) -> str`。
 
 **主要 API**：
-- `execute_tool(name, input_text) -> str`：统一执行入口。
+- `execute_tool(name, input_text) -> str`：统一执行入口（含旧格式适配）。
 - `get_tools_description() -> str`：生成工具列表描述（用于提示词）。
 - `list_tools() -> List[str]`：列出所有工具名称。
 - `get_all_tools() -> List[Tool]`：获取所有 Tool 对象。
 
 全局注册表可通过 `tools.registry.global_registry` 访问。
+
+### 旧格式适配器
+为支持渐进式迁移，`ToolRegistry.execute_tool()` 内置旧格式检测与转换逻辑。
+
+**启用方式**：
+```bash
+export ENABLE_LEGACY_ADAPTER=true  # 默认启用
+```
+
+**工作原理**：
+1. 工具返回后，先尝试 JSON 解析。
+2. 检查是否存在 `status` 顶层字段：
+   - 有：判定为新协议格式，直接返回。
+   - 无：判定为旧格式，执行转换并记录警告日志。
+3. 旧格式转换规则：
+   - 顶层 `error: string` → `status: "error"` + `error: {code, message}`
+   - `flags.truncated` → `data.truncated`
+   - `matches/items` → 保留在 `data` 中
+   - 缺失字段补充默认值
+
+**日志示例**：
+```
+[LEGACY_ADAPTER] Tool 'LS' returned legacy format, auto-converted to protocol format
+```
+
+**迁移计划**：
+- 当前：适配器默认启用，记录警告日志。
+- 后续：设置 `ENABLE_LEGACY_ADAPTER=false` 可禁用适配器（要求所有工具已迁移）。
+- 最终：移除适配器代码。
 
 ---
 
@@ -85,7 +152,7 @@
 ### 设计目标
 - 安全列目录（沙箱内）。
 - 支持分页、隐藏文件控制、黑名单过滤、软链安全显示。
-- 返回结构化 JSON + 可读文本（`text` 字段）。
+- 返回符合《通用工具响应协议》的结构化 JSON。
 
 ### 参数
 - `path`: 要列出的目录路径（相对项目根或项目内绝对路径）。默认 `.`。
@@ -105,23 +172,40 @@
   - symlink 显示为 `name@` 或 `name@/`（目录）。
   - 若链接指向沙箱外，则显示 `-> <Outside Sandbox>`；若损坏显示 `-> <Broken Link>`。
 - **排序**：目录优先，同类型按名称字母排序。
-- **参数结构**：通过 `get_parameters()` 返回标准 `ToolParameter` 列表。
 
 ### 输出结构（JSON）
 ```json
 {
-  "items": ["core/", "agents/"],
-  "context": {"root_resolved": "."},
-  "stats": {"total": 10, "dirs": 3, "files": 6, "links": 1, "start": 0, "end": 10},
-  "flags": {"truncated": false},
-  "warnings": [],
-  "text": "Directory: .\n[Summary: ...]\n\ncore/\nagents/\n..."
+  "status": "partial",
+  "data": {
+    "entries": [
+      {"path": "core/", "type": "dir"},
+      {"path": "agents/", "type": "dir"},
+      {"path": "README.md", "type": "file"},
+      {"path": "config@", "type": "link"}
+    ],
+    "truncated": true
+  },
+  "text": "Listed 4 entries in '.' (truncated from 150 total). Use 'offset' to paginate.",
+  "stats": {
+    "time_ms": 12,
+    "total": 150,
+    "dirs": 5,
+    "files": 143,
+    "links": 2
+  },
+  "context": {
+    "cwd": ".",
+    "params_input": {"path": ".", "limit": 4},
+    "path_resolved": "."
+  }
 }
 ```
 
-### 注意点
-- 截断分页时 `warnings` 包含提示（引导使用 `offset`）。
-- `text` 字段仍提供人类可读输出。
+### 状态判定
+- `success`：无截断。
+- `partial`：`data.truncated = true`。
+- `error`：路径不存在、越权访问等。
 
 ---
 
@@ -132,7 +216,7 @@
 - 全局按 glob 模式搜索文件。
 - 双熔断：最大访问数 & 时间限制。
 - 结果确定性（遍历排序）。
-- 输出结构化 JSON + 可读文本。
+- 返回符合《通用工具响应协议》的结构化 JSON。
 
 ### 参数
 - `pattern`（必填）：相对 `path` 的 glob 模式（如 `**/*.py`）。
@@ -155,39 +239,108 @@
 - **熔断机制**：
   - `MAX_VISITED_ENTRIES = 20_000`：最大访问条目数。
   - `MAX_DURATION_MS = 2_000`：最大搜索时间（2秒）。
-  - 达到任一限制时提前终止并在 `flags.aborted_reason` 中说明原因。
+  - 达到任一限制时提前终止并在 `data.aborted_reason` 中说明原因。
 - **输出路径**：返回路径相对项目根，便于后续编辑/读取。
-- **参数结构**：通过 `get_parameters()` 返回标准 `ToolParameter` 列表。
 
 ### 输出结构（JSON）
 ```json
 {
-  "matches": ["core/agent.py", "core/llm.py"],
-  "context": {
-    "root_resolved": "core",
-    "pattern_normalized": "**/*.py"
-  },
-  "stats": {
-    "matched": 2,
-    "visited": 120,
-    "time_ms": 48
-  },
-  "flags": {
+  "status": "success",
+  "data": {
+    "paths": ["core/agent.py", "core/llm.py", "agents/testAgent.py"],
     "truncated": false,
     "aborted_reason": null
   },
-  "text": "Search Pattern: **/*.py (in 'core')\n[Stats: Found 2 matches. Scanned 120 items in 48ms.]\n\ncore/agent.py\ncore/llm.py"
+  "text": "Found 3 files matching '**/*.py' in 'core'.\n\ncore/agent.py\ncore/llm.py\nagents/testAgent.py",
+  "stats": {
+    "time_ms": 48,
+    "matched": 3,
+    "visited": 120
+  },
+  "context": {
+    "cwd": ".",
+    "params_input": {"pattern": "**/*.py", "path": "."},
+    "path_resolved": "."
+  }
 }
 ```
 
+### 状态判定
+- `success`：无截断、无熔断。
+- `partial`：`data.truncated = true` 或有 `data.aborted_reason` 但仍有结果。
+- `error`：熔断且无结果（`aborted_reason` 存在且 `paths` 为空）、参数非法等。
+
 ### 工具提示词
-- `prompts/tools_prompts/glob_prompt.md`
+- `prompts/tools_prompts/glob_prompt.py`
 - 已明确：pattern 永远相对 path。
 
 ---
 
-## 3) Calculator 工具（python_calculator）
+## 3) Grep 工具（tool name: Grep）
+**文件**：`tools/builtin/search_code.py`
+
+### 设计目标
+- 正则内容搜索，优先使用 ripgrep（rg），不可用时 Python fallback。
+- 输出按文件修改时间（mtime）倒序排列，优先展示活跃文件。
+- 超时保护（2 秒），避免正则或大文件拖垮执行时间。
+- 返回符合《通用工具响应协议》的结构化 JSON。
+
+### 参数
+- `pattern`（必填）：正则模式（如 `class\\s+User`）。
+- `path`：搜索起点（相对项目根）。默认 `.`。
+- `include`：glob 过滤（如 `*.ts` 或 `src/**/*.py`）。推荐使用。
+- `case_sensitive`：是否区分大小写，默认 `false`。
+
+### 关键实现逻辑
+- **搜索策略**：优先 `rg --json`，失败或缺失时使用 Python 遍历。
+- **路径一致性**：输出路径统一相对 `project_root`。
+- **排序**：收集结果后按 `mtime` 倒序排序。
+- **截断**：超过 `MAX_RESULTS=100` 会截断并标记 `data.truncated`。
+- **超时**：超时返回已有结果，并标记在 `data` 或状态中。
+- **rg 状态**：rg 不可用时记录 `data.fallback_used = true` 和 `data.fallback_reason`。
+
+### 输出结构（JSON）
+```json
+{
+  "status": "partial",
+  "data": {
+    "matches": [
+      {"file": "src/auth/User.ts", "line": 42, "text": "export class User {"},
+      {"file": "src/models/User.py", "line": 15, "text": "class User(Base):"}
+    ],
+    "truncated": false,
+    "fallback_used": true,
+    "fallback_reason": "rg_not_found"
+  },
+  "text": "Found 2 matches for 'class.*User' in 2 files (sorted by mtime desc). Using Python fallback (ripgrep not available).\n\nsrc/auth/User.ts:42: export class User {\nsrc/models/User.py:15: class User(Base):",
+  "stats": {
+    "time_ms": 156,
+    "matched_files": 2,
+    "matched_lines": 2
+  },
+  "context": {
+    "cwd": ".",
+    "params_input": {"pattern": "class.*User", "path": "."},
+    "path_resolved": ".",
+    "sorted_by": "mtime_desc"
+  }
+}
+```
+
+### 状态判定
+- `success`：无截断、无回退、无超时。
+- `partial`：使用了 fallback（`fallback_used = true`）或截断（`truncated = true`）。
+- `error`：超时且无结果、正则语法错误等。
+
+### 工具提示词
+- `prompts/tools_prompts/grep_prompt.py`
+
+---
+
+## 4) Calculator 工具（python_calculator）
 **文件**：`tools/builtin/calculator.py`
+
+> **注意**：Calculator 是 demo 工具，未遵循《通用工具响应协议》。
 
 ### 设计目标
 - 安全执行数学计算表达式。
@@ -200,44 +353,6 @@
 ### 支持的操作
 - **运算符**：`+`, `-`, `*`, `/`, `**`（幂）, `^`（异或）, `-`（负号）
 - **函数**：`abs`, `round`, `max`, `min`, `sum`, `sqrt`, `sin`, `cos`, `tan`, `log`, `exp`
-
----
-
-## 4) Grep 工具（tool name: Grep）
-**文件**：`tools/builtin/search_code.py`
-
-### 设计目标
-- 正则内容搜索，优先使用 ripgrep（rg），不可用时 Python fallback。
-- 输出按文件修改时间（mtime）倒序排列，优先展示活跃文件。
-- 超时保护（2 秒），避免正则或大文件拖垮执行时间。
-- 返回结构化 JSON + 可读文本（`text` 字段）。
-
-### 参数
-- `pattern`（必填）：正则模式（如 `class\\s+User`）。
-- `path`：搜索起点（相对项目根）。默认 `.`。
-- `include`：glob 过滤（如 `*.ts` 或 `src/**/*.py`）。推荐使用。
-- `case_sensitive`：是否区分大小写，默认 `false`。
-
-### 关键实现逻辑
-- **搜索策略**：优先 `rg --json`，失败或缺失时使用 Python 遍历。
-- **路径一致性**：输出路径统一相对 `project_root`。
-- **排序**：收集结果后按 `mtime` 倒序排序。
-- **截断**：超过 `MAX_RESULTS=100` 会截断并标记 `flags.truncated`。
-- **超时**：超时返回已有结果，并标记 `flags.aborted_reason = "timeout"`。
-- **rg 状态**：rg 不可用时 `aborted_reason = "rg_not_found"`；rg 执行失败时 `aborted_reason = "rg_failed"`。
-
-### 输出结构（JSON）
-```json
-{
-  "matches": [
-    {"file": "src/auth/User.ts", "line": 42, "text": "export class User {"}
-  ],
-  "context": {"pattern": "class\\\\s+User", "root_resolved": "src", "sorted_by": "mtime_desc"},
-  "stats": {"matched_files": 1, "matched_lines": 1, "time_ms": 45},
-  "flags": {"truncated": false, "aborted_reason": null},
-  "text": "Search Pattern: class\\\\s+User (in 'src')\\n[Stats: Found 1 matches in 1 files. Sorted by mtime desc. Took 45ms.]\\n\\nsrc/auth/User.ts:42: export class User {"
-}
-```
 - **常量**：`pi`, `e`
 
 ### 关键实现逻辑
@@ -255,10 +370,15 @@
 
 # 后续建议
 - **统一工具注册**：封装 `register_builtin_tools(project_root)` 函数，简化工具初始化流程。
-- **测试覆盖**：为 LS/Glob/Calculator 增加单元测试用例，覆盖：
+- **测试覆盖**：为 LS/Glob/Grep 增加单元测试用例，覆盖：
   - 路径解析与沙箱逃逸防护。
   - 边界条件（空目录、大文件列表、熔断触发等）。
   - pattern 匹配逻辑（特别是 `**/` 零层匹配）。
-  - Calculator 的表达式解析与错误处理。
+  - 响应协议字段完整性验证。
+  - 状态判定逻辑（success/partial/error）。
 - **文档与提示词**：保持 `prompts/tools_prompts/` 中的提示词与代码实现同步更新。
-- **扩展性**：考虑添加更多内置工具（如 `read_file`、`write_file`、`grep` 等）。
+- **适配器迁移**：
+  - 监控旧格式适配器日志，追踪未迁移的工具。
+  - 当所有工具迁移完成后，设置 `ENABLE_LEGACY_ADAPTER=false` 验证。
+  - 最终移除适配器代码。
+- **扩展性**：考虑添加更多内置工具（如 `read_file`、`write_file` 等），新工具必须遵循《通用工具响应协议》。

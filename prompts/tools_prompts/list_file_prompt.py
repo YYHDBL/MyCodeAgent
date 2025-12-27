@@ -3,6 +3,7 @@ Tool name: LS
 Tool description:
 Lists files and directories in a target directory. Safe and sandboxed to the project root.
 Supports pagination, hidden toggle, and ignore globs.
+Follows the Universal Tool Response Protocol (顶层字段仅: status/data/text/error/stats/context).
 
 Usage
 - Use LS to explore directory structure or see what is inside a folder.
@@ -20,6 +21,19 @@ Parameters (JSON object)
   Include dotfiles/dot-directories (e.g. .git, .vscode).
 - ignore (array, optional)
   Glob patterns to ignore (basename or relative path). Common noisy dirs are ignored by default.
+
+Response Structure
+- status: "success" | "partial" | "error"
+  - "success": all entries returned within limit
+  - "partial": results truncated (more entries available, use offset to paginate)
+  - "error": path not found, access denied, or invalid parameters
+- data.entries: Array<{path: string, type: "file"|"dir"|"link"}>
+  List of entries with relative paths and types.
+- data.truncated: boolean
+  true if results were truncated (status will be "partial").
+- text: Human-readable summary with entry list.
+- stats: {time_ms, total_entries, dirs, files, links, returned}
+- context: {cwd, params_input, path_resolved}
 
 Examples
 1) List project root (first page)

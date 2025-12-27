@@ -1,12 +1,16 @@
-"""全局文件搜索工具 (search_files_by_name / Glob)"""
+"""全局文件搜索工具 (search_files_by_name / Glob)
 
+遵循《通用工具响应协议》，返回标准化结构。
+"""
+
+import fnmatch
 import os
 import time
-import json
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
 from prompts.tools_prompts.glob_prompt import glob_prompt
-from ..base import Tool, ToolParameter
+from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
 
 
 class SearchFilesByNameTool(Tool):
@@ -49,11 +53,18 @@ class SearchFilesByNameTool(Tool):
             name: 工具名称，默认为 "Glob"
             project_root: 项目根目录，用于沙箱限制
         """
-        description = glob_prompt
-        super().__init__(name=name, description=description)
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
-        self._root = Path(project_root).resolve()
+        
+        # 调用基类初始化（注入 project_root）
+        super().__init__(
+            name=name,
+            description=glob_prompt,
+            project_root=project_root,
+        )
+        
+        # 保持向后兼容的内部变量
+        self._root = self._project_root
 
     def run(self, parameters: Dict[str, Any]) -> str:
         """
@@ -68,11 +79,20 @@ class SearchFilesByNameTool(Tool):
                 - include_ignored: 是否遍历忽略的目录（默认为 False）
 
         Returns:
-            格式化的搜索结果字符串
+            JSON 格式的响应字符串（遵循《通用工具响应协议》）
         """
+        start_time = time.monotonic()
+        
+        # 保存原始参数用于 context.params_input
+        params_input = dict(parameters)
+        
         pattern = parameters.get("pattern")
         if not pattern:
-            return self._error_response("Error: Missing required parameter 'pattern'.")
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Missing required parameter 'pattern'.",
+                params_input=params_input,
+            )
 
         path = parameters.get("path", ".")
         limit = parameters.get("limit", 50)
@@ -80,48 +100,70 @@ class SearchFilesByNameTool(Tool):
         include_ignored = parameters.get("include_ignored", False)
 
         if not isinstance(limit, int) or limit < 1 or limit > 200:
-            return self._error_response("Error: limit must be an integer between 1 and 200.")
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="limit must be an integer between 1 and 200.",
+                params_input=params_input,
+            )
 
         # 路径解析与沙箱校验
         try:
             input_path = Path(path)
             if input_path.is_absolute():
-                # 绝对路径直接解析
                 root = input_path.resolve()
             else:
-                # 相对路径基于项目根目录
                 root = (self._root / input_path).resolve()
 
-            # 沙箱安全检查：确保路径在项目根目录内
+            # 沙箱安全检查
             root.relative_to(self._root)
         except ValueError:
-            return self._error_response("Error: Access denied. Path must be within project root.")
+            return self.create_error_response(
+                error_code=ErrorCode.ACCESS_DENIED,
+                message="Access denied. Path must be within project root.",
+                params_input=params_input,
+            )
         except OSError as e:
-            return self._error_response(f"Error: Search failed ({e}).")
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message=f"Search failed ({e}).",
+                params_input=params_input,
+            )
+
+        # 计算解析后的相对路径
+        rel_root = str(root.relative_to(self._root)) or "."
 
         if not root.exists():
-            return self._error_response(f"Error: Search root '{path}' does not exist.")
+            return self.create_error_response(
+                error_code=ErrorCode.NOT_FOUND,
+                message=f"Search root '{path}' does not exist.",
+                params_input=params_input,
+                path_resolved=rel_root,
+            )
         if not root.is_dir():
-            return self._error_response(f"Error: Search root '{path}' is not a directory.")
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message=f"Search root '{path}' is not a directory.",
+                params_input=params_input,
+                path_resolved=rel_root,
+            )
 
         # 初始化搜索统计信息
-        start_time = time.monotonic()
         visited_count = 0
-        matches = []
+        matches: List[str] = []
         truncated = False
-        aborted_reason = None
+        aborted_reason: Optional[str] = None
 
-        # 统一使用 POSIX 风格 pattern（纯字符串规范化）
+        # 统一使用 POSIX 风格 pattern
         pattern_normalized = pattern.replace("\\", "/").strip()
 
         try:
             # 使用 os.walk 遍历目录树
             for current_root, dirs, files in os.walk(root, topdown=True):
-                # 确定性排序（确保结果可复现）
+                # 确定性排序
                 dirs.sort()
                 files.sort()
 
-                # 剪枝（原地修改 dirs 列表，避免遍历不需要的目录）
+                # 剪枝
                 if not include_ignored:
                     dirs[:] = [d for d in dirs if d not in self.ALWAYS_IGNORE]
                 if not include_hidden:
@@ -148,7 +190,6 @@ class SearchFilesByNameTool(Tool):
                     rel_match_path = Path(current_root).resolve().relative_to(root) / filename
                     rel_match_posix = rel_match_path.as_posix()
 
-
                     # 展示路径：相对于项目根目录
                     rel_display_path = Path(current_root).resolve().relative_to(self._root) / filename
                     rel_display_posix = rel_display_path.as_posix()
@@ -163,27 +204,21 @@ class SearchFilesByNameTool(Tool):
                 # 如果已达到限制或需要中止，停止搜索
                 if aborted_reason or truncated:
                     break
+                    
         except Exception as e:
-            return self._error_response(f"Error: Search failed ({e}).")
+            time_ms = int((time.monotonic() - start_time) * 1000)
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message=f"Search failed ({e}).",
+                params_input=params_input,
+                path_resolved=rel_root,
+                time_ms=time_ms,
+            )
 
         # 计算搜索耗时
         time_ms = int((time.monotonic() - start_time) * 1000)
 
-        rel_root = str(root.relative_to(self._root)) or "."
-
-        if not matches:
-            text = f"No files found matching '{pattern_normalized}'."
-            return self._format_response(
-                matches=[],
-                rel_root=rel_root,
-                pattern_normalized=pattern_normalized,
-                visited_count=visited_count,
-                time_ms=time_ms,
-                truncated=False,
-                aborted_reason=aborted_reason,
-                text_override=text,
-            )
-
+        # 构建响应
         return self._format_response(
             matches=matches,
             rel_root=rel_root,
@@ -193,19 +228,11 @@ class SearchFilesByNameTool(Tool):
             truncated=truncated,
             aborted_reason=aborted_reason,
             limit=limit,
+            params_input=params_input,
         )
 
     def _should_abort(self, start_time: float, visited_count: int) -> bool:
-        """
-        检查是否应该中止搜索
-
-        Args:
-            start_time: 搜索开始时间（time.monotonic() 返回值）
-            visited_count: 已访问的条目数量
-
-        Returns:
-            如果超过最大访问数或最大时间则返回 True，否则返回 False
-        """
+        """检查是否应该中止搜索"""
         if visited_count > self.MAX_VISITED_ENTRIES:
             return True
         elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -214,16 +241,7 @@ class SearchFilesByNameTool(Tool):
         return False
 
     def _abort_reason(self, start_time: float, visited_count: int) -> Optional[str]:
-        """
-        获取中止搜索的原因
-
-        Args:
-            start_time: 搜索开始时间
-            visited_count: 已访问的条目数量
-
-        Returns:
-            返回 "count_limit" 或 "time_limit"，如果不需要中止则返回 None
-        """
+        """获取中止搜索的原因"""
         if visited_count > self.MAX_VISITED_ENTRIES:
             return "count_limit"
         elapsed_ms = (time.monotonic() - start_time) * 1000
@@ -233,39 +251,73 @@ class SearchFilesByNameTool(Tool):
 
     def _match_pattern(self, rel_posix: str, pattern_normalized: str) -> bool:
         """
-        使用相对路径进行匹配，补充 **/ 零层目录兼容。
-
-        Args:
-            rel_posix: 相对于搜索起点的 POSIX 风格路径
-            pattern_normalized: 规范化后的 glob 模式
-
-        Returns:
-            如果路径匹配模式则返回 True，否则返回 False
+        使用 fnmatch 进行锚定匹配，避免 PurePosixPath.match 的后缀匹配问题。
+        
+        问题：PurePosixPath.match('agents/*.py') 会匹配 'site-packages/agents/foo.py'，
+        因为 match() 是后缀匹配。改用 fnmatch 确保 'agents/*.py' 只匹配顶层 agents 目录。
+        
+        注意：fnmatch 中 * 和 ? 默认匹配 /，所以需要将 * 转换为 [!/]*、? 转换为 [!/] 来避免跨目录匹配。
+        只有 ** 才应该匹配跨目录。
         """
         cleaned_pattern = self._strip_relative_prefix(pattern_normalized)
-        path_obj = PurePosixPath(rel_posix)
-
-        # 1) 正常匹配
-        if path_obj.match(cleaned_pattern):
+        
+        # 将 pattern 转换为不跨目录匹配的形式
+        # * 不应匹配 /，只有 ** 才匹配任意层级
+        converted_pattern = self._convert_glob_to_fnmatch(cleaned_pattern)
+        
+        # 使用 fnmatch 进行完整路径匹配（非后缀匹配）
+        if fnmatch.fnmatch(rel_posix, converted_pattern):
             return True
-
-        # 2) 兼容 **/ 可匹配 0 层目录
+        
+        # 兼容 **/ 可匹配 0 层目录
         if cleaned_pattern.startswith("**/"):
-            if path_obj.match(cleaned_pattern[3:]):
+            zero_layer_pattern = cleaned_pattern[3:]  # 移除 **/
+            converted_zero = self._convert_glob_to_fnmatch(zero_layer_pattern)
+            if fnmatch.fnmatch(rel_posix, converted_zero):
                 return True
-
+        
         return False
 
+    def _convert_glob_to_fnmatch(self, pattern: str) -> str:
+        """
+        将 glob 模式转换为 fnmatch 兼容模式，确保单个 * 不匹配 /。
+        
+        转换规则：
+        - ** → * （fnmatch 的 * 可匹配任意字符包括 /）
+        - 单独的 * → [^/]* （不匹配 /）
+        
+        例如：
+        - **/*.py → */*.py （匹配 src/main.py, a/b/c.py）
+        - *.py → [^/]*.py （只匹配 main.py，不匹配 src/main.py）
+        - agents/*.py → agents/[!/]*.py
+        - a?b.txt → a[!/]b.txt
+        """
+        result = []
+        i = 0
+        n = len(pattern)
+        
+        while i < n:
+            if pattern[i] == '*':
+                # 检查是否是 **
+                if i + 1 < n and pattern[i + 1] == '*':
+                    # ** 转换为 *（fnmatch 的 * 匹配任意字符包括 /）
+                    result.append('*')
+                    i += 2  # 跳过两个 *
+                    continue
+                else:
+                    # 单个 * 转换为 [!/]*
+                    result.append('[!/]*')
+            elif pattern[i] == '?':
+                # 单个 ? 转换为 [!/]
+                result.append('[!/]')
+            else:
+                result.append(pattern[i])
+            i += 1
+        
+        return ''.join(result)
+
     def _strip_relative_prefix(self, pattern: str) -> str:
-        """
-        仅移除开头的 ./ 或 /，避免 lstrip 的字符集误用
-
-        Args:
-            pattern: 原始 glob 模式
-
-        Returns:
-            移除前缀后的模式字符串
-        """
+        """移除开头的 ./ 或 / 前缀"""
         cleaned = pattern
         while cleaned.startswith("./"):
             cleaned = cleaned[2:]
@@ -273,90 +325,8 @@ class SearchFilesByNameTool(Tool):
             cleaned = cleaned[1:]
         return cleaned
 
-    # NOTE: We keep matching minimal and only add **/ zero-depth fallback.
-
-    def _format_response(
-        self,
-        matches: list[str],
-        rel_root: str,
-        pattern_normalized: str,
-        visited_count: int,
-        time_ms: int,
-        truncated: bool,
-        aborted_reason: Optional[str],
-        limit: Optional[int] = None,
-        text_override: Optional[str] = None,
-    ) -> str:
-        """同时返回结构化数据与可读文本"""
-        lines = []
-        lines.append(f"Search Pattern: {pattern_normalized} (in '{rel_root}')")
-        lines.append(
-            f"[Stats: Found {len(matches)} matches. Scanned {visited_count} items in {time_ms}ms.]"
-        )
-        if text_override:
-            lines.append("")
-            lines.append(text_override)
-        else:
-            lines.append("")
-            lines.extend(matches)
-
-        footer_warning = None
-        if truncated:
-            footer_warning = (
-                f"[Warning: Showing first {limit} matches only. Narrow pattern or increase limit.]"
-            )
-        elif aborted_reason == "count_limit":
-            footer_warning = (
-                "[Warning: Search stopped early (scanned too many items). "
-                "Results are incomplete. Use a more specific 'path'.]"
-            )
-        elif aborted_reason == "time_limit":
-            footer_warning = (
-                "[Warning: Search timed out (>2s). Results are incomplete. "
-                "Try excluding ignored directories.]"
-            )
-
-        if footer_warning:
-            lines.append("")
-            lines.append(footer_warning)
-
-        payload = {
-            "matches": matches,
-            "context": {
-                "root_resolved": rel_root,
-                "pattern_normalized": pattern_normalized,
-            },
-            "stats": {
-                "matched": len(matches),
-                "visited": visited_count,
-                "time_ms": time_ms,
-            },
-            "flags": {
-                "truncated": bool(truncated),
-                "aborted_reason": aborted_reason,
-            },
-            "text": "\n".join(lines),
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
-
-    def _error_response(self, message: str) -> str:
-        payload = {
-            "error": message,
-            "matches": [],
-            "context": {},
-            "stats": {},
-            "flags": {},
-            "text": message,
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
-
-    def get_parameters(self):
-        """
-        获取工具参数定义
-
-        Returns:
-            ToolParameter 对象列表，描述工具支持的参数
-        """
+    def get_parameters(self) -> List[ToolParameter]:
+        """获取工具参数定义"""
         return [
             ToolParameter(
                 name="pattern",
@@ -393,3 +363,114 @@ class SearchFilesByNameTool(Tool):
                 default=False,
             ),
         ]
+
+    def _format_response(
+        self,
+        matches: List[str],
+        rel_root: str,
+        pattern_normalized: str,
+        visited_count: int,
+        time_ms: int,
+        truncated: bool,
+        aborted_reason: Optional[str],
+        limit: int,
+        params_input: Dict[str, Any],
+    ) -> str:
+        """
+        构建标准化响应（遵循《通用工具响应协议》）
+        
+        顶层字段仅包含：status, data, text, stats, context
+        
+        状态判定逻辑：
+        - 有结果 + 截断/熔断 → status="partial"
+        - 无结果 + 熔断 → status="error" + error.code="TIMEOUT" 或 "INTERNAL_ERROR"
+        - 其他成功 → status="success"
+        """
+        has_results = len(matches) > 0
+        is_partial = truncated or (aborted_reason is not None and has_results)
+        is_error_timeout = aborted_reason is not None and not has_results
+        
+        # 构建 data.paths（字符串数组）
+        data = {
+            "paths": matches,
+            "truncated": truncated,
+        }
+        
+        # 如果有熔断原因，添加到 data 中
+        if aborted_reason:
+            data["aborted_reason"] = aborted_reason
+        
+        # 构建 text（人类可读摘要）
+        lines = []
+        if has_results:
+            lines.append(f"Found {len(matches)} files matching '{pattern_normalized}' in '{rel_root}'")
+        else:
+            lines.append(f"No files found matching '{pattern_normalized}' in '{rel_root}'")
+        
+        lines.append(f"(Scanned {visited_count} items in {time_ms}ms)")
+        
+        # 添加状态说明
+        if truncated:
+            lines.append(f"[Truncated: Showing first {limit} matches. Narrow pattern or increase limit.]")
+        elif aborted_reason == "count_limit":
+            if has_results:
+                lines.append("[Partial: Search stopped early (scanned too many items). Use a more specific 'path'.]")
+            else:
+                lines.append("[Error: Search aborted (scanned too many items without results). Use a more specific 'path'.]")
+        elif aborted_reason == "time_limit":
+            if has_results:
+                lines.append("[Partial: Search timed out (>2s). Results are incomplete.]")
+            else:
+                lines.append("[Error: Search timed out (>2s) without finding results. Try a more specific path.]")
+        
+        if has_results:
+            lines.append("")
+            lines.extend(matches)
+        
+        text = "\n".join(lines)
+        
+        # 构建 extra_stats
+        extra_stats = {
+            "matched": len(matches),
+            "visited": visited_count,
+        }
+        
+        # 构建 extra_context
+        extra_context = {
+            "pattern_normalized": pattern_normalized,
+        }
+        
+        # 根据状态选择响应类型
+        if is_error_timeout:
+            # 无结果且被熔断 → error
+            error_code = ErrorCode.TIMEOUT if aborted_reason == "time_limit" else ErrorCode.INTERNAL_ERROR
+            return self.create_error_response(
+                error_code=error_code,
+                message=text,
+                params_input=params_input,
+                time_ms=time_ms,
+                path_resolved=rel_root,
+                extra_context=extra_context,
+            )
+        elif is_partial:
+            # 有结果但截断或熔断 → partial
+            return self.create_partial_response(
+                data=data,
+                text=text,
+                params_input=params_input,
+                time_ms=time_ms,
+                extra_stats=extra_stats,
+                path_resolved=rel_root,
+                extra_context=extra_context,
+            )
+        else:
+            # 正常完成 → success
+            return self.create_success_response(
+                data=data,
+                text=text,
+                params_input=params_input,
+                time_ms=time_ms,
+                extra_stats=extra_stats,
+                path_resolved=rel_root,
+                extra_context=extra_context,
+            )
