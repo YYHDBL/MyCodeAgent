@@ -38,6 +38,8 @@ class ErrorCode(str, Enum):
     INVALID_PARAM = "INVALID_PARAM"   # 参数校验失败（正则错误、类型错误等）
     TIMEOUT = "TIMEOUT"               # 工具在获取有效数据前超时
     INTERNAL_ERROR = "INTERNAL_ERROR" # 未分类的内部异常
+    IS_DIRECTORY = "IS_DIRECTORY"     # 路径是目录而非文件
+    BINARY_FILE = "BINARY_FILE"       # 文件是二进制格式
 
 
 # =============================================================================

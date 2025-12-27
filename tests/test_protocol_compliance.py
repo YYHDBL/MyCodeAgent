@@ -245,6 +245,154 @@ class TestProtocolCompliance(unittest.TestCase):
             self.assertEqual(parsed["error"]["code"], "ACCESS_DENIED")
     
     # =========================================================================
+    # ReadTool (Read) 测试
+    # =========================================================================
+    
+    def test_read_success_response(self):
+        """Read: 成功响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "src/main.py"})
+            
+            parsed = self._validate_and_assert("Read", response, tool_type="read")
+            
+            # 验证状态
+            self.assertEqual(parsed["status"], "success")
+            # 验证 data.content
+            self.assertIn("content", parsed["data"])
+            self.assertIsInstance(parsed["data"]["content"], str)
+            # 验证行号格式
+            self.assertIn(" | ", parsed["data"]["content"])
+    
+    def test_read_partial_truncated_response(self):
+        """Read: 截断响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            # 限制只读 2 行
+            response = tool.run({"path": "src/main.py", "limit": 2})
+            
+            parsed = self._validate_and_assert("Read", response, tool_type="read")
+            
+            # 验证截断状态
+            self.assertEqual(parsed["status"], "partial")
+            self.assertTrue(parsed["data"].get("truncated", False))
+    
+    def test_read_success_empty_file(self):
+        """Read: 空文件响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            # 创建一个空文件
+            empty_file = project.root / "empty.txt"
+            empty_file.write_text("")
+            
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "empty.txt"})
+            
+            parsed = self._validate_and_assert("Read", response, tool_type="read")
+            
+            # 空文件是 success
+            self.assertEqual(parsed["status"], "success")
+            self.assertEqual(parsed["data"]["content"], "")
+            self.assertEqual(parsed["stats"]["lines_read"], 0)
+    
+    def test_read_error_not_found(self):
+        """Read: 文件不存在错误响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "nonexistent_file.txt"})
+            
+            parsed = self._validate_and_assert("Read", response)
+            
+            # 验证错误状态
+            self.assertEqual(parsed["status"], "error")
+            self.assertEqual(parsed["error"]["code"], "NOT_FOUND")
+    
+    def test_read_error_is_directory(self):
+        """Read: 路径是目录错误响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "src"})
+            
+            parsed = self._validate_and_assert("Read", response)
+            
+            # 验证错误状态
+            self.assertEqual(parsed["status"], "error")
+            self.assertEqual(parsed["error"]["code"], "IS_DIRECTORY")
+    
+    def test_read_error_access_denied(self):
+        """Read: 越权访问错误响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "../../../etc/passwd"})
+            
+            parsed = self._validate_and_assert("Read", response)
+            
+            # 验证错误状态
+            self.assertEqual(parsed["status"], "error")
+            self.assertEqual(parsed["error"]["code"], "ACCESS_DENIED")
+    
+    def test_read_error_start_line_exceeds(self):
+        """Read: start_line 超出文件长度错误响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            # src/main.py 只有约 20 行，请求从 1000 行开始
+            response = tool.run({"path": "src/main.py", "start_line": 1000})
+            
+            parsed = self._validate_and_assert("Read", response)
+            
+            # 验证错误状态
+            self.assertEqual(parsed["status"], "error")
+            self.assertEqual(parsed["error"]["code"], "INVALID_PARAM")
+    
+    def test_read_error_binary_file(self):
+        """Read: 二进制文件错误响应协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            # 创建一个二进制文件
+            binary_file = project.root / "test.bin"
+            binary_file.write_bytes(b"\x00\x01\x02\x03\x04\x05")
+            
+            tool = ReadTool(project_root=project.root)
+            response = tool.run({"path": "test.bin"})
+            
+            parsed = self._validate_and_assert("Read", response)
+            
+            # 验证错误状态
+            self.assertEqual(parsed["status"], "error")
+            self.assertEqual(parsed["error"]["code"], "BINARY_FILE")
+    
+    def test_read_pagination(self):
+        """Read: 分页读取协议合规"""
+        from tools.builtin.read_file import ReadTool
+        
+        with create_temp_project() as project:
+            tool = ReadTool(project_root=project.root)
+            # 读取第 5-10 行
+            response = tool.run({"path": "src/main.py", "start_line": 5, "limit": 5})
+            
+            parsed = self._validate_and_assert("Read", response, tool_type="read")
+            
+            # 验证状态（可能是 success 或 partial）
+            self.assertIn(parsed["status"], ["success", "partial"])
+            # 验证内容以第 5 行开始
+            content = parsed["data"]["content"]
+            self.assertTrue(content.startswith("   5 |"))
+    
+    # =========================================================================
     # 综合测试
     # =========================================================================
     
@@ -253,6 +401,7 @@ class TestProtocolCompliance(unittest.TestCase):
         from tools.builtin.list_files import ListFilesTool
         from tools.builtin.search_files_by_name import SearchFilesByNameTool
         from tools.builtin.search_code import GrepTool
+        from tools.builtin.read_file import ReadTool
         
         required_fields = {"status", "data", "text", "stats", "context"}
         
@@ -261,6 +410,7 @@ class TestProtocolCompliance(unittest.TestCase):
                 (ListFilesTool(project_root=project.root), {"path": "."}),
                 (SearchFilesByNameTool(project_root=project.root), {"pattern": "*.py"}),
                 (GrepTool(project_root=project.root), {"pattern": "def", "include": "*.py"}),
+                (ReadTool(project_root=project.root), {"path": "src/main.py"}),
             ]
             
             for tool, params in tools_and_params:
@@ -276,12 +426,14 @@ class TestProtocolCompliance(unittest.TestCase):
         from tools.builtin.list_files import ListFilesTool
         from tools.builtin.search_files_by_name import SearchFilesByNameTool
         from tools.builtin.search_code import GrepTool
+        from tools.builtin.read_file import ReadTool
         
         with create_temp_project() as project:
             tools_and_params = [
                 (ListFilesTool(project_root=project.root), {"path": "."}),
                 (SearchFilesByNameTool(project_root=project.root), {"pattern": "*.py"}),
                 (GrepTool(project_root=project.root), {"pattern": "def", "include": "*.py"}),
+                (ReadTool(project_root=project.root), {"path": "src/main.py"}),
             ]
             
             for tool, params in tools_and_params:
@@ -297,12 +449,14 @@ class TestProtocolCompliance(unittest.TestCase):
         from tools.builtin.list_files import ListFilesTool
         from tools.builtin.search_files_by_name import SearchFilesByNameTool
         from tools.builtin.search_code import GrepTool
+        from tools.builtin.read_file import ReadTool
         
         with create_temp_project() as project:
             tools_and_params = [
                 (ListFilesTool(project_root=project.root), {"path": "."}),
                 (SearchFilesByNameTool(project_root=project.root), {"pattern": "*.py"}),
                 (GrepTool(project_root=project.root), {"pattern": "def", "include": "*.py"}),
+                (ReadTool(project_root=project.root), {"path": "src/main.py"}),
             ]
             
             for tool, params in tools_and_params:

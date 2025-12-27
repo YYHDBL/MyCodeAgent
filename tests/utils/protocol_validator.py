@@ -80,6 +80,8 @@ class ProtocolValidator:
         "INVALID_PARAM",   # 参数校验失败
         "TIMEOUT",         # 工具在获取有效数据前超时
         "INTERNAL_ERROR",  # 未分类的内部异常
+        "IS_DIRECTORY",    # 路径是目录而非文件
+        "BINARY_FILE",     # 文件是二进制格式
     }
     
     # 工具类别与推荐字段映射
