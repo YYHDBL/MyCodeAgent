@@ -1,7 +1,7 @@
 """HelloAgents统一LLM接口 - 基于OpenAI原生API"""
 
 import os
-from typing import Literal, Optional, Iterator
+from typing import Literal, Optional, Iterator, Dict
 from openai import OpenAI
 
 from .exceptions import HelloAgentsException
@@ -48,15 +48,19 @@ class HelloAgentsLLM:
             max_tokens: 最大token数
             timeout: 超时时间，从环境变量LLM_TIMEOUT读取，默认60秒
         """
+        # 优先加载 .env（如存在则读取配置）
+        self._dotenv_values: Dict[str, str] = {}
+        self._load_dotenv_first()
+
         # 优先使用传入参数，如果未提供，则从环境变量加载
-        self.model = model or os.getenv("LLM_MODEL_ID")
+        self.model = model or self._get_env("LLM_MODEL_ID")
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.timeout = timeout or int(os.getenv("LLM_TIMEOUT", "60"))
+        self.timeout = timeout or int(self._get_env("LLM_TIMEOUT", "60"))
         self.kwargs = kwargs
 
         # 自动检测provider或使用指定的provider
-        self.provider = provider or self._auto_detect_provider(api_key, base_url)
+        self.provider = self._resolve_provider(provider, api_key, base_url)
 
         # 根据provider确定API密钥和base_url
         self.api_key, self.base_url = self._resolve_credentials(api_key, base_url)
@@ -70,6 +74,55 @@ class HelloAgentsLLM:
         # 创建OpenAI客户端
         self._client = self._create_client()
 
+    def _load_dotenv_first(self) -> None:
+        """
+        优先加载 .env 中的配置。
+        若 .env 不存在或未配置对应键，则自然回退到系统环境变量。
+        """
+        try:
+            from dotenv import load_dotenv, find_dotenv, dotenv_values
+        except Exception:
+            return
+
+        dotenv_path = find_dotenv(usecwd=True)
+        if dotenv_path:
+            values = dotenv_values(dotenv_path)
+            # 仅保留有值的键
+            self._dotenv_values = {
+                k: v for k, v in values.items() if v is not None and str(v).strip() != ""
+            }
+            # 读取但不覆盖系统环境变量（优先级由 _get_env 控制）
+            load_dotenv(dotenv_path, override=False)
+        else:
+            # 尝试当前目录（如无 .env 将无效果）
+            values = dotenv_values()
+            self._dotenv_values = {
+                k: v for k, v in values.items() if v is not None and str(v).strip() != ""
+            }
+            load_dotenv(override=False)
+
+    def _get_env(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """
+        优先从 .env 读取配置；若无则回退系统环境变量。
+        """
+        if key in self._dotenv_values:
+            return self._dotenv_values.get(key)
+        return os.getenv(key, default)
+
+    def _resolve_provider(self, provider: Optional[str], api_key: Optional[str], base_url: Optional[str]) -> str:
+        """
+        解析 provider：
+        1) 显式参数 provider
+        2) 环境变量/ .env 中的 LLM_PROVIDER
+        3) 自动探测
+        """
+        if provider:
+            return provider
+        env_provider = self._get_env("LLM_PROVIDER")
+        if env_provider:
+            return env_provider
+        return self._auto_detect_provider(api_key, base_url)
+
     def _auto_detect_provider(self, api_key: Optional[str], base_url: Optional[str]) -> str:
         """
         自动检测LLM提供商
@@ -80,26 +133,33 @@ class HelloAgentsLLM:
         3. 根据base_url判断
         4. 默认返回通用配置
         """
-        # 1. 检查特定提供商的环境变量
-        if os.getenv("OPENAI_API_KEY"):
-            return "openai"
-        if os.getenv("DEEPSEEK_API_KEY"):
-            return "deepseek"
-        if os.getenv("DASHSCOPE_API_KEY"):
-            return "qwen"
-        if os.getenv("MODELSCOPE_API_KEY"):
-            return "modelscope"
-        if os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY"):
-            return "kimi"
-        if os.getenv("ZHIPU_API_KEY") or os.getenv("GLM_API_KEY"):
-            return "zhipu"
-        if os.getenv("OLLAMA_API_KEY") or os.getenv("OLLAMA_HOST"):
-            return "ollama"
-        if os.getenv("VLLM_API_KEY") or os.getenv("VLLM_HOST"):
-            return "vllm"
+        # 1. 检查特定提供商的环境变量（若命中多个则报错）
+        env_map = {
+            "openai": ["OPENAI_API_KEY"],
+            "zhipu": ["ZHIPU_API_KEY", "GLM_API_KEY"],
+            "deepseek": ["DEEPSEEK_API_KEY"],
+            "qwen": ["DASHSCOPE_API_KEY"],
+            "modelscope": ["MODELSCOPE_API_KEY"],
+            "kimi": ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
+            "ollama": ["OLLAMA_API_KEY", "OLLAMA_HOST"],
+            "vllm": ["VLLM_API_KEY", "VLLM_HOST"],
+        }
+        hits = []
+        for prov, keys in env_map.items():
+            for key in keys:
+                if self._get_env(key):
+                    hits.append(prov)
+                    break
+        if len(hits) > 1:
+            providers = ", ".join(sorted(set(hits)))
+            raise HelloAgentsException(
+                f"检测到多个 provider 配置: {providers}。请显式设置 provider 或 LLM_PROVIDER。"
+            )
+        if len(hits) == 1:
+            return hits[0]
 
         # 2. 根据API密钥格式判断
-        actual_api_key = api_key or os.getenv("LLM_API_KEY")
+        actual_api_key = api_key or self._get_env("LLM_API_KEY")
         if actual_api_key:
             actual_key_lower = actual_api_key.lower()
             if actual_api_key.startswith("ms-"):
@@ -118,7 +178,7 @@ class HelloAgentsLLM:
                 return "zhipu"
 
         # 3. 根据base_url判断
-        actual_base_url = base_url or os.getenv("LLM_BASE_URL")
+        actual_base_url = base_url or self._get_env("LLM_BASE_URL")
         if actual_base_url:
             base_url_lower = actual_base_url.lower()
             if "api.openai.com" in base_url_lower:
@@ -159,54 +219,54 @@ class HelloAgentsLLM:
     def _resolve_credentials(self, api_key: Optional[str], base_url: Optional[str]) -> tuple[str, str]:
         """根据provider解析API密钥和base_url"""
         if self.provider == "openai":
-            resolved_api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://api.openai.com/v1"
+            resolved_api_key = api_key or self._get_env("OPENAI_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.openai.com/v1"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "deepseek":
-            resolved_api_key = api_key or os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://api.deepseek.com"
+            resolved_api_key = api_key or self._get_env("DEEPSEEK_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.deepseek.com"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "qwen":
-            resolved_api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            resolved_api_key = api_key or self._get_env("DASHSCOPE_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "modelscope":
-            resolved_api_key = api_key or os.getenv("MODELSCOPE_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://api-inference.modelscope.cn/v1/"
+            resolved_api_key = api_key or self._get_env("MODELSCOPE_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api-inference.modelscope.cn/v1/"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "kimi":
-            resolved_api_key = api_key or os.getenv("KIMI_API_KEY") or os.getenv("MOONSHOT_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://api.moonshot.cn/v1"
+            resolved_api_key = api_key or self._get_env("KIMI_API_KEY") or self._get_env("MOONSHOT_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.moonshot.cn/v1"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "zhipu":
-            resolved_api_key = api_key or os.getenv("ZHIPU_API_KEY") or os.getenv("GLM_API_KEY") or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4"
+            resolved_api_key = api_key or self._get_env("ZHIPU_API_KEY") or self._get_env("GLM_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "ollama":
-            resolved_api_key = api_key or os.getenv("OLLAMA_API_KEY") or os.getenv("LLM_API_KEY") or "ollama"
-            resolved_base_url = base_url or os.getenv("OLLAMA_HOST") or os.getenv("LLM_BASE_URL") or "http://localhost:11434/v1"
+            resolved_api_key = api_key or self._get_env("OLLAMA_API_KEY") or self._get_env("LLM_API_KEY") or "ollama"
+            resolved_base_url = base_url or self._get_env("OLLAMA_HOST") or self._get_env("LLM_BASE_URL") or "http://localhost:11434/v1"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "vllm":
-            resolved_api_key = api_key or os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY") or "vllm"
-            resolved_base_url = base_url or os.getenv("VLLM_HOST") or os.getenv("LLM_BASE_URL") or "http://localhost:8000/v1"
+            resolved_api_key = api_key or self._get_env("VLLM_API_KEY") or self._get_env("LLM_API_KEY") or "vllm"
+            resolved_base_url = base_url or self._get_env("VLLM_HOST") or self._get_env("LLM_BASE_URL") or "http://localhost:8000/v1"
             return resolved_api_key, resolved_base_url
 
         elif self.provider == "local":
-            resolved_api_key = api_key or os.getenv("LLM_API_KEY") or "local"
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL") or "http://localhost:8000/v1"
+            resolved_api_key = api_key or self._get_env("LLM_API_KEY") or "local"
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "http://localhost:8000/v1"
             return resolved_api_key, resolved_base_url
 
         else:
             # auto或其他情况：使用通用配置，支持任何OpenAI兼容的服务
-            resolved_api_key = api_key or os.getenv("LLM_API_KEY")
-            resolved_base_url = base_url or os.getenv("LLM_BASE_URL")
+            resolved_api_key = api_key or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("LLM_BASE_URL")
             return resolved_api_key, resolved_base_url
 
     def _create_client(self) -> OpenAI:
@@ -239,7 +299,7 @@ class HelloAgentsLLM:
             return "local-model"  # 本地模型占位符
         else:
             # auto或其他情况：根据base_url智能推断默认模型
-            base_url = os.getenv("LLM_BASE_URL", "")
+            base_url = self._get_env("LLM_BASE_URL", "") or ""
             base_url_lower = base_url.lower()
             if "modelscope" in base_url_lower:
                 return "Qwen/Qwen2.5-72B-Instruct"
