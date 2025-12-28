@@ -76,10 +76,12 @@ class ProtocolValidator:
     # 标准错误码
     VALID_ERROR_CODES: Set[str] = {
         "NOT_FOUND",       # 文件/路径不存在
-        "ACCESS_DENIED",   # 路径不在 project root 内或权限不足
+        "ACCESS_DENIED",   # 路径不在 project root 内
+        "PERMISSION_DENIED",  # OS 权限不足
         "INVALID_PARAM",   # 参数校验失败
         "TIMEOUT",         # 工具在获取有效数据前超时
         "INTERNAL_ERROR",  # 未分类的内部异常
+        "EXECUTION_ERROR", # 其它 I/O 或执行错误
         "IS_DIRECTORY",    # 路径是目录而非文件
         "BINARY_FILE",     # 文件是二进制格式
     }

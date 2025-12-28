@@ -9,6 +9,7 @@ from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
 from tools.builtin.search_code import GrepTool
 from tools.builtin.read_file import ReadTool
+from tools.builtin.write_file import WriteTool
 from utils import setup_logger
 # 引入上面的 Engine
 from agentEngines.ReActEngine import ReActEngine 
@@ -42,6 +43,8 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(GrepTool(project_root=self.project_root))
         # 注册 Read 工具
         self.tool_registry.register_tool(ReadTool(project_root=self.project_root))
+        # 注册 Write 工具
+        self.tool_registry.register_tool(WriteTool(project_root=self.project_root))
         
         # 【核心点】组合 ReActEngine
         # 我们在这里把工具给 Engine

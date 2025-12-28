@@ -34,10 +34,12 @@ class ErrorCode(str, Enum):
     标准错误码枚举（遵循《通用工具响应协议》）
     """
     NOT_FOUND = "NOT_FOUND"           # 文件/路径不存在
-    ACCESS_DENIED = "ACCESS_DENIED"   # 路径不在 project root 内或权限不足
+    ACCESS_DENIED = "ACCESS_DENIED"   # 路径不在 project root 内（沙箱越界）
+    PERMISSION_DENIED = "PERMISSION_DENIED"  # OS 权限不足（EACCES 等）
     INVALID_PARAM = "INVALID_PARAM"   # 参数校验失败（正则错误、类型错误等）
     TIMEOUT = "TIMEOUT"               # 工具在获取有效数据前超时
     INTERNAL_ERROR = "INTERNAL_ERROR" # 未分类的内部异常
+    EXECUTION_ERROR = "EXECUTION_ERROR" # 其它 I/O 或执行错误（磁盘满等）
     IS_DIRECTORY = "IS_DIRECTORY"     # 路径是目录而非文件
     BINARY_FILE = "BINARY_FILE"       # 文件是二进制格式
 

@@ -12,6 +12,7 @@ from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
 from tools.builtin.search_code import GrepTool
+from tools.builtin.write_file import WriteTool
 from agentEngines.ReActEngine import ReActEngine
 
 
@@ -42,6 +43,7 @@ class TestAgent(Agent):
         )
         self.tool_registry.register_tool(SearchFilesByNameTool(project_root=self.project_root))
         self.tool_registry.register_tool(GrepTool(project_root=self.project_root))
+        self.tool_registry.register_tool(WriteTool(project_root=self.project_root))
         # 以 ReActEngine 作为核心
         self.engine = ReActEngine(
             llm=self.llm,
