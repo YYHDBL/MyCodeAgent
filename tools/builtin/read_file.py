@@ -171,8 +171,10 @@ class ReadTool(Tool):
         # =====================================================================
         
         try:
-            # 获取文件大小
-            file_size = target.stat().st_size
+            # 获取文件状态（大小和修改时间）
+            file_stat = target.stat()
+            file_size = file_stat.st_size
+            file_mtime_ms = file_stat.st_mtime_ns // 1_000_000  # 转换为毫秒（乐观锁所需）
             # 检测是否为二进制文件（读取前 8KB，如果包含 null byte 则判定为二进制）
             if self._is_binary_file(target):
                 return self.create_error_response(
@@ -253,6 +255,7 @@ class ReadTool(Tool):
             limit=limit,
             total_lines=total_lines,
             file_size=file_size,
+            file_mtime_ms=file_mtime_ms,
             encoding_used=encoding_used,
             fallback_used=fallback_used,
             time_ms=time_ms,
@@ -353,6 +356,7 @@ class ReadTool(Tool):
         limit: int,
         total_lines: int,
         file_size: int,
+        file_mtime_ms: int,
         encoding_used: str,
         fallback_used: bool,
         time_ms: int,
@@ -373,6 +377,7 @@ class ReadTool(Tool):
             limit: 读取的行数限制
             total_lines: 文件总行数
             file_size: 文件大小（字节）
+            file_mtime_ms: 文件修改时间（毫秒，用于乐观锁）
             encoding_used: 使用的编码
             fallback_used: 是否使用了编码回退
             time_ms: 耗时（毫秒）
@@ -434,6 +439,7 @@ class ReadTool(Tool):
             "chars_read": len(content),
             "total_lines": total_lines,
             "file_size_bytes": file_size,
+            "file_mtime_ms": file_mtime_ms,  # 乐观锁所需
             "encoding": encoding_used,
         }
         

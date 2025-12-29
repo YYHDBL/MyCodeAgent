@@ -42,6 +42,7 @@ class ErrorCode(str, Enum):
     EXECUTION_ERROR = "EXECUTION_ERROR" # 其它 I/O 或执行错误（磁盘满等）
     IS_DIRECTORY = "IS_DIRECTORY"     # 路径是目录而非文件
     BINARY_FILE = "BINARY_FILE"       # 文件是二进制格式
+    CONFLICT = "CONFLICT"             # 文件在读取后被修改（乐观锁冲突）
 
 
 # =============================================================================

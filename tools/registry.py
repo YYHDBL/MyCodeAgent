@@ -1,12 +1,14 @@
 """工具注册表 - HelloAgents原生工具系统
 
 包含迁移期适配器，用于将旧格式响应转换为《通用工具响应协议》格式。
+包含乐观锁自动注入机制，框架自动管理 Read 元信息缓存。
 """
 
 import json
 import os
+import time
 import logging
-from typing import Optional, Any, Callable
+from typing import Optional, Any, Callable, TypedDict
 
 from .base import Tool, ToolStatus, ErrorCode
 
@@ -15,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 # 环境变量控制适配器开关（默认启用）
 ENABLE_LEGACY_ADAPTER = os.environ.get("ENABLE_LEGACY_ADAPTER", "true").lower() == "true"
+
+
+class ReadMeta(TypedDict):
+    """Read 操作的元信息（用于乐观锁自动注入）"""
+    path_resolved: str        # 解析后的规范化路径（主键）
+    file_mtime_ms: int        # 文件修改时间（毫秒）
+    file_size_bytes: int      # 文件大小（字节）
+    captured_at: float        # 缓存时间戳（用于调试/过期策略）
 
 
 class ToolRegistry:
@@ -27,11 +37,15 @@ class ToolRegistry:
     2. 函数直接注册（简便）
     
     包含迁移期适配器，用于将旧格式响应转换为协议格式。
+    包含乐观锁自动注入机制，自动管理 Read 元信息缓存。
     """
 
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._functions: dict[str, dict[str, Any]] = {}
+        # Read 元信息缓存（用于乐观锁自动注入）
+        # key: path_resolved 或原始 path
+        self._read_cache: dict[str, ReadMeta] = {}
 
 
     def register_tool(self, tool: Tool):
@@ -98,22 +112,29 @@ class ToolRegistry:
         """
         result_str = ""
         
+        # 准备参数
+        if isinstance(input_text, dict):
+            parameters = input_text.copy()  # 复制以避免修改原始参数
+        else:
+            parameters = {"input": input_text}
+        
+        # =====================================================================
+        # 乐观锁自动注入：为 Write/Edit 注入 expected_mtime_ms / expected_size_bytes
+        # =====================================================================
+        if name in {"Write", "Edit"}:
+            parameters = self._inject_optimistic_lock_params(name, parameters)
+        
         # 优先查找Tool对象
         if name in self._tools:
             tool = self._tools[name]
             try:
-                # 如果是字典，直接传入；否则包装为input
-                if isinstance(input_text, dict):
-                    parameters = input_text
-                else:
-                    parameters = {"input": input_text}
                 result_str = tool.run(parameters)
             except Exception as e:
                 # 工具执行异常，返回协议格式的错误响应
                 return self._create_internal_error_response(
                     name=name,
                     message=f"执行工具 '{name}' 时发生异常: {str(e)}",
-                    params_input=parameters if 'parameters' in dir() else {},
+                    params_input=parameters,
                 )
 
         # 查找函数工具
@@ -125,7 +146,7 @@ class ToolRegistry:
                 return self._create_internal_error_response(
                     name=name,
                     message=f"执行工具 '{name}' 时发生异常: {str(e)}",
-                    params_input={"input": input_text} if not isinstance(input_text, dict) else input_text,
+                    params_input=parameters,
                 )
 
         else:
@@ -139,7 +160,132 @@ class ToolRegistry:
         if ENABLE_LEGACY_ADAPTER:
             result_str = self._apply_legacy_adapter(name, result_str, input_text)
         
+        # =====================================================================
+        # 乐观锁缓存更新：记录 Read 结果的元信息
+        # =====================================================================
+        if name == "Read":
+            self._cache_read_meta(result_str, parameters)
+        
         return result_str
+    
+    def _inject_optimistic_lock_params(self, tool_name: str, parameters: dict) -> dict:
+        """
+        为 Write/Edit 工具自动注入乐观锁参数
+        
+        如果参数中缺少 expected_mtime_ms / expected_size_bytes，
+        尝试从 Read 缓存中查找并注入。
+        
+        Args:
+            tool_name: 工具名称
+            parameters: 原始参数
+            
+        Returns:
+            注入后的参数（可能与原始相同）
+        """
+        # 如果已经提供了，不覆盖
+        if "expected_mtime_ms" in parameters and "expected_size_bytes" in parameters:
+            return parameters
+        
+        # 获取目标路径
+        path = parameters.get("path")
+        if not path:
+            return parameters
+        
+        # 尝试从缓存查找（先用原始 path，再用规范化 path）
+        meta = self._read_cache.get(path)
+        if not meta:
+            # 尝试规范化路径匹配
+            # 注意：这里的规范化逻辑应与工具内部一致
+            normalized_path = path.replace("\\", "/")
+            if normalized_path.startswith("./"):
+                normalized_path = normalized_path[2:]
+            meta = self._read_cache.get(normalized_path)
+        
+        if meta:
+            # 找到缓存，注入参数
+            if "expected_mtime_ms" not in parameters:
+                parameters["expected_mtime_ms"] = meta["file_mtime_ms"]
+            if "expected_size_bytes" not in parameters:
+                parameters["expected_size_bytes"] = meta["file_size_bytes"]
+            logger.debug(
+                f"[OptimisticLock] Auto-injected for {tool_name}: "
+                f"mtime={meta['file_mtime_ms']}, size={meta['file_size_bytes']}, path={path}"
+            )
+        else:
+            # 未找到缓存，让工具正常报错（提示先 Read）
+            logger.debug(
+                f"[OptimisticLock] No Read cache found for path '{path}'. "
+                f"Tool will report INVALID_PARAM if file exists."
+            )
+        
+        return parameters
+    
+    def _cache_read_meta(self, result_str: str, params_input: dict) -> None:
+        """
+        缓存 Read 工具的元信息（用于后续 Write/Edit 的乐观锁校验）
+        
+        仅在 Read 成功或 partial 时缓存。
+        
+        Args:
+            result_str: Read 工具的响应字符串
+            params_input: 原始输入参数
+        """
+        try:
+            parsed = json.loads(result_str)
+        except json.JSONDecodeError:
+            return
+        
+        # 仅缓存成功/partial 状态
+        status = parsed.get("status")
+        if status not in ("success", "partial"):
+            return
+        
+        # 提取元信息
+        stats = parsed.get("stats", {})
+        context = parsed.get("context", {})
+        
+        file_mtime_ms = stats.get("file_mtime_ms")
+        file_size_bytes = stats.get("file_size_bytes")
+        path_resolved = context.get("path_resolved")
+        
+        # 必须同时有 mtime 和 size
+        if file_mtime_ms is None or file_size_bytes is None:
+            logger.warning(
+                f"[OptimisticLock] Read response missing file_mtime_ms or file_size_bytes. "
+                f"Skipping cache."
+            )
+            return
+        
+        # 构建缓存条目
+        meta: ReadMeta = {
+            "path_resolved": path_resolved or "",
+            "file_mtime_ms": file_mtime_ms,
+            "file_size_bytes": file_size_bytes,
+            "captured_at": time.time(),
+        }
+        
+        # 使用 path_resolved 作为主键
+        if path_resolved:
+            self._read_cache[path_resolved] = meta
+        
+        # 同时用原始 path 作为别名键（便于匹配）
+        original_path = params_input.get("path")
+        if original_path and original_path != path_resolved:
+            self._read_cache[original_path] = meta
+        
+        logger.debug(
+            f"[OptimisticLock] Cached Read meta: path={path_resolved}, "
+            f"mtime={file_mtime_ms}, size={file_size_bytes}"
+        )
+    
+    def clear_read_cache(self) -> None:
+        """
+        清空 Read 元信息缓存
+        
+        在需要重置乐观锁状态时调用（如新会话开始）。
+        """
+        self._read_cache.clear()
+        logger.debug("[OptimisticLock] Read cache cleared.")
     
     def _apply_legacy_adapter(self, tool_name: str, result_str: str, params_input: Any) -> str:
         """

@@ -84,6 +84,7 @@ class ProtocolValidator:
         "EXECUTION_ERROR", # 其它 I/O 或执行错误
         "IS_DIRECTORY",    # 路径是目录而非文件
         "BINARY_FILE",     # 文件是二进制格式
+        "CONFLICT",        # 文件在读取后被修改（乐观锁冲突）
     }
     
     # 工具类别与推荐字段映射

@@ -60,6 +60,15 @@ ReadTool 是 Code Agent 获取代码上下文的核心工具，提供带行号�
 - `params_input` (object): **必填**，调用时传入的原始参数（原样保存）
 - `path_resolved` (string): 解析后的规范化相对路径（POSIX 风格，允许 resolve symlink）
 
+#### 2.3.2.1 stats 字段补充说明
+- `time_ms` (int): 执行耗时（毫秒）
+- `lines_read` (int): 读取的行数
+- `chars_read` (int): 读取的字符数
+- `total_lines` (int): 文件总行数
+- `file_size_bytes` (int): 文件大小（字节）
+- `file_mtime_ms` (int): 文件 mtime（毫秒）
+- `encoding` (string): 实际使用的编码
+
 #### 2.3.3 成功/截断示例
 ```json
 {
@@ -75,6 +84,7 @@ ReadTool 是 Code Agent 获取代码上下文的核心工具，提供带行号�
     "chars_read": 12050,
     "total_lines": 1523,
     "file_size_bytes": 45200,
+    "file_mtime_ms": 1735212345000,
     "encoding": "utf-8"
   },
   "context": {

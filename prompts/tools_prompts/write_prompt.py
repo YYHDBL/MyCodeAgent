@@ -14,17 +14,30 @@ Create new files or completely replace existing file content. This tool performs
 3. **Diff Preview**: Returns a unified diff showing your changes.
 4. **Dry Run Mode**: Use `dry_run=true` to preview changes without writing.
 5. **Atomic Write**: Uses temp file + rename for crash safety.
+6. **Automatic Conflict Prevention**: Framework auto-injects mtime/size from prior Read (if available).
 
 ## Parameters
 - `path` (string, required): Relative path to the file. POSIX style (use `/`), no absolute paths.
 - `content` (string, required): The FULL content to write to the file.
 - `dry_run` (boolean, optional): If true, only compute diff without writing. Default: false.
 
+Note: `expected_mtime_ms` and `expected_size_bytes` are **automatically injected by the framework** if you have previously Read the file. You do NOT need to pass them manually.
+
+## Conflict Prevention (Automatic)
+The framework automatically handles conflict prevention:
+1. When you **Read** a file, the framework caches its `file_mtime_ms` and `file_size_bytes`
+2. When you **Write** to an existing file, the framework auto-injects these values
+3. If the file was modified by someone else, Write returns a `CONFLICT` error
+4. On `CONFLICT`: Re-read the file, re-apply your changes, and try again
+
+**Important**: You must Read a file before Writing to it (for existing files). The framework will report INVALID_PARAM if you try to Write an existing file without a prior Read.
+
 ## Best Practices
-1. **Read Before Write**: Always use Read tool first to understand the current content before modifying existing files.
+1. **Read Before Write**: Always use Read tool first before modifying existing files.
 2. **Check Diff**: Review the returned `diff_preview` to verify your changes are correct.
 3. **Handle Truncation**: If `diff_truncated=true`, use Read to verify the full content.
 4. **Use Dry Run**: For risky changes, use `dry_run=true` first to preview.
+5. **Handle CONFLICT**: If you get a CONFLICT error, re-read and re-apply changes.
 
 ## Output
 Returns a standard envelope with:
@@ -36,15 +49,16 @@ Returns a standard envelope with:
 - `text`: Human-readable summary
 
 ## Error Codes
-- `INVALID_PARAM`: Missing path/content, or absolute path used
+- `INVALID_PARAM`: Missing path/content, absolute path used, or writing existing file without prior Read
 - `ACCESS_DENIED`: Path outside project root (sandbox violation)
 - `PERMISSION_DENIED`: OS-level permission error (EACCES)
 - `EXECUTION_ERROR`: Other I/O or execution errors (e.g., disk full)
 - `IS_DIRECTORY`: Target path is a directory
+- `CONFLICT`: File was modified since you read it (re-read and retry)
 
 ## Examples
 
-### Create a new file
+### Create a new file (no prior Read needed)
 ```json
 {
   "path": "src/utils/helper.py",
@@ -52,11 +66,25 @@ Returns a standard envelope with:
 }
 ```
 
-### Update existing file with dry run
+### Update existing file (must Read first)
+Step 1: Read the file
+```
+Read[{"path": "README.md"}]
+```
+
+Step 2: Write with your changes (mtime/size auto-injected)
 ```json
 {
   "path": "README.md",
-  "content": "# Updated Title\\n\\nNew content here.\\n",
+  "content": "# Updated Title\\n\\nNew content here.\\n"
+}
+```
+
+### Update with dry run preview
+```json
+{
+  "path": "config.json",
+  "content": "{\\"key\\": \\"new_value\\"}\\n",
   "dry_run": true
 }
 ```
@@ -65,4 +93,6 @@ Returns a standard envelope with:
 - This tool does NOT support partial edits or patches. Always provide full content.
 - For editing specific sections of a file, first Read the file, modify the content in your response, then Write the complete modified content.
 - Empty content (`""`) is allowed - this creates an empty file.
+- For NEW files, no prior Read is needed.
+- For EXISTING files, you must Read first (framework auto-injects lock parameters).
 """

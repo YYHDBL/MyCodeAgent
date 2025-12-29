@@ -12,7 +12,9 @@ from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
 from tools.builtin.search_code import GrepTool
+from tools.builtin.read_file import ReadTool
 from tools.builtin.write_file import WriteTool
+from tools.builtin.edit_file import EditTool
 from agentEngines.ReActEngine import ReActEngine
 
 
@@ -37,13 +39,15 @@ class TestAgent(Agent):
         self.last_response_raw: Optional[Any] = None
         self.tool_registry = tool_registry or ToolRegistry()
         self.project_root = project_root
-        # 给 TestAgent 注册计算器工具
+        # 注册工具
         self.tool_registry.register_tool(
             ListFilesTool(project_root=self.project_root, working_dir=self.project_root)
         )
         self.tool_registry.register_tool(SearchFilesByNameTool(project_root=self.project_root))
         self.tool_registry.register_tool(GrepTool(project_root=self.project_root))
+        self.tool_registry.register_tool(ReadTool(project_root=self.project_root))
         self.tool_registry.register_tool(WriteTool(project_root=self.project_root))
+        self.tool_registry.register_tool(EditTool(project_root=self.project_root))
         # 以 ReActEngine 作为核心
         self.engine = ReActEngine(
             llm=self.llm,
