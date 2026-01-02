@@ -237,6 +237,7 @@ class Tool(ABC):
         message: str,
         params_input: Dict[str, Any],
         time_ms: int = 0,
+        data: Optional[Dict[str, Any]] = None,
         path_resolved: Optional[str] = None,
         extra_context: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -270,10 +271,11 @@ class Tool(ABC):
         # 构建 stats
         stats: Dict[str, Any] = {"time_ms": time_ms}
         
-        # 构建 payload（error 响应的 data 为空对象）
+        # 构建 payload（error 响应的 data 允许携带结构化信息）
+        error_data: Dict[str, Any] = data or {}
         payload = {
             "status": ToolStatus.ERROR.value,
-            "data": {},
+            "data": error_data,
             "text": message,
             "error": {
                 "code": error_code.value,

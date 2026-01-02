@@ -496,7 +496,7 @@ class EditTool(Tool):
             new_lines,
             fromfile=f"a/{file_path}",
             tofile=f"b/{file_path}",
-            lineterm=""
+            lineterm="\n"                  # 标准换行符
         )
         
         preview_lines: List[str] = []

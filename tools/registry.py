@@ -121,7 +121,7 @@ class ToolRegistry:
         # =====================================================================
         # 乐观锁自动注入：为 Write/Edit 注入 expected_mtime_ms / expected_size_bytes
         # =====================================================================
-        if name in {"Write", "Edit"}:
+        if name in {"Write", "Edit", "MultiEdit"}:
             parameters = self._inject_optimistic_lock_params(name, parameters)
         
         # 优先查找Tool对象

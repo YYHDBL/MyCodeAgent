@@ -11,6 +11,7 @@ from tools.builtin.search_code import GrepTool
 from tools.builtin.read_file import ReadTool
 from tools.builtin.write_file import WriteTool
 from tools.builtin.edit_file import EditTool
+from tools.builtin.edit_file_multi import MultiEditTool
 from utils import setup_logger
 # 引入上面的 Engine
 from agentEngines.ReActEngine import ReActEngine 
@@ -48,6 +49,8 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(WriteTool(project_root=self.project_root))
         # 注册 Edit 工具
         self.tool_registry.register_tool(EditTool(project_root=self.project_root))
+        # 注册 MultiEdit 工具
+        self.tool_registry.register_tool(MultiEditTool(project_root=self.project_root))
         
         # 【核心点】组合 ReActEngine
         # 我们在这里把工具给 Engine
