@@ -6,6 +6,7 @@ from core.agent import Agent
 from core.message import Message
 from core.llm import HelloAgentsLLM
 from core.config import Config
+from core.context_builder import ContextBuilder
 from utils import setup_logger
 from tools.registry import ToolRegistry
 
@@ -49,11 +50,13 @@ class TestAgent(Agent):
         self.tool_registry.register_tool(WriteTool(project_root=self.project_root))
         self.tool_registry.register_tool(EditTool(project_root=self.project_root))
         # 以 ReActEngine 作为核心
+        context_builder = ContextBuilder(tool_registry=self.tool_registry)
         self.engine = ReActEngine(
             llm=self.llm,
             tool_registry=self.tool_registry,
             max_steps=8,
             verbose=True,
+            context_builder=context_builder,
         )
 
     def run(self, input_text: str, **kwargs) -> str:

@@ -4,6 +4,7 @@ from core.agent import Agent
 from core.llm import HelloAgentsLLM
 from core.message import Message
 from core.config import Config
+from core.context_builder import ContextBuilder
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -60,11 +61,13 @@ class CodeAgent(Agent):
         
         # 【核心点】组合 ReActEngine
         # 我们在这里把工具给 Engine
+        context_builder = ContextBuilder(tool_registry=self.tool_registry)
         self.engine = ReActEngine(
             llm=llm,
             tool_registry=self.tool_registry,
             max_steps=50, # Code 任务通常需要更多步骤
-            verbose=True
+            verbose=True,
+            context_builder=context_builder,
         )
 
     def run(self, input_text: str, **kwargs) -> str:
