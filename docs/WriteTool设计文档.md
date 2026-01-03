@@ -13,8 +13,8 @@ WriteTool 是 Code Agent 修改/创建文件的核心工具，提供全量覆盖
 - **自动目录保障**：父目录不存在时自动递归创建
 - **沙箱安全**：强制限制在 PROJECT_ROOT 内
 - **预演模式**：支持 dry_run，仅计算 diff 不落盘
-- **读写约束（MVP）**：当前仅在提示词层要求“已有文件必须先 Read”，代码层使用乐观锁实现约束
-- **乐观锁（规划）**：Write 将引入 `expected_mtime_ms` + `expected_size_bytes` 校验，防止覆盖用户修改（见 `docs/details/乐观锁设计方案.md`）
+- **读写约束（已实现）**：已有文件必须先 Read（由框架自动注入乐观锁参数）
+- **乐观锁（已实现）**：`expected_mtime_ms` + `expected_size_bytes` 校验，防止覆盖用户修改（详见 `docs/details/乐观锁设计方案.md`）
 
 ---
 
@@ -46,6 +46,14 @@ WriteTool 是 Code Agent 修改/创建文件的核心工具，提供全量覆盖
         "type": "boolean",
         "description": "If true, compute diff but do not write to disk.",
         "default": false
+      },
+      "expected_mtime_ms": {
+        "type": "integer",
+        "description": "Expected file mtime in milliseconds (auto-injected by framework after Read; required for existing files)."
+      },
+      "expected_size_bytes": {
+        "type": "integer",
+        "description": "Expected file size in bytes (auto-injected by framework after Read; required for existing files)."
       }
     },
     "required": ["path", "content"]
@@ -111,17 +119,18 @@ WriteTool 是 Code Agent 修改/创建文件的核心工具，提供全量覆盖
 | 目标是目录 | IS_DIRECTORY | "Target path is a directory." |
 | 参数错误 | INVALID_PARAM | "Content cannot be empty." |
 | IO 错误 | EXECUTION_ERROR | "Disk full or IO error." |
+| 乐观锁冲突 | CONFLICT | "File has been modified since you read it." |
 
 ---
 
 ## 4. 核心行为逻辑
 
-### 4.0 Read-before-Write 约束（MVP 策略）
-- **MVP 阶段**：仅在提示词中强约束“已有文件必须先 Read”。  
-- **代码层**：暂不阻止写入，但需在实现中加入 TODO，后续引入 read_timestamps 校验。
+### 4.0 Read-before-Write 约束（已实现）
+- **已有文件**：必须先 Read，框架会自动注入 `expected_mtime_ms` / `expected_size_bytes`。
+- **缺少乐观锁参数**：工具返回 `INVALID_PARAM`，提示先 Read。
 
-### 4.0.1 乐观锁参数（规划）
-- 对已存在文件：要求传入 `expected_mtime_ms` 与 `expected_size_bytes`（从 Read 返回的 stats 中获取）
+### 4.0.1 乐观锁参数（已实现）
+- 对已存在文件：要求传入 `expected_mtime_ms` 与 `expected_size_bytes`（由框架从 Read 返回的 stats 中自动注入）
 - 不匹配则返回 `CONFLICT`，提示重新 Read
 
 ### 4.1 路径与沙箱校验

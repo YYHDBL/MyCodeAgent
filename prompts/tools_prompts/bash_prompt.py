@@ -26,12 +26,13 @@ Safety Notes (MVP)
 
 Response Structure
 - status: "success" | "partial" | "error"
-  - "success": exit_code == 0 and not truncated
-  - "partial": exit_code != 0, truncated output, or timeout with partial output
+  - "success": exit_code == 0 (MVP does not truncate output)
+  - "partial": exit_code != 0, or timeout with partial output
   - "error": invalid params, blocked command, path denied, or timeout with no output
 - data: {stdout, stderr, exit_code, signal, truncated, command, directory}
 - stats: {time_ms, stdout_bytes, stderr_bytes}
 - context: {cwd, params_input, directory_resolved}
+- error: {code, message} (only when status="error")
 
 Examples
 1) Run tests in the project root

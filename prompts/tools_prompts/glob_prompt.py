@@ -43,6 +43,14 @@ Response Structure
 - text: Human-readable summary with match list.
 - stats: {time_ms, matched, visited}
 - context: {cwd, params_input, path_resolved, pattern_normalized}
+- error: {code, message} (only when status="error")
+
+Error Codes
+- NOT_FOUND: search root does not exist.
+- ACCESS_DENIED: path outside project root (sandbox violation).
+- INVALID_PARAM: invalid pattern/path/limit.
+- TIMEOUT: search time limit exceeded with no matches.
+- INTERNAL_ERROR: unexpected failure.
 
 Examples
 1) List all Markdown files in the project

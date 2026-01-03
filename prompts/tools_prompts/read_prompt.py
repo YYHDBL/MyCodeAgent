@@ -7,7 +7,7 @@ read_prompt = """
 Tool name: Read
 Tool description:
 Reads a file from the local filesystem with line numbers. Optimized for code editing.
-Follows the Universal Tool Response Protocol (顶层字段仅: status/data/text/stats/context).
+Follows the Universal Tool Response Protocol (顶层字段仅: status/data/text/error/stats/context).
 
 Usage
 - Use Read to view file content with line numbers for editing context.
@@ -37,6 +37,7 @@ Response Structure
 - text: Human-readable summary with pagination hints.
 - stats: {time_ms, lines_read, chars_read, total_lines, file_size_bytes, encoding}
 - context: {cwd, params_input, path_resolved}
+- error: {code, message} (only when status="error")
 
 Examples
 1) Read a file from the beginning

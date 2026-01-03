@@ -11,9 +11,15 @@
   - `list_files.py`：`ListFilesTool` (LS) - 目录浏览工具。
   - `search_files_by_name.py`：`SearchFilesByNameTool` (Glob) - 文件搜索工具。
   - `search_code.py`：`GrepTool` (Grep) - 代码内容搜索工具。
+  - `read_file.py`：`ReadTool` (Read) - 文件读取工具。
+  - `write_file.py`：`WriteTool` (Write) - 文件写入工具。
+  - `edit_file.py`：`EditTool` (Edit) - 单点编辑工具。
+  - `edit_file_multi.py`：`MultiEditTool` (MultiEdit) - 多点编辑工具。
+  - `todo_write.py`：`TodoWriteTool` (TodoWrite) - 任务清单管理工具。
+  - `bash.py`：`BashTool` (Bash) - 命令执行工具。
   - `calculator.py`：`CalculatorTool` - 数学计算工具（demo 工具，未遵循新协议）。
 - `scripts/`：交互脚本（`chat_test_agent.py`）。
-- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`）。
+- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`、`read_prompt.py`、`write_prompt.py`、`edit_prompt.py`、`multi_edit_prompt.py`、`todo_write_prompt.py`、`bash_prompt.py`）。
 - `docs/`：文档（`DEV_HANDOFF.md`、`通用工具响应协议.md`）。
 
 ## 当前进度摘要
@@ -76,7 +82,7 @@
 
 **枚举类型**：
 - `ToolStatus`：`SUCCESS` | `PARTIAL` | `ERROR`（序列化为小写字符串）
-- `ErrorCode`：`NOT_FOUND` | `ACCESS_DENIED` | `INVALID_PARAM` | `TIMEOUT` | `INTERNAL_ERROR`
+- `ErrorCode`：`NOT_FOUND` | `ACCESS_DENIED` | `PERMISSION_DENIED` | `INVALID_PARAM` | `TIMEOUT` | `INTERNAL_ERROR` | `EXECUTION_ERROR` | `IS_DIRECTORY` | `BINARY_FILE` | `CONFLICT`
 
 **初始化参数**：
 - `name`：工具名称

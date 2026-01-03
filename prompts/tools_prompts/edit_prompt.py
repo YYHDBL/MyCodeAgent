@@ -30,14 +30,19 @@ Note: `expected_mtime_ms` and `expected_size_bytes` are **automatically injected
 4. **Handle CONFLICT errors** by re-reading the file and re-applying your changes.
 5. **Use Write for new files**. Edit only works on existing files.
 
-## Output
-Returns a standard envelope with:
-- `data.applied`: Whether the edit was actually applied (false if dry_run)
-- `data.diff_preview`: Unified diff showing changes
-- `data.diff_truncated`: Whether diff was truncated
-- `data.replacements`: Number of replacements made (always 1 for successful Edit)
-- `stats.lines_added/lines_removed`: Line change statistics
-- `text`: Human-readable summary
+## Response Structure
+- status: "success" | "partial" | "error"
+  - "success": edit applied successfully
+  - "partial": dry_run or diff truncated
+  - "error": invalid params, path denied, or I/O error
+- data.applied: Whether the edit was actually applied (false if dry_run)
+- data.diff_preview: Unified diff showing changes
+- data.diff_truncated: Whether diff was truncated
+- data.replacements: Number of replacements made (always 1 for successful Edit)
+- text: Human-readable summary
+- stats: {time_ms, lines_added, lines_removed, bytes_written}
+- context: {cwd, params_input, path_resolved}
+- error: {code, message} (only when status="error")
 
 ## Error Codes
 - `NOT_FOUND`: File does not exist (use Write for new files)

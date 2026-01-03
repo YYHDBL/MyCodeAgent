@@ -39,14 +39,19 @@ The framework automatically handles conflict prevention:
 4. **Use Dry Run**: For risky changes, use `dry_run=true` first to preview.
 5. **Handle CONFLICT**: If you get a CONFLICT error, re-read and re-apply changes.
 
-## Output
-Returns a standard envelope with:
-- `data.applied`: Whether the file was actually written (false if dry_run)
-- `data.operation`: "create" or "update"
-- `data.diff_preview`: Unified diff showing changes
-- `data.diff_truncated`: Whether diff was truncated (large changes)
-- `stats.lines_added/lines_removed`: Line change statistics (if diff truncated, counts are for preview only)
-- `text`: Human-readable summary
+## Response Structure
+- status: "success" | "partial" | "error"
+  - "success": write succeeded with full diff preview
+  - "partial": dry_run or diff truncated
+  - "error": invalid params, path denied, or I/O error
+- data.applied: Whether the file was actually written (false if dry_run)
+- data.operation: "create" or "update"
+- data.diff_preview: Unified diff showing changes
+- data.diff_truncated: Whether diff was truncated (large changes)
+- text: Human-readable summary
+- stats: {time_ms, bytes_written, original_size, new_size, lines_added, lines_removed}
+- context: {cwd, params_input, path_resolved}
+- error: {code, message} (only when status="error")
 
 ## Error Codes
 - `INVALID_PARAM`: Missing path/content, absolute path used, or writing existing file without prior Read

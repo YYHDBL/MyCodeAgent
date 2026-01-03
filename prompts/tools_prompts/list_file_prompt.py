@@ -34,21 +34,24 @@ Response Structure
 - text: Human-readable summary with entry list.
 - stats: {time_ms, total_entries, dirs, files, links, returned}
 - context: {cwd, params_input, path_resolved}
+- error: {code, message} (only when status="error")
+
+Error Codes
+- NOT_FOUND: path does not exist.
+- ACCESS_DENIED: path outside project root (sandbox violation).
+- INVALID_PARAM: invalid path/offset/limit/include_hidden.
+- INTERNAL_ERROR: unexpected failure.
 
 Examples
 1) List project root (first page)
-
 LS[{"path": ".", "limit": 50}]
 
 2) List src/ (default ignores)
-
 LS[{"path": "src", "offset": 0, "limit": 100}]
 
 3) List logs/ but ignore .log files
-
 LS[{"path": "logs", "limit": 100, "ignore": ["*.log"]}]
 
 4) Include hidden directories
-
 LS[{"path": ".", "include_hidden": true, "limit": 100}]
 """

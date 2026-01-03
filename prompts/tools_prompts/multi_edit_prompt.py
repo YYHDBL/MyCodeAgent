@@ -34,16 +34,20 @@ Note: `expected_mtime_ms` and `expected_size_bytes` are **automatically injected
 5. **Use Write for new files**. MultiEdit only works on existing files.
 6. **Handle CONFLICT errors** by re-reading the file and re-applying your changes.
 
-## Output
-Returns a standard envelope with:
-- `data.applied`: Whether the edits were actually applied (false if dry_run)
-- `data.diff_preview`: Unified diff showing all changes
-- `data.diff_truncated`: Whether diff was truncated
-- `data.replacements`: Number of replacements made (equals number of edits on success)
-- `data.failed_index`: Index of failed edit (null on success)
-- `stats.lines_added/lines_removed`: Line change statistics
-- `stats.bytes_written`: Bytes written to file
-- `text`: Human-readable summary
+## Response Structure
+- status: "success" | "partial" | "error"
+  - "success": all edits applied successfully
+  - "partial": dry_run or diff truncated
+  - "error": invalid params, path denied, or I/O error
+- data.applied: Whether the edits were actually applied (false if dry_run)
+- data.diff_preview: Unified diff showing all changes
+- data.diff_truncated: Whether diff was truncated
+- data.replacements: Number of replacements made (equals number of edits on success)
+- data.failed_index: Index of failed edit (null on success)
+- text: Human-readable summary
+- stats: {time_ms, lines_added, lines_removed, bytes_written}
+- context: {cwd, params_input, path_resolved}
+- error: {code, message} (only when status="error")
 
 ## Error Codes
 - `NOT_FOUND`: File does not exist (MultiEdit cannot create files)

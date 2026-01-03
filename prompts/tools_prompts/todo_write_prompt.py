@@ -43,10 +43,10 @@ Response Structure
 - data.todos: Updated todo list with tool-assigned ids (for model).
 - data.recap: Short summary for context tail (improves model attention).
 - data.summary: Echoed task summary.
-- data.persisted_to: Path to saved file (only when all tasks completed/cancelled).
 - text: Human-readable UI block (for user display).
 - stats: {time_ms, total, pending, in_progress, completed, cancelled}
 - context: {cwd, params_input}
+- error: {code, message} (only when status="error")
 
 Persistence
 - When ALL todos are completed or cancelled, the tool automatically persists a markdown log (no model action needed).

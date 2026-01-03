@@ -22,6 +22,8 @@ Parameters (JSON object)
 - case_sensitive (boolean, optional, default false)
   false -> case-insensitive (default)
   true  -> case-sensitive
+- limit (integer, optional, default 100, range 1-100)
+  Max number of matching lines to return.
 
 Response Structure
 - status: "success" | "partial" | "error"
@@ -39,6 +41,14 @@ Response Structure
 - text: Human-readable summary with match list.
 - stats: {time_ms, matched_files, matched_lines}
 - context: {cwd, params_input, path_resolved, pattern, sorted_by}
+- error: {code, message} (only when status="error")
+
+Error Codes
+- NOT_FOUND: search root does not exist.
+- ACCESS_DENIED: path outside project root (sandbox violation).
+- INVALID_PARAM: invalid regex or parameters.
+- TIMEOUT: search timed out with no matches.
+- INTERNAL_ERROR: unexpected failure.
 
 Examples
 1) Find TODO comments in all TypeScript files
@@ -52,4 +62,8 @@ Grep[{"pattern": "class\\s+\\w+", "path": "src"}]
 3) Case-sensitive search for the word "Password" in TS files
 
 Grep[{"pattern": "Password", "path": ".", "include": "src/**/*.ts", "case_sensitive": true}]
+
+4) Limit results to the top 3 (newest files first)
+
+Grep[{"pattern": "class ", "path": ".", "limit": 3}]
 """
