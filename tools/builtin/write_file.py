@@ -584,8 +584,19 @@ class WriteTool(Tool):
         """
         获取工具参数定义
         
+        定义 Write 工具支持的所有参数，包括参数名称、类型、描述、是否必填等。
+        这些参数会被框架用于：
+        - 生成工具的 schema（供 LLM 理解）
+        - 参数验证
+        - 自动补全和提示
+        
         Returns:
-            工具参数列表
+            工具参数列表，包含以下参数：
+            - path: 文件路径（必填）
+            - content: 文件内容（必填）
+            - expected_mtime_ms: 期望的修改时间（现有文件必填）
+            - expected_size_bytes: 期望的文件大小（现有文件必填）
+            - dry_run: 是否为试运行模式（可选）
         """
         return [
             ToolParameter(

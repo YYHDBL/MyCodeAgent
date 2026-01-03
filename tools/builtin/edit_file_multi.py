@@ -36,10 +36,16 @@ class MultiEditTool(Tool):
         """
         初始化多次编辑工具
 
+        MultiEdit 工具允许对同一文件进行多处独立的编辑操作，所有编辑会原子性地一次性落盘。
+        这比多次调用 Edit 工具更高效，且能避免中间状态导致的不一致。
+
         Args:
             name: 工具名称，默认为 "MultiEdit"
             project_root: 项目根目录，用于沙箱限制（防止编辑项目外的文件）
             working_dir: 工作目录，用于解析相对路径
+        
+        Raises:
+            ValueError: 如果 project_root 未提供
         """
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -57,6 +63,24 @@ class MultiEditTool(Tool):
     def run(self, parameters: Dict[str, Any]) -> str:
         """
         执行多次编辑操作
+
+        MultiEdit 的核心执行方法，支持对同一文件进行多处独立的编辑操作。
+        所有编辑操作会原子性地一次性落盘，避免中间状态导致的不一致。
+
+        工作流程：
+        1. 参数校验（path、edits、dry_run）
+        2. 路径解析与沙箱校验
+        3. 文件存在性与类型检查
+        4. 乐观锁校验（防止并发修改）
+        5. 二进制文件检测
+        6. 读取原文件内容
+        7. 换行符探测与归一化
+        8. 匹配定位（基于原文件）
+        9. 冲突检测（区间重叠检查）
+        10. 倒序应用替换（避免索引偏移）
+        11. Diff 计算
+        12. 执行写入（或 dry_run 跳过）
+        13. 构建响应
 
         Args:
             parameters: 包含以下键的字典：
@@ -110,6 +134,7 @@ class MultiEditTool(Tool):
             )
         
         # 校验每个 edit 的结构
+        # 每个 edit 必须包含 old_string 和 new_string 两个字段
         for i, edit in enumerate(edits):
             if not isinstance(edit, dict):
                 return self.create_error_response(
@@ -121,6 +146,7 @@ class MultiEditTool(Tool):
             old_string = edit.get("old_string")
             new_string = edit.get("new_string")
             
+            # old_string 必须是非空字符串
             if old_string is None or not isinstance(old_string, str):
                 return self.create_error_response(
                     error_code=ErrorCode.INVALID_PARAM,
@@ -135,6 +161,7 @@ class MultiEditTool(Tool):
                     params_input=params_input,
                 )
             
+            # new_string 必须是字符串（可以是空字符串，表示删除）
             if new_string is None or not isinstance(new_string, str):
                 return self.create_error_response(
                     error_code=ErrorCode.INVALID_PARAM,
@@ -158,6 +185,7 @@ class MultiEditTool(Tool):
             input_path = Path(path)
             
             # 1. 拒绝绝对路径（安全限制：只允许相对路径）
+            # 防止用户访问项目外的文件
             if input_path.is_absolute():
                 return self.create_error_response(
                     error_code=ErrorCode.INVALID_PARAM,
@@ -166,9 +194,12 @@ class MultiEditTool(Tool):
                 )
             
             # 2. 解析为绝对路径（基于项目根目录）
+            # 将相对路径转换为绝对路径，便于后续操作
             abs_path = (self._root / input_path).resolve()
             
             # 3. 沙箱检查：确保路径在项目根目录内（防止路径遍历攻击）
+            # 使用 relative_to 检查路径是否在项目根目录下
+            # 如果路径包含 .. 尝试跳出项目根目录，会抛出 ValueError
             try:
                 abs_path.relative_to(self._root)
             except ValueError:
@@ -198,6 +229,7 @@ class MultiEditTool(Tool):
         # =====================================================================
         
         # 检查文件是否存在
+        # MultiEdit 只能编辑已存在的文件，不能创建新文件
         if not abs_path.exists():
             return self.create_error_response(
                 error_code=ErrorCode.NOT_FOUND,
@@ -207,6 +239,7 @@ class MultiEditTool(Tool):
             )
         
         # 检查是否为目录
+        # 目录不能使用 MultiEdit 编辑
         if abs_path.is_dir():
             return self.create_error_response(
                 error_code=ErrorCode.IS_DIRECTORY,
@@ -218,6 +251,9 @@ class MultiEditTool(Tool):
         # =====================================================================
         # 乐观锁校验（在读取文件内容之前）
         # =====================================================================
+        
+        # 乐观锁机制：通过比较文件的修改时间和大小，检测文件是否被其他进程修改
+        # 这可以防止在用户读取文件后、编辑之前，文件被其他进程修改导致的数据不一致
         
         if expected_mtime_ms is not None and expected_size_bytes is not None:
             # 校验参数类型
@@ -237,12 +273,14 @@ class MultiEditTool(Tool):
                 )
             
             # 校验文件是否被修改
+            # 获取当前文件的 mtime 和 size，与用户读取时的值进行比较
             try:
                 current_stat = abs_path.stat()
                 current_mtime_ms = current_stat.st_mtime_ns // 1_000_000
                 current_size_bytes = current_stat.st_size
                 
                 if current_mtime_ms != expected_mtime_ms or current_size_bytes != expected_size_bytes:
+                    # 文件已被修改，拒绝编辑
                     return self.create_error_response(
                         error_code=ErrorCode.CONFLICT,
                         message="File has been modified since you read it. "
@@ -261,6 +299,7 @@ class MultiEditTool(Tool):
                 )
         elif expected_mtime_ms is None and expected_size_bytes is None:
             # 框架未注入（未先 Read），要求先 Read
+            # 用户必须先读取文件，才能进行编辑
             return self.create_error_response(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="You must Read the file before editing it. "
@@ -270,6 +309,7 @@ class MultiEditTool(Tool):
             )
         else:
             # 只提供了其中一个参数
+            # expected_mtime_ms 和 expected_size_bytes 必须同时提供
             return self.create_error_response(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Both expected_mtime_ms and expected_size_bytes must be provided together.",
@@ -281,6 +321,7 @@ class MultiEditTool(Tool):
         # 二进制文件检测
         # =====================================================================
         
+        # 检测文件是否为二进制文件，防止误编辑二进制文件导致损坏
         try:
             if self._is_binary_file(abs_path):
                 return self.create_error_response(
@@ -301,8 +342,10 @@ class MultiEditTool(Tool):
         # 读取原文件内容
         # =====================================================================
         
+        # 读取原文件内容，用于后续的匹配和 diff 计算
         try:
             # 以二进制模式读取，保留原始换行符
+            # 这样可以准确检测文件的换行符类型（CRLF 或 LF）
             raw_content = abs_path.read_bytes()
             original_size = len(raw_content)
             
@@ -311,6 +354,7 @@ class MultiEditTool(Tool):
                 old_content = raw_content.decode("utf-8")
             except UnicodeDecodeError:
                 # UTF-8 解码失败，使用 replace 模式
+                # 这样可以避免因编码问题导致后续处理失败
                 old_content = raw_content.decode("utf-8", errors="replace")
                 
         except OSError as e:
@@ -328,11 +372,16 @@ class MultiEditTool(Tool):
         # =====================================================================
         
         # 探测原始换行符类型
+        # 不同操作系统使用不同的换行符：
+        # - Windows: CRLF (\r\n)
+        # - Unix/Linux/macOS: LF (\n)
+        # 为了确保匹配的准确性，需要探测并归一化换行符
         crlf_count = old_content.count("\r\n")
         lf_count = old_content.count("\n") - crlf_count  # 纯 LF 数量
         use_crlf = crlf_count > lf_count  # 如果 CRLF 更多，保持 CRLF
         
         # 归一化为 LF 进行匹配
+        # 将所有 CRLF 转换为 LF，统一换行符格式，便于匹配
         normalized_content = old_content.replace("\r\n", "\n")
 
         # =====================================================================

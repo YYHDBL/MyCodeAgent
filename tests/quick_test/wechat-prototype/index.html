@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简易微信原型</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 左侧联系人列表 -->
+        <div class="sidebar">
+            <div class="user-profile">
+                <div class="avatar" id="userAvatar" title="点击更换头像">我</div>
+                <div class="username">用户</div>
+                <input type="file" id="avatarInput" accept="image/*" style="display: none;">
+            </div>
+            <div class="contact-list">
+                <div class="contact-item active" data-contact="张三">
+                    <div class="contact-avatar">张</div>
+                    <div class="contact-info">
+                        <div class="contact-name">张三</div>
+                        <div class="last-message">你好，最近怎么样？</div>
+                    </div>
+                    <div class="contact-time">10:30</div>
+                </div>
+                <div class="contact-item" data-contact="李四">
+                    <div class="contact-avatar">李</div>
+                    <div class="contact-info">
+                        <div class="contact-name">李四</div>
+                        <div class="last-message">明天有空吗？</div>
+                    </div>
+                    <div class="contact-time">昨天</div>
+                </div>
+                <div class="contact-item" data-contact="工作群">
+                    <div class="contact-avatar group">群</div>
+                    <div class="contact-info">
+                        <div class="contact-name">工作群</div>
+                        <div class="last-message">[图片]</div>
+                    </div>
+                    <div class="contact-time">周一</div>
+                </div>
+                <div class="contact-item" data-contact="王五">
+                    <div class="contact-avatar">王</div>
+                    <div class="contact-info">
+                        <div class="contact-name">王五</div>
+                        <div class="last-message">好的，收到</div>
+                    </div>
+                    <div class="contact-time">周日</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧聊天窗口 -->
+        <div class="chat-window">
+            <div class="chat-header">
+                <div class="chat-title">张三</div>
+                <div class="chat-actions">
+                    <button class="action-btn">⋯</button>
+                </div>
+            </div>
+            <div class="chat-messages" id="chatMessages">
+                <div class="message received">
+                    <div class="message-avatar">张</div>
+                    <div class="message-content">
+                        <div class="message-bubble">你好，最近怎么样？</div>
+                        <div class="message-time">10:30</div>
+                    </div>
+                </div>
+                <div class="message sent">
+                    <div class="message-content">
+                        <div class="message-bubble">挺好的，你呢？</div>
+                        <div class="message-time">10:31</div>
+                    </div>
+                </div>
+                <div class="message received">
+                    <div class="message-avatar">张</div>
+                    <div class="message-content">
+                        <div class="message-bubble">我也不错，周末有空出来聚聚吗？</div>
+                        <div class="message-time">10:32</div>
+                    </div>
+                </div>
+                <div class="message sent">
+                    <div class="message-content">
+                        <div class="message-bubble">好啊，去哪里？</div>
+                        <div class="message-time">10:33</div>
+                    </div>
+                </div>
+            </div>
+            <div class="chat-input">
+                <button class="icon-btn" id="emojiBtn">😊</button>
+                <button class="icon-btn" id="imageBtn">📷</button>
+                <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                <input type="text" id="messageInput" placeholder="输入消息...">
+                <button class="send-btn" id="sendBtn">发送</button>
+            </div>
+            <!-- Emoji选择器 -->
+            <div class="emoji-picker" id="emojiPicker" style="display: none;">
+                <div class="emoji-grid">
+                    <span class="emoji-item">😀</span>
+                    <span class="emoji-item">😂</span>
+                    <span class="emoji-item">😊</span>
+                    <span class="emoji-item">😍</span>
+                    <span class="emoji-item">🤔</span>
+                    <span class="emoji-item">😎</span>
+                    <span class="emoji-item">👍</span>
+                    <span class="emoji-item">👎</span>
+                    <span class="emoji-item">❤️</span>
+                    <span class="emoji-item">💔</span>
+                    <span class="emoji-item">🎉</span>
+                    <span class="emoji-item">🎊</span>
+                    <span class="emoji-item">🔥</span>
+                    <span class="emoji-item">✨</span>
+                    <span class="emoji-item">💯</span>
+                    <span class="emoji-item">🙏</span>
+                    <span class="emoji-item">👋</span>
+                    <span class="emoji-item">🤝</span>
+                    <span class="emoji-item">💪</span>
+                    <span class="emoji-item">😢</span>
+                    <span class="emoji-item">😭</span>
+                    <span class="emoji-item">😡</span>
+                    <span class="emoji-item">🤣</span>
+                    <span class="emoji-item">😅</span>
+                    <span class="emoji-item">🤗</span>
+                    <span class="emoji-item">😜</span>
+                    <span class="emoji-item">😝</span>
+                    <span class="emoji-item">🥳</span>
+                    <span class="emoji-item">😴</span>
+                    <span class="emoji-item">🤯</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
