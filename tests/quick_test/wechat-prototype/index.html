@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>简易微信原型</title>
+    <title>简易QQ原型</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,6 +23,7 @@
                         <div class="last-message">你好，最近怎么样？</div>
                     </div>
                     <div class="contact-time">10:30</div>
+                    <button class="delete-friend-btn" title="删除好友">✕</button>
                 </div>
                 <div class="contact-item" data-contact="李四">
                     <div class="contact-avatar">李</div>
@@ -31,6 +32,7 @@
                         <div class="last-message">明天有空吗？</div>
                     </div>
                     <div class="contact-time">昨天</div>
+                    <button class="delete-friend-btn" title="删除好友">✕</button>
                 </div>
                 <div class="contact-item" data-contact="工作群">
                     <div class="contact-avatar group">群</div>
@@ -39,6 +41,7 @@
                         <div class="last-message">[图片]</div>
                     </div>
                     <div class="contact-time">周一</div>
+                    <button class="delete-friend-btn" title="删除好友">✕</button>
                 </div>
                 <div class="contact-item" data-contact="王五">
                     <div class="contact-avatar">王</div>
@@ -47,6 +50,7 @@
                         <div class="last-message">好的，收到</div>
                     </div>
                     <div class="contact-time">周日</div>
+                    <button class="delete-friend-btn" title="删除好友">✕</button>
                 </div>
             </div>
         </div>
@@ -90,7 +94,9 @@
             <div class="chat-input">
                 <button class="icon-btn" id="emojiBtn">😊</button>
                 <button class="icon-btn" id="imageBtn">📷</button>
+                <button class="icon-btn" id="fileBtn">📎</button>
                 <input type="file" id="imageInput" accept="image/*" style="display: none;">
+                <input type="file" id="fileInput" style="display: none;">
                 <input type="text" id="messageInput" placeholder="输入消息...">
                 <button class="send-btn" id="sendBtn">发送</button>
             </div>

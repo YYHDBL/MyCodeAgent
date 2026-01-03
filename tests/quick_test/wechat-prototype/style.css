@@ -41,8 +41,8 @@ body {
 .avatar {
     width: 40px;
     height: 40px;
-    border-radius: 4px;
-    background: linear-gradient(135deg, #07c160 0%, #06ad56 100%);
+    border-radius: 50%;
+    background: linear-gradient(135deg, #12B7F5 0%, #0E9CD6 100%);
     color: white;
     display: flex;
     align-items: center;
@@ -76,13 +76,13 @@ body {
 }
 
 .contact-item.active {
-    background-color: #c9e8c9;
+    background-color: #d4eefc;
 }
 
 .contact-avatar {
     width: 40px;
     height: 40px;
-    border-radius: 4px;
+    border-radius: 50%;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     display: flex;
@@ -196,7 +196,7 @@ body {
 .message-avatar {
     width: 36px;
     height: 36px;
-    border-radius: 4px;
+    border-radius: 50%;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     display: flex;
@@ -215,7 +215,7 @@ body {
 
 .message-bubble {
     padding: 10px 14px;
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 14px;
     line-height: 1.5;
     word-wrap: break-word;
@@ -228,8 +228,8 @@ body {
 }
 
 .message.sent .message-bubble {
-    background-color: #95ec69;
-    color: #333;
+    background-color: #12B7F5;
+    color: white;
 }
 
 .message-time {
@@ -277,12 +277,12 @@ body {
 }
 
 #messageInput:focus {
-    border-color: #07c160;
+    border-color: #12B7F5;
 }
 
 .send-btn {
     padding: 10px 20px;
-    background-color: #07c160;
+    background-color: #12B7F5;
     color: white;
     border: none;
     border-radius: 4px;
@@ -292,11 +292,11 @@ body {
 }
 
 .send-btn:hover {
-    background-color: #06ad56;
+    background-color: #0E9CD6;
 }
 
 .send-btn:active {
-    background-color: #059a4b;
+    background-color: #0C86C0;
 }
 
 /* 滚动条样式 */
@@ -444,6 +444,65 @@ body {
 
 .message-image:hover {
     transform: scale(1.02);
+}
+
+/* 文件消息样式 */
+.message-file {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background-color: #f5f5f5;
+    border-radius: 8px;
+    min-width: 200px;
+    max-width: 300px;
+}
+
+.message-file-icon {
+    font-size: 32px;
+    flex-shrink: 0;
+}
+
+.message-file-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.message-file-name {
+    font-size: 14px;
+    color: #333;
+    font-weight: 500;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.message-file-size {
+    font-size: 12px;
+    color: #999;
+}
+
+/* 删除好友按钮样式 */
+.delete-friend-btn {
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.2s, background-color 0.2s, color 0.2s;
+}
+
+.contact-item:hover .delete-friend-btn {
+    opacity: 1;
+}
+
+.delete-friend-btn:hover {
+    background-color: #ff4d4f;
+    color: white;
 }
 
 /* 聊天窗口相对定位，用于emoji选择器定位 */

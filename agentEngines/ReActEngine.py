@@ -1,9 +1,10 @@
 import json
 import re
+import traceback as tb
 from typing import Optional, List, Tuple, Any, Dict
 
-# 假设这些类在你原本的项目结构中
 from core.llm import HelloAgentsLLM
+from core.trace_logger import TraceLogger, create_trace_logger
 from tools.registry import ToolRegistry
 
 class ReActEngine:
@@ -62,7 +63,8 @@ Question: {question}
         tool_registry: ToolRegistry,
         max_steps: int = 12,
         verbose: bool = True,
-        capture_raw: bool = False
+        capture_raw: bool = False,
+        trace_logger: Optional[TraceLogger] = None,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -72,6 +74,10 @@ Question: {question}
         self.last_response_raw = None
         # scratchpad 用于存储 ReAct 的思考链 (Thought -> Action -> Obs)
         self.scratchpad: List[str] = []
+        
+        # TraceLogger（可选）
+        self.trace = trace_logger or create_trace_logger()
+        self._trace_enabled = self.trace.enabled
 
     def run(self, question: str, context_prompt: str = "") -> str:
         """
@@ -83,6 +89,30 @@ Question: {question}
         
         if self.verbose:
             print(f"\n⚙️ Engine 启动: {question}")
+        
+        # 1. 记录 user_input
+        if self._trace_enabled:
+            self.trace.log_event("user_input", {"text": question}, step=0)
+        
+        try:
+            return self._run_loop(question, context_prompt)
+        except Exception as e:
+            # 捕获异常并记录
+            if self._trace_enabled:
+                self.trace.log_event("error", {
+                    "stage": "engine_run",
+                    "error_code": "INTERNAL_ERROR",
+                    "message": str(e),
+                    "traceback": tb.format_exc(),
+                }, step=0)
+            raise
+        finally:
+            # 确保 finalize
+            if self._trace_enabled:
+                self.trace.finalize()
+    
+    def _run_loop(self, question: str, context_prompt: str) -> str:
+        """ReAct 主循环（内部方法）"""
 
         for step in range(1, self.max_steps + 1):
             if self.verbose:
@@ -91,30 +121,53 @@ Question: {question}
             # 1. 构建完整的 Prompt
             prompt = self._build_prompt(question, context_prompt)
             
-            # 2. 调用 LLM
+            # 2. 调用 LLM（trace 启用时使用 invoke_raw 获取 usage）
             messages = [{"role": "user", "content": prompt}]
-            if self.capture_raw:
+            usage = None
+            
+            if self._trace_enabled or self.capture_raw:
                 raw_response = self.llm.invoke_raw(messages)
-                self.last_response_raw = (
-                    raw_response.model_dump()
-                    if hasattr(raw_response, "model_dump")
-                    else raw_response
-                )
+                if self.capture_raw:
+                    self.last_response_raw = (
+                        raw_response.model_dump()
+                        if hasattr(raw_response, "model_dump")
+                        else raw_response
+                    )
                 try:
                     response_text = raw_response.choices[0].message.content
+                    # 提取 usage
+                    if hasattr(raw_response, "usage") and raw_response.usage:
+                        usage = {
+                            "prompt_tokens": raw_response.usage.prompt_tokens,
+                            "completion_tokens": raw_response.usage.completion_tokens,
+                            "total_tokens": raw_response.usage.total_tokens,
+                        }
                 except Exception:
                     response_text = str(raw_response)
             else:
                 self.last_response_raw = None
                 response_text = self.llm.invoke(messages)
+            
+            # 3. 记录 model_output
+            if self._trace_enabled:
+                self.trace.log_event("model_output", {
+                    "raw": response_text,
+                    "usage": usage,
+                }, step=step)
 
             if not response_text or not str(response_text).strip():
                 self._record_observation("❌ LLM返回空响应，无法继续。")
+                if self._trace_enabled:
+                    self.trace.log_event("error", {
+                        "stage": "llm_response",
+                        "error_code": "INTERNAL_ERROR",
+                        "message": "LLM returned empty response",
+                    }, step=step)
                 break
 
-            # 3. 解析 Thought 和 Action
+            # 4. 解析 Thought 和 Action
             thought, action = self._parse_thought_action(str(response_text))
-
+            
             if self.verbose and thought:
                 print()
                 print(f"🤔 Thought:\n{thought}")
@@ -127,42 +180,110 @@ Question: {question}
                         print()
                         print("✅ Finish")
                         print()
+                    # 6. 记录 finish
+                    if self._trace_enabled:
+                        self.trace.log_event("parsed_action", {
+                            "thought": thought or "",
+                            "action": "Finish",
+                            "args": {"payload": finish_payload},
+                        }, step=step)
+                    if self._trace_enabled:
+                        self.trace.log_event("finish", {"final": finish_payload}, step=step)
                     return finish_payload
                 self._record_observation("⚠️ 未解析到 Action（请模型严格输出 Thought/Action）。")
                 continue
 
-            # 4. 处理 Finish 信号
+            # 7. 处理 Finish 信号
             if action.strip().startswith("Finish["):
                 final_answer = self._parse_bracket_payload(action)
                 if self.verbose:
                     print()
                     print("✅ Finish")
                     print()
+                # 8. 记录 finish
+                if self._trace_enabled:
+                    self.trace.log_event("parsed_action", {
+                        "thought": thought or "",
+                        "action": "Finish",
+                        "args": {"payload": final_answer},
+                    }, step=step)
+                if self._trace_enabled:
+                    self.trace.log_event("finish", {"final": final_answer}, step=step)
                 return final_answer
 
-            # 5. 处理 Tool Call
+            # 9. 处理 Tool Call
             tool_name, tool_raw_input = self._parse_tool_call(action)
             if not tool_name:
                 self._record_observation(f"⚠️ Action格式不合法：{action}")
                 continue
 
-            # 6. 校验 JSON
+            # 10. 校验 JSON
             tool_input, parse_err = self._ensure_json_input(tool_raw_input)
+            # 10.1 记录 parsed_action（含解析后的参数）
+            if self._trace_enabled:
+                self.trace.log_event("parsed_action", {
+                    "thought": thought or "",
+                    "action": action or "",
+                    "args": tool_input if parse_err is None else {"raw": tool_raw_input},
+                }, step=step)
             if parse_err:
                 self.scratchpad.append(f"Action: {action}")
                 self._record_observation(f"❌ 工具参数解析错误：{parse_err}\n原始参数：{tool_raw_input}")
+                if self._trace_enabled:
+                    self.trace.log_event("error", {
+                        "stage": "param_parsing",
+                        "error_code": "INVALID_PARAM",
+                        "message": parse_err,
+                        "tool": tool_name,
+                        "args": tool_raw_input,
+                    }, step=step)
                 continue
+            
+            # 11. 记录 tool_call
+            if self._trace_enabled:
+                self.trace.log_event("tool_call", {
+                    "tool": tool_name,
+                    "args": tool_input,
+                }, step=step)
 
             if self.verbose:
                 print()
                 print(f"🎬 Action: {tool_name}[{tool_input}]")
                 print()
 
-            # 7. 执行工具
+            # 12. 执行工具
             try:
                 observation = self._execute_tool(tool_name, tool_input)
+                
+                # 13. 记录 tool_result
+                if self._trace_enabled:
+                    # 尝试解析为 JSON（工具返回的是标准协议格式）
+                    try:
+                        result_obj = json.loads(observation)
+                        self.trace.log_event("tool_result", {
+                            "tool": tool_name,
+                            "result": result_obj,
+                        }, step=step)
+                    except json.JSONDecodeError:
+                        # 如果不是 JSON，直接记录文本
+                        self.trace.log_event("tool_result", {
+                            "tool": tool_name,
+                            "result": {"text": observation},
+                        }, step=step)
+                        
             except Exception as e:
                 observation = f"❌ 工具执行异常: {str(e)}"
+                
+                # 14. 记录 error
+                if self._trace_enabled:
+                    self.trace.log_event("error", {
+                        "stage": "tool_execution",
+                        "error_code": "EXECUTION_ERROR",
+                        "message": str(e),
+                        "tool": tool_name,
+                        "args": tool_input,
+                        "traceback": tb.format_exc(),
+                    }, step=step)
 
             if self.verbose:
                 display_obs = observation[:300] + "..." if len(observation) > 300 else observation
@@ -170,7 +291,7 @@ Question: {question}
                 print(f"👀 Observation: {display_obs}")
                 print()
 
-            # 8. 更新历史
+            # 15. 更新历史
             self.scratchpad.append(f"Action: {tool_name}[{json.dumps(tool_input, ensure_ascii=False)}]")
             self._record_observation(observation)
 

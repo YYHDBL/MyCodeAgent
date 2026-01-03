@@ -33,6 +33,8 @@ const emojiBtn = document.getElementById('emojiBtn');
 const emojiPicker = document.getElementById('emojiPicker');
 const imageBtn = document.getElementById('imageBtn');
 const imageInput = document.getElementById('imageInput');
+const fileBtn = document.getElementById('fileBtn');
+const fileInput = document.getElementById('fileInput');
 const userAvatar = document.getElementById('userAvatar');
 const avatarInput = document.getElementById('avatarInput');
 
@@ -74,6 +76,14 @@ function init() {
     // 绑定图片上传事件
     imageInput.addEventListener('change', handleImageUpload);
 
+    // 绑定文件按钮事件
+    fileBtn.addEventListener('click', () => {
+        fileInput.click();
+    });
+
+    // 绑定文件上传事件
+    fileInput.addEventListener('change', handleFileUpload);
+
     // 绑定头像更换事件
     userAvatar.addEventListener('click', () => {
         avatarInput.click();
@@ -81,6 +91,16 @@ function init() {
 
     // 绑定头像文件选择事件
     avatarInput.addEventListener('change', handleAvatarChange);
+
+    // 绑定删除好友按钮事件
+    document.querySelectorAll('.delete-friend-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const contactItem = btn.closest('.contact-item');
+            const contactName = contactItem.dataset.contact;
+            deleteFriend(contactName, contactItem);
+        });
+    });
 
     // 点击其他地方关闭emoji选择器
     document.addEventListener('click', (e) => {
@@ -121,6 +141,8 @@ function loadMessages() {
     messages.forEach(msg => {
         if (msg.isImage) {
             appendImageMessage(msg.type, msg.content, msg.time);
+        } else if (msg.isFile) {
+            appendFileMessage(msg.type, msg.fileName, msg.fileSize, msg.time);
         } else {
             appendMessage(msg.type, msg.content, msg.time);
         }
@@ -373,4 +395,38 @@ function handleAvatarChange(e) {
 
     // 清空input以便重复上传同一文件
     avatarInput.value = '';
+}
+
+// 删除好友
+function deleteFriend(contactName, contactItem) {
+    // 确认删除
+    if (!confirm(`确定要删除好友 "${contactName}" 吗？`)) {
+        return;
+    }
+
+    // 从数据中删除
+    delete chatData[contactName];
+
+    // 从界面中移除联系人项
+    contactItem.remove();
+
+    // 如果删除的是当前选中的联系人
+    if (currentContact === contactName) {
+        // 清空聊天窗口
+        chatMessages.innerHTML = '';
+        chatTitle.textContent = '';
+
+        // 尝试切换到第一个联系人
+        const remainingContacts = document.querySelectorAll('.contact-item');
+        if (remainingContacts.length > 0) {
+            const firstContact = remainingContacts[0];
+            const firstContactName = firstContact.dataset.contact;
+            switchContact(firstContactName);
+        } else {
+            currentContact = '';
+        }
+    }
+
+    // 更新联系人列表引用
+    const updatedContactItems = document.querySelectorAll('.contact-item');
 }

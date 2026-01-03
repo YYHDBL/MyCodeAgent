@@ -32,7 +32,7 @@ core/           → 基础层（Agent 基类、HelloAgentsLLM、Message、Config
   agents/       → 具体智能体（CodeAgent、TestAgent）
   agentEngines/ → 推理引擎（ReActEngine：Thought → Action → Observation 循环）
   tools/        → 工具层（Tool 基类、ToolRegistry、协议辅助）
-  tools/builtin/ → 内置工具（LS、Glob、Grep、Read、Write）
+  tools/builtin/ → 内置工具（LS、Glob、Grep、Read、Write、Edit、MultiEdit、TodoWrite）
   prompts/tools_prompts/ → 工具提示词（作为工具描述的字符串常量）
 ```
 
@@ -77,15 +77,31 @@ core/           → 基础层（Agent 基类、HelloAgentsLLM、Message、Config
 | 通配匹配 (glob) | `paths: string[]`, `truncated` |
 | 内容搜索 (grep) | `matches: Array<{file, line, text}>`, `truncated` |
 | 文件读取 (read) | `content`, `truncated` |
-| 文件修改 (edit/write) | `applied: boolean`, `operation` |
+| 文件写入 (write) | `applied: boolean`, `operation` |
+| 单次编辑 (edit) | `applied: boolean`, `diff_preview`, `diff_truncated`, `replacements` |
+| 多次编辑 (multi_edit) | `applied: boolean`, `diff_preview`, `diff_truncated`, `replacements` |
+| 任务管理 (todo_write) | `todos: Array<{id, content, status}>`, `recap`, `summary` |
 
 ## 编码规范
 
 - Python 3，4 空格缩进
 - `snake_case` 用于函数/变量，`PascalCase` 用于类
 - 优先使用项目绝对导入：`from core.llm import HelloAgentsLLM`
-- 对外暴露的工具名称：**LS**、**Glob**、**Grep**、**Read**、**Write**
+- 对外暴露的工具名称：**LS**、**Glob**、**Grep**、**Read**、**Write**、**Edit**、**MultiEdit**、**TodoWrite**
 - 修改工具行为时，同步更新 `prompts/tools_prompts/` 中的对应提示词
+
+## 工具选择
+
+- **Write**：创建新文件或完全覆盖现有文件
+- **Edit**：修改已存在文件的单处内容（需先 Read，old_string 必须唯一）
+- **MultiEdit**：同一文件的多处原子性批量编辑（需先 Read）
+- **Read**：读取文件，框架自动缓存元信息供 Edit/MultiEdit 乐观锁使用
+
+## 框架机制
+
+- **乐观锁**：Read 后自动缓存 `file_mtime_ms`/`file_size_bytes`，Edit/MultiEdit 自动注入校验
+- **Legacy Adapter**：由 `ENABLE_LEGACY_ADAPTER` 环境变量控制（默认 true），迁移期自动转换旧格式响应
+- **LLM 自动检测**：HelloAgentsLLM 支持 openai/deepseek/qwen/zhipu 等提供商，provider=`auto` 时根据 base_url 自动推断
 
 ## 配置
 
