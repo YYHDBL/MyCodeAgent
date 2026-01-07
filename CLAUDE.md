@@ -9,9 +9,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 pip install -r requirements.txt
 
 # 运行智能体交互
-python scripts/chat_test_agent.py --agent code --show-raw
-python scripts/chat_test_agent.py --agent test --show-raw
-python scripts/chat_test_agent.py --agent code --provider zhipu --model GLM-4.7
+python scripts/chat_test_agent.py --show-raw
+python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
 
 # 运行测试
 python -m pytest tests/ -v
@@ -28,17 +27,38 @@ python -m pytest tests/test_protocol_compliance.py -v
 这是一个基于 ReAct（Reasoning + Acting）架构的 AI 智能体框架：
 
 ```
-core/           → 基础层（Agent 基类、HelloAgentsLLM、Message、Config）
-  agents/       → 具体智能体（CodeAgent、TestAgent）
-  agentEngines/ → 推理引擎（ReActEngine：Thought → Action → Observation 循环）
-  tools/        → 工具层（Tool 基类、ToolRegistry、协议辅助）
-  tools/builtin/ → 内置工具（LS、Glob、Grep、Read、Write、Edit、MultiEdit、TodoWrite）
-  prompts/tools_prompts/ → 工具提示词（作为工具描述的字符串常量）
+core/              → 基础层
+  ├── agent.py        # Agent 基类
+  ├── llm.py          # HelloAgentsLLM 统一接口
+  ├── message.py      # 消息系统
+  ├── config.py       # 配置管理
+  ├── context_builder.py  # 上下文构建（收集工具、trace等）
+  └── trace_logger.py     # 轨迹记录器（JSONL + Markdown）
+agents/            → 具体智能体
+  └── codeAgent.py   # 代码智能体
+agentEngines/       → 推理引擎（已合并到 CodeAgent）
+tools/             → 工具层
+  ├── base.py          # Tool 基类、ToolStatus、ErrorCode
+  ├── registry.py      # ToolRegistry 工具注册中心
+  └── builtin/         # 内置工具实现
+      ├── list_files.py       # LS（目录列表）
+      ├── search_files_by_name.py  # Glob（通配搜索）
+      ├── search_code.py      # Grep（代码搜索）
+      ├── read_file.py        # Read（文件读取）
+      ├── write_file.py       # Write（文件写入）
+      ├── edit_file.py        # Edit（单次编辑）
+      ├── edit_file_multi.py  # MultiEdit（批量编辑）
+      ├── todo_write.py       # TodoWrite（任务管理）
+      └── bash.py             # Bash（命令执行）
+prompts/           → 提示词
+  └── tools_prompts/  # 工具描述字符串常量
 ```
 
 - **HelloAgentsLLM**：统一 LLM 接口，支持 OpenAI、DeepSeek、Qwen、智谱等
-- **ReActEngine**：管理思考-行动-观察的推理循环
+- **CodeAgent**：内置 ReAct 循环并管理思考-行动-观察
 - **ToolRegistry**：工具注册中心，所有工具必须遵循通用工具响应协议
+- **TraceLogger**：记录完整会话轨迹到 `memory/traces/`（JSONL + Markdown）
+- **ContextBuilder**：为每次 LLM 调用收集工具列表、trace 历史等上下文
 
 ## 工具响应协议（重要）
 

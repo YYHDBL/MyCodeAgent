@@ -2,8 +2,8 @@
 
 ## 项目概况（当前结构）
 - `core/`：基础能力（`Agent` 抽象基类、`HelloAgentsLLM`、`Message`、`Config`、异常体系）。
-- `agents/`：Agent 实现（`TestAgent`、`CodeAgent`）。
-- `agentEngines/`：推理引擎（`ReActEngine`）。
+- `agents/`：Agent 实现（`CodeAgent`）。
+- `agentEngines/`：推理引擎层（已合并到 `CodeAgent`）。
 - `tools/`：工具系统
   - `base.py`：`Tool` 抽象基类 + `ToolParameter` 数据模型 + 响应协议支持。
   - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）+ 旧格式适配器。
@@ -24,8 +24,8 @@
 
 ## 当前进度摘要
 1. **Agent 运行链路打通**
-   - `TestAgent`/`CodeAgent` 已接入 `ReActEngine`，能展示 Thought / Action / Observation。
-   - `chat_test_agent.py` 支持选择 `--agent test|code` 并可打印 `--show-raw` 原始模型响应。
+   - `CodeAgent` 内置 ReAct 循环，能展示 Thought / Action / Observation。
+   - `chat_test_agent.py` 可打印 `--show-raw` 原始模型响应。
 
 2. **工具体系完善**
    - **LS（list_files）**：支持安全目录浏览、分页、隐藏文件控制、软链安全展示。
@@ -46,7 +46,7 @@
 ## 关键使用方式
 - 运行交互式测试：
   ```bash
-  python scripts/chat_test_agent.py --agent code --show-raw
+  python scripts/chat_test_agent.py --show-raw
   ```
 
 - Glob 查询建议（pattern 永远相对 path）：
@@ -253,11 +253,11 @@ export ENABLE_LEGACY_ADAPTER=true  # 默认启用
 {
   "status": "success",
   "data": {
-    "paths": ["core/agent.py", "core/llm.py", "agents/testAgent.py"],
+    "paths": ["core/agent.py", "core/llm.py", "agents/codeAgent.py"],
     "truncated": false,
     "aborted_reason": null
   },
-  "text": "Found 3 files matching '**/*.py' in 'core'.\n\ncore/agent.py\ncore/llm.py\nagents/testAgent.py",
+  "text": "Found 3 files matching '**/*.py' in 'core'.\n\ncore/agent.py\ncore/llm.py\nagents/codeAgent.py",
   "stats": {
     "time_ms": 48,
     "matched": 3,

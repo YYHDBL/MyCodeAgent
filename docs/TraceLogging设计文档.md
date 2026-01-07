@@ -50,7 +50,7 @@
 字段说明：
 - `ts`: ISO8601 时间戳
 - `session_id`: 会话唯一标识（格式：`s-YYYYMMDD-HHMMSS-{4位随机}`，由框架创建）
-- `step`: ReActEngine 的 step 序号
+- `step`: ReAct 循环的 step 序号
 - `event`: 事件类型
 - `payload`: 事件数据体（见下）
 
@@ -146,7 +146,7 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 
 ## 6. 采集位置（接入点）
 **最小接入点（框架层）**：
-1. ReActEngine 接收用户输入后 → `user_input`
+1. ReAct 循环接收用户输入后 → `user_input`
 2. LLM 返回结果后 → `model_output`
 3. Action 解析后 → `parsed_action`
 4. Tool 执行前 → `tool_call`
@@ -185,10 +185,10 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 
 ## 10. 实现指南（与现有架构对齐）
 
-### 10.1 集成方式（ReActEngine / Agent）
-- **session_id 生成位置**：建议在 `ReActEngine.__init__()` 生成（会话级唯一 ID），并传入 TraceLogger。  
+### 10.1 集成方式（ReAct 循环 / Agent）
+- **session_id 生成位置**：建议在 `CodeAgent.run()` 中生成（会话级唯一 ID），并传入 TraceLogger。  
 - **与现有 logger 关系**：TraceLogger **并存**，不替代现有 logger（日志用于运行态观察，Trace 用于审计回放）。  
-- **调用位置**：在 ReActEngine 的主循环 8 个关键点调用 `trace.log_event()`。
+- **调用位置**：在 ReAct 循环的主循环关键点调用 `trace.log_event()`。
 
 ### 10.2 LLM usage 的获取策略
 当前架构中：
@@ -196,7 +196,7 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 - `invoke()` 只返回文本（无 usage）
 
 **MVP 方案（推荐）**：
-- ReActEngine 在 trace 启用时使用 `invoke_raw()` 并从响应中提取 usage
+- ReAct 循环在 trace 启用时使用 `invoke_raw()` 并从响应中提取 usage
 - 理由：侵入性小，不需要修改 LLM 接口
 
 实现示例：
@@ -242,8 +242,8 @@ error 事件建议包含：
 
 ### 10.5 session_summary 触发条件
 满足任一即触发：
-- `ReActEngine.run()` 正常返回（Finish 或 max_steps）  
-- `ReActEngine` 捕获异常并退出  
+- `CodeAgent.run()` 正常返回（Finish 或 max_steps）  
+- ReAct 循环捕获异常并退出  
 - `Agent.run()` 结束时（推荐由 Agent 统一调用 `trace.finalize()`）
 
 ### 10.6 TraceLogger 接口设计
@@ -275,7 +275,7 @@ class TraceLogger:
         Args:
             event: 事件类型（user_input/model_output/tool_call 等）
             payload: 事件数据体
-            step: ReActEngine 的 step 序号（0 表示非步骤事件）
+            step: ReAct 循环的 step 序号（0 表示非步骤事件）
         """
         
     def finalize(self):

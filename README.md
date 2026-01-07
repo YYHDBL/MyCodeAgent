@@ -45,13 +45,10 @@ export LLM_BASE_URL="https://your-api-endpoint"
 
 ```bash
 # 运行代码智能体
-python scripts/chat_test_agent.py --agent code --show-raw
-
-# 运行测试智能体
-python scripts/chat_test_agent.py --agent test --show-raw
+python scripts/chat_test_agent.py --show-raw
 
 # 指定提供商和模型
-python scripts/chat_test_agent.py --agent code --provider zhipu --model GLM-4.7
+python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
 ```
 
 ## 架构
@@ -64,10 +61,8 @@ MyCodeAgent
 │   ├── message.py     # 消息系统
 │   └── config.py      # 配置管理
 ├── agents/            # 智能体层
-│   ├── codeAgent.py   # 代码智能体
-│   └── testAgent.py   # 测试智能体
-├── agentEngines/      # 推理引擎层
-│   └── ReActEngine.py # ReAct 循环
+│   └── codeAgent.py   # 代码智能体
+├── agentEngines/      # 推理引擎层（已合并到 CodeAgent）
 ├── tools/             # 工具层
 │   ├── registry.py    # 工具注册中心
 │   └── builtin/       # 内置工具

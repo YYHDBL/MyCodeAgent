@@ -99,7 +99,7 @@ class TraceLogger:
         Args:
             event: 事件类型（user_input/model_output/tool_call 等）
             payload: 事件数据体
-            step: ReActEngine 的 step 序号（0 表示非步骤事件）
+            step: ReAct 循环的 step 序号（0 表示非步骤事件）
         """
         if not self.enabled:
             return

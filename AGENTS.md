@@ -2,8 +2,8 @@
 
 ## Project Structure & Module Organization
 - `core/`: foundational types/services (Agent base, LLM wrapper, message, config, trace logger).
-- `agents/`: concrete agents (`testAgent.py`, `codeAgent.py`) that wire tools and ReAct.
-- `agentEngines/`: reasoning loop (`ReActEngine.py`).
+- `agents/`: concrete agents (`codeAgent.py`) that wire tools and ReAct.
+- `agentEngines/`: (merged into `CodeAgent`).
 - `tools/`: tool base + registry (protocol helpers, legacy adapter, optimistic‑lock injection).
 - `tools/builtin/`: built‑in tools (LS/Glob/Grep/Read/Write/Edit/MultiEdit/TodoWrite/Bash).
 - `prompts/tools_prompts/`: tool prompts (Python string constants).
@@ -15,8 +15,7 @@
 ## Build, Test, and Development Commands
 - Install deps: `pip install -r requirements.txt`
 - Run interactive chat:
-  - `python scripts/chat_test_agent.py --agent test --show-raw`
-  - `python scripts/chat_test_agent.py --agent code --show-raw`
+  - `python scripts/chat_test_agent.py --show-raw`
 - Optional: disable legacy adapter with `ENABLE_LEGACY_ADAPTER=false`.
 
 ## Coding Style & Naming Conventions
