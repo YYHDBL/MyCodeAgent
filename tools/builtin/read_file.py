@@ -13,7 +13,7 @@ from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
 
 
 class ReadTool(Tool):
-    """文件读取工具，支持行号、分页、编码回退"""
+    """文件读取工具，支持行号、分页、编码回退、mtime 追踪"""
 
     # 二进制检测的采样大小（读取前 8KB 检测是否包含 null byte）
     BINARY_CHECK_SIZE = 8192
@@ -23,6 +23,10 @@ class ReadTool(Tool):
     
     # 默认 limit（默认读取 500 行）
     DEFAULT_LIMIT = 500
+    
+    # 类级别的 mtime 缓存（所有实例共享，按 C4 设计）
+    # 格式: {absolute_path: last_mtime_ns}
+    _mtime_cache: Dict[str, int] = {}
 
     def __init__(
         self,
@@ -167,14 +171,26 @@ class ReadTool(Tool):
             )
 
         # =====================================================================
-        # 二进制文件检测
+        # 二进制文件检测 & mtime 追踪（C4）
         # =====================================================================
         
         try:
             # 获取文件状态（大小和修改时间）
             file_stat = target.stat()
             file_size = file_stat.st_size
-            file_mtime_ms = file_stat.st_mtime_ns // 1_000_000  # 转换为毫秒（乐观锁所需）
+            file_mtime_ns = file_stat.st_mtime_ns
+            file_mtime_ms = file_mtime_ns // 1_000_000  # 转换为毫秒（乐观锁所需）
+            
+            # mtime 追踪：检测文件是否被外部修改（C4）
+            cache_key = str(target)
+            modified_externally = False
+            if cache_key in ReadTool._mtime_cache:
+                last_mtime = ReadTool._mtime_cache[cache_key]
+                if file_mtime_ns != last_mtime:
+                    modified_externally = True
+            # 更新缓存
+            ReadTool._mtime_cache[cache_key] = file_mtime_ns
+            
             # 检测是否为二进制文件（读取前 8KB，如果包含 null byte 则判定为二进制）
             if self._is_binary_file(target):
                 return self.create_error_response(
@@ -258,6 +274,7 @@ class ReadTool(Tool):
             file_mtime_ms=file_mtime_ms,
             encoding_used=encoding_used,
             fallback_used=fallback_used,
+            modified_externally=modified_externally,
             time_ms=time_ms,
             params_input=params_input,
         )
@@ -359,6 +376,7 @@ class ReadTool(Tool):
         file_mtime_ms: int,
         encoding_used: str,
         fallback_used: bool,
+        modified_externally: bool,
         time_ms: int,
         params_input: Dict[str, Any],
     ) -> str:
@@ -380,6 +398,7 @@ class ReadTool(Tool):
             file_mtime_ms: 文件修改时间（毫秒，用于乐观锁）
             encoding_used: 使用的编码
             fallback_used: 是否使用了编码回退
+            modified_externally: 是否被外部修改（C4 mtime 追踪）
             time_ms: 耗时（毫秒）
             params_input: 原始输入参数
         
@@ -409,9 +428,15 @@ class ReadTool(Tool):
         }
         if fallback_used:
             data["fallback_encoding"] = "replace"
+        if modified_externally:
+            data["modified_externally"] = True
         
         # 构建 text 字段（人类可读的描述）
         lines = []
+        
+        # mtime 追踪警告（C4）：文件被外部修改时优先提示
+        if modified_externally:
+            lines.append(f"Note: '{rel_path}' was modified externally.")
         
         if total_lines == 0:
             lines.append(f"Read 0 lines from '{rel_path}' (file is empty).")

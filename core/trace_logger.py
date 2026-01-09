@@ -63,6 +63,9 @@ class TraceLogger:
         self._md_filepath: Optional[Path] = None
         self._md_handle = None
         self._current_step = None
+        self._current_run = None
+        self._timeline_started = False
+        self._system_messages_logged = False
         
         # 初始化文件
         if self.enabled:
@@ -122,6 +125,20 @@ class TraceLogger:
             
         except Exception as e:
             print(f"⚠️ TraceLogger log_event failed: {e}")
+
+    def log_system_messages(self, messages: list[dict[str, Any]]):
+        """
+        记录 system messages（仅一次）
+        
+        Args:
+            messages: system messages 列表
+        """
+        if not self.enabled:
+            return
+        if self._system_messages_logged:
+            return
+        self._system_messages_logged = True
+        self.log_event("system_messages", {"messages": messages}, step=0)
     
     def finalize(self):
         """
@@ -201,40 +218,225 @@ class TraceLogger:
             return s
         return s[:limit] + "...(truncated)"
 
+    def _ensure_timeline_header(self):
+        if not self._md_handle:
+            return
+        if not self._timeline_started:
+            self._md_handle.write("\n## Timeline\n\n")
+            self._timeline_started = True
+
     def _write_md_event(self, event_obj: Dict[str, Any]):
         if not self._md_handle:
             return
         event = event_obj.get("event")
         step = event_obj.get("step", 0)
         payload = event_obj.get("payload", {}) or {}
+        ts = event_obj.get("ts", "")
 
         lines = []
+
+        if event == "system_messages":
+            messages = payload.get("messages", []) or []
+            lines.append("## System Messages (logged once)\n")
+            if not messages:
+                lines.append("_No system messages_\n")
+            else:
+                for idx, msg in enumerate(messages, 1):
+                    role = msg.get("role", "system")
+                    content = msg.get("content", "")
+                    lines.append(f"### System Message {idx}\n")
+                    lines.append(f"Role: `{role}`\n\n")
+                    lines.append("```text\n")
+                    lines.append(f"{content}\n")
+                    lines.append("```\n")
+            if lines:
+                self._md_handle.write("".join(lines))
+                self._md_handle.flush()
+            return
+
+        if event == "run_start":
+            run_id = payload.get("run_id")
+            user_text = payload.get("input", "")
+            processed = payload.get("processed")
+            self._current_run = run_id
+            self._current_step = None
+            lines.append(f"\n## Run {run_id}\n")
+            if ts:
+                lines.append(f"*Start: {ts}*\n\n")
+            if user_text:
+                lines.append("### 🧑 User Input\n")
+                lines.append("```text\n")
+                lines.append(f"{user_text}\n")
+                lines.append("```\n")
+            if processed and processed != user_text:
+                lines.append("\n*Processed (with @file expansion):*\n")
+                lines.append("```text\n")
+                lines.append(f"{processed}\n")
+                lines.append("```\n")
+            if lines:
+                self._md_handle.write("".join(lines))
+                self._md_handle.flush()
+            return
+
+        if event == "run_end":
+            run_id = payload.get("run_id")
+            final = payload.get("final", "")
+            lines.append(f"\n### ✅ Run End (run={run_id})\n")
+            if ts:
+                lines.append(f"*End: {ts}*\n\n")
+            if final:
+                lines.append("```text\n")
+                lines.append(f"{final}\n")
+                lines.append("```\n")
+            if lines:
+                self._md_handle.write("".join(lines))
+                self._md_handle.flush()
+            return
+
+        self._ensure_timeline_header()
+
         if step and step != self._current_step:
             self._current_step = step
-            lines.append(f"\n## Step {step}\n")
+            lines.append(f"\n### Step {step}\n")
 
         if event == "user_input":
-            lines.append("## User Input\n")
+            lines.append("#### 🧑 User Input\n")
             lines.append(f"{payload.get('text', '')}\n")
+            processed = payload.get('processed')
+            if processed and processed != payload.get('text'):
+                lines.append("\n*Processed (with @file expansion):*\n")
+                lines.append(f"```\n{processed}\n```\n")
+
+        elif event == "history_compression_triggered":
+            lines.append("#### 📦 History Compression Triggered\n")
+            lines.append(f"- Estimated tokens: {payload.get('estimated_tokens', 0)}\n")
+            lines.append(f"- Threshold: {payload.get('threshold', 0)}\n")
+            lines.append(f"- Current messages: {payload.get('message_count', 0)}\n\n")
+
+        elif event == "history_compression_plan":
+            lines.append("#### 🧭 History Compression Plan\n")
+            lines.append(f"- Rounds: {payload.get('rounds_count', 0)}\n")
+            lines.append(f"- Min retain rounds: {payload.get('min_retain_rounds', 0)}\n")
+            lines.append(f"- Retain start round: {payload.get('retain_start_round')}\n")
+            lines.append(f"- Retain start idx: {payload.get('retain_start_idx')}\n")
+            lines.append(f"- Messages before: {payload.get('messages_before')}\n\n")
+
+        elif event == "history_compression_messages":
+            lines.append("#### 📄 History Compression Messages\n")
+            lines.append(f"- Messages to compress: {payload.get('messages_to_compress', 0)}\n")
+            lines.append(f"- Existing summaries: {payload.get('existing_summaries', 0)}\n\n")
+
+        elif event == "history_compression_summary":
+            lines.append("#### 📝 History Compression Summary\n")
+            lines.append(f"- Summary generated: {payload.get('summary_generated', False)}\n")
+            lines.append(f"- Summary length: {payload.get('summary_len', 0)}\n\n")
+            summary_text = payload.get("summary_text", "")
+            if summary_text:
+                lines.append("Summary (full):\n")
+                lines.append("```text\n")
+                lines.append(f"{summary_text}\n")
+                lines.append("```\n")
+
+        elif event == "history_compression_rebuilt":
+            lines.append("#### 🧱 History Compression Rebuilt\n")
+            lines.append(f"- Messages after: {payload.get('messages_after', 0)}\n\n")
+
+        elif event == "history_compression_context":
+            lines.append("#### 🧩 History Compression Context (post)\n")
+            lines.append(f"- Message count: {payload.get('message_count', 0)}\n\n")
+            messages = payload.get("messages", []) or []
+            for idx, msg in enumerate(messages, 1):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                lines.append(f"##### Message {idx} ({role})\n")
+                lines.append("```text\n")
+                lines.append(f"{content}\n")
+                lines.append("```\n")
+
+        elif event == "history_compression_final_context":
+            lines.append("#### 🧩 Final Context After Compression (system + history)\n")
+            lines.append(f"- Message count: {payload.get('message_count', 0)}\n\n")
+            messages = payload.get("messages", []) or []
+            for idx, msg in enumerate(messages, 1):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                lines.append(f"##### Message {idx} ({role})\n")
+                lines.append("```text\n")
+                lines.append(f"{content}\n")
+                lines.append("```\n")
+
+        elif event == "history_compression_skipped":
+            lines.append("#### ⏭️ History Compression Skipped\n")
+            reason = payload.get("reason", "unknown")
+            lines.append(f"- Reason: {reason}\n")
+            lines.append(f"- Rounds: {payload.get('rounds_count', 0)}\n")
+            lines.append(f"- Min retain rounds: {payload.get('min_retain_rounds', 0)}\n\n")
+
+        elif event == "history_compression_completed":
+            lines.append("#### ✅ History Compression Completed\n")
+            lines.append(f"- Rounds before: {payload.get('rounds_before', 0)}\n")
+            lines.append(f"- Rounds after: {payload.get('rounds_after', 0)}\n")
+            lines.append(f"- Messages compressed: {payload.get('messages_compressed', 0)}\n")
+            if payload.get('summary_generated'):
+                lines.append(f"- Summary generated: Yes\n\n")
+            else:
+                lines.append(f"- Summary generated: No (fallback to truncation)\n\n")
+
+        elif event == "message_written":
+            role = payload.get('role', 'unknown')
+            content = payload.get('content', '')
+            metadata = payload.get('metadata', {})
+            
+            if role == "user":
+                lines.append("#### 💬 Message Written: User\n")
+                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+            elif role == "assistant":
+                lines.append("#### 🤖 Message Written: Assistant\n")
+                action_type = metadata.get('action_type', 'unknown')
+                lines.append(f"Type: `{action_type}`\n\n")
+                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+            elif role == "tool":
+                tool_name = metadata.get('tool_name', 'unknown')
+                lines.append(f"#### 🔧 Message Written: Tool ({tool_name})\n")
+                lines.append(f"```json\n{self._truncate(content, 300)}\n```\n")
+            elif role == "system":
+                lines.append("#### 🧩 Message Written: System\n")
+                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+            elif role == "summary":
+                lines.append("#### 📝 Message Written: Summary\n")
+                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
 
         elif event == "model_output":
             raw = payload.get("raw", "")
-            lines.append("### Model Output (raw)\n")
+            usage = payload.get("usage")
+            lines.append("#### 🧠 Model Output (raw)\n")
+            if usage:
+                lines.append(f"*Tokens: {usage.get('prompt_tokens', 0)} → {usage.get('completion_tokens', 0)} = {usage.get('total_tokens', 0)}*\n\n")
             lines.append("```text\n")
             lines.append(f"{raw}\n")
             lines.append("```\n")
+            raw_response = payload.get("raw_response")
+            if raw_response is not None:
+                try:
+                    raw_text = json.dumps(raw_response, ensure_ascii=False, indent=2)
+                except Exception:
+                    raw_text = str(raw_response)
+                lines.append("Raw response (JSON):\n")
+                lines.append("```json\n")
+                lines.append(f"{raw_text}\n")
+                lines.append("```\n")
 
         elif event == "parsed_action":
             thought = payload.get("thought", "")
             action = payload.get("action", "")
             args = payload.get("args")
             if thought:
-                lines.append("### Thought\n")
+                lines.append("#### 💭 Thought\n")
                 lines.append("```text\n")
                 lines.append(f"{thought}\n")
                 lines.append("```\n")
             if action:
-                lines.append("### Action\n")
+                lines.append("#### ⚡ Action\n")
                 lines.append("```text\n")
                 lines.append(f"{action}\n")
                 lines.append("```\n")
@@ -243,7 +445,7 @@ class TraceLogger:
                     args_text = json.dumps(args, ensure_ascii=False)
                 except Exception:
                     args_text = str(args)
-                lines.append("### Args\n")
+                lines.append("#### 📋 Args\n")
                 lines.append("```json\n")
                 lines.append(f"{args_text}\n")
                 lines.append("```\n")
@@ -255,7 +457,7 @@ class TraceLogger:
                 args_text = json.dumps(args, ensure_ascii=False)
             except Exception:
                 args_text = str(args)
-            lines.append("### Tool Call\n")
+            lines.append("#### 🛠️ Tool Call\n")
             lines.append("```text\n")
             lines.append(f"{tool} {args_text}\n")
             lines.append("```\n")
@@ -266,7 +468,7 @@ class TraceLogger:
             status = result.get("status")
             text = result.get("text", "")
             data = result.get("data", None)
-            lines.append("### Observation\n")
+            lines.append("#### 👁️ Observation\n")
             lines.append(f"Tool: {tool}\n\n")
             if status:
                 lines.append(f"Status: {status}\n\n")
@@ -287,7 +489,7 @@ class TraceLogger:
                 lines.append("```\n")
 
         elif event == "error":
-            lines.append("### Error\n")
+            lines.append("#### ❌ Error\n")
             try:
                 err_text = json.dumps(payload, ensure_ascii=False)
             except Exception:
@@ -297,14 +499,14 @@ class TraceLogger:
             lines.append("```\n")
 
         elif event == "finish":
-            lines.append("## Finish\n")
+            lines.append("#### ✅ Finish\n")
             final = payload.get("final", "")
             lines.append("```text\n")
             lines.append(f"{final}\n")
             lines.append("```\n")
 
         elif event == "session_summary":
-            lines.append("## Session Summary\n")
+            lines.append("#### 📊 Session Summary\n")
             try:
                 summary_text = json.dumps(payload, ensure_ascii=False, indent=2)
             except Exception:

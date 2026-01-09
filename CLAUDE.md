@@ -8,9 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # 安装依赖
 pip install -r requirements.txt
 
-# 运行智能体交互
-python scripts/chat_test_agent.py --show-raw
+# 运行智能体交互（默认智谱 GLM-4.6）
+python scripts/chat_test_agent.py
+
+# 指定提供商和模型
 python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
+python scripts/chat_test_agent.py --provider openai --model gpt-4
+
+# 调试模式：显示原始 LLM 响应
+python scripts/chat_test_agent.py --show-raw
+
+# 首次使用：初始化 CODE_LAW.md
+python scripts/chat_test_agent.py
+# 启动后输入 'init' 让 Agent 探索项目并生成 CODE_LAW.md
 
 # 运行测试
 python -m pytest tests/ -v
@@ -28,15 +38,15 @@ python -m pytest tests/test_protocol_compliance.py -v
 
 ```
 core/              → 基础层
-  ├── agent.py        # Agent 基类
-  ├── llm.py          # HelloAgentsLLM 统一接口
-  ├── message.py      # 消息系统
-  ├── config.py       # 配置管理
-  ├── context_builder.py  # 上下文构建（收集工具、trace等）
-  └── trace_logger.py     # 轨迹记录器（JSONL + Markdown）
+  ├── agent.py              # Agent 基类
+  ├── llm.py                # HelloAgentsLLM 统一接口
+  ├── message.py            # 消息系统
+  ├── config.py             # 配置管理
+  ├── context_builder.py    # 上下文构建（L1/L2/L3 拼接、CODE_LAW 加载）
+  ├── trace_logger.py       # 轨迹记录器（JSONL + Markdown）
+  └── tool_result_compressor.py  # 工具结果压缩器（历史写入用）
 agents/            → 具体智能体
-  └── codeAgent.py   # 代码智能体
-agentEngines/       → 推理引擎（已合并到 CodeAgent）
+  └── codeAgent.py   # 代码智能体（内置 ReAct 循环）
 tools/             → 工具层
   ├── base.py          # Tool 基类、ToolStatus、ErrorCode
   ├── registry.py      # ToolRegistry 工具注册中心
@@ -51,14 +61,16 @@ tools/             → 工具层
       ├── todo_write.py       # TodoWrite（任务管理）
       └── bash.py             # Bash（命令执行）
 prompts/           → 提示词
-  └── tools_prompts/  # 工具描述字符串常量
+  ├── agents_prompts/  # 智能体提示词（L1_system_prompt、summary 等）
+  └── tools_prompts/   # 工具描述字符串常量
 ```
 
 - **HelloAgentsLLM**：统一 LLM 接口，支持 OpenAI、DeepSeek、Qwen、智谱等
-- **CodeAgent**：内置 ReAct 循环并管理思考-行动-观察
+- **CodeAgent**：内置 ReAct 循环（Thought → Action → Observation），管理思考-行动-观察
 - **ToolRegistry**：工具注册中心，所有工具必须遵循通用工具响应协议
 - **TraceLogger**：记录完整会话轨迹到 `memory/traces/`（JSONL + Markdown）
-- **ContextBuilder**：为每次 LLM 调用收集工具列表、trace 历史等上下文
+- **ContextBuilder**：三层上下文拼接（L1 系统层 + L2 CODE_LAW + L3 历史）
+- **ToolResultCompressor**：压缩工具结果后写入历史（LS/Glob/Grep 截断列表，Edit/Write 仅保留摘要）
 
 ## 工具响应协议（重要）
 
@@ -122,6 +134,8 @@ prompts/           → 提示词
 - **乐观锁**：Read 后自动缓存 `file_mtime_ms`/`file_size_bytes`，Edit/MultiEdit 自动注入校验
 - **Legacy Adapter**：由 `ENABLE_LEGACY_ADAPTER` 环境变量控制（默认 true），迁移期自动转换旧格式响应
 - **LLM 自动检测**：HelloAgentsLLM 支持 openai/deepseek/qwen/zhipu 等提供商，provider=`auto` 时根据 base_url 自动推断
+- **三层上下文**：L1（系统提示词+工具描述）+ L2（CODE_LAW.md）+ L3（会话历史）
+- **结果压缩**：工具结果写入历史时自动压缩（LS/Glob/Grep 截断列表，Edit/Write 仅保留摘要）
 
 ## 配置
 
@@ -131,5 +145,14 @@ prompts/           → 提示词
 - `GLM_API_KEY`：智谱 AI API 密钥
 - `LLM_BASE_URL`：LLM 服务基础 URL
 - `ENABLE_LEGACY_ADAPTER=false`：禁用传统适配器转换
+
+## CODE_LAW.md
+
+项目根目录的 `CODE_LAW.md` 是项目的**规则文件**，会被 ContextBuilder 自动注入 L2 层：
+- 存储常用命令（build、test、lint 等）
+- 记录代码风格偏好
+- 维护代码库结构信息
+
+首次使用可运行 `python scripts/chat_test_agent.py`，输入 `init` 让 Agent 探索项目并生成该文件。
 
 ## 使用中文回答用户问题

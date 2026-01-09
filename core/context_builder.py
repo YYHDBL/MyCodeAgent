@@ -1,63 +1,122 @@
-"""Context builder for ReAct prompt assembly."""
+"""Context builder for ReAct prompt assembly.
+
+重构为 Message List 自然累积模式：
+- 不再拼接 scratchpad，每步历史由 messages 自然累积
+- L1/L2 用 role=system 放在 messages 头部
+- L3 就是 messages 中的 user/assistant/tool
+- L4 当前用户输入以 role=user 追加
+- Todo recap 作为 tool message 自然进入上下文
+
+Messages 格式：
+[
+  {"role": "system", "content": "L1 系统提示 + 工具说明"},
+  {"role": "system", "content": "L2: CODE_LAW.md（如有）"},
+  {"role": "user", "content": "...问题..."},
+  {"role": "assistant", "content": "Thought: ...\nAction: ..."},
+  {"role": "tool", "content": "{压缩后的JSON}", "tool_name": "Grep"},
+  ...
+]
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 import runpy
-from typing import List, Optional
-
-from tools.registry import ToolRegistry
-
-
-DEFAULT_REACT_TEMPLATE = """# L1: System Static Layer
-{system_prompt}
-
-{code_law}
-
-## 任务背景
-{context}
-
-## 当前问题
-Question: {question}
-
-## 执行历史（Action/Observation）
-{history}
-
-现在开始："""
+from typing import List, Optional, Dict, Any
 
 
 @dataclass
 class ContextBuilder:
-    """Builds the full prompt for the ReAct loop."""
+    """
+    构建 ReAct 循环的 messages 列表
+    
+    Message List 模式：
+    - L1(system+tools) 作为第一个 system message
+    - L2(CODE_LAW) 作为第二个 system message（如有）
+    - L3(history) 由 HistoryManager 提供的 messages 列表
+    - L4(user input) 已包含在 history 中
+    - Todo recap 作为 tool message 自然存在于 history 中
+    """
 
-    tool_registry: ToolRegistry
+    tool_registry: "ToolRegistry"  # noqa: F821
     project_root: str
     system_prompt_override: Optional[str] = None
-    template: str = DEFAULT_REACT_TEMPLATE
     _cached_code_law: str = field(default="", init=False)
     _cached_code_law_mtime: Optional[float] = field(default=None, init=False)
+    _cached_system_messages: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
 
-    def build(self, question: str, context_prompt: str, scratchpad: List[str]) -> str:
+    def build_messages(
+        self,
+        history_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        构建完整的 messages 列表
+        
+        Args:
+            history_messages: 来自 HistoryManager.to_messages() 的历史消息列表
+        
+        Returns:
+            完整的 messages 列表，可直接传给 LLM
+        """
+        messages: List[Dict[str, Any]] = []
+        
+        # L1: System prompt + Tools（缓存）
+        system_messages = self._get_system_messages()
+        messages.extend(system_messages)
+        
+        # L3/L4: History messages（包含 user/assistant/tool/summary）
+        messages.extend(history_messages)
+        
+        return messages
+
+    def get_system_messages(self) -> List[Dict[str, Any]]:
+        """获取 system messages（供日志记录等使用）"""
+        system_messages = self._get_system_messages()
+        return [dict(m) for m in system_messages]
+    
+    def _get_system_messages(self) -> List[Dict[str, Any]]:
+        """获取系统消息（带缓存）"""
+        # 检查 CODE_LAW 是否更新
+        code_law = self._load_code_law()
+        
+        # 如果缓存有效且 CODE_LAW 未变，直接返回
+        if self._cached_system_messages is not None:
+            # 检查 CODE_LAW 是否需要更新
+            has_code_law_msg = len(self._cached_system_messages) > 1
+            if (code_law and has_code_law_msg) or (not code_law and not has_code_law_msg):
+                return self._cached_system_messages
+        
+        # 重新构建
+        messages: List[Dict[str, Any]] = []
+        
+        # L1: System prompt + Tools
         system_prompt = self._load_system_prompt()
         tools_prompt = self._load_tool_prompts()
         if tools_prompt:
             if "{tools}" in system_prompt:
                 system_prompt = system_prompt.replace("{tools}", tools_prompt)
             else:
-                system_prompt = f"{system_prompt}\n\n# Tools Prompts\n{tools_prompt}"
-        code_law = self._load_code_law()
-        code_law_block = f"## CODE_LAW\n{code_law}" if code_law else ""
-        history_str = "\n".join(scratchpad) if scratchpad else "(empty)"
-        return self.template.format(
-            system_prompt=system_prompt.strip(),
-            code_law=code_law_block.strip(),
-            context=context_prompt,
-            question=question,
-            history=history_str,
-        )
+                system_prompt = f"{system_prompt}\n\n# Available Tools\n{tools_prompt}"
+        
+        if system_prompt.strip():
+            messages.append({
+                "role": "system",
+                "content": system_prompt.strip(),
+            })
+        
+        # L2: CODE_LAW
+        if code_law:
+            messages.append({
+                "role": "system",
+                "content": f"# Project Rules (CODE_LAW)\n{code_law}",
+            })
+        
+        self._cached_system_messages = messages
+        return messages
 
     def _load_system_prompt(self) -> str:
+        """加载 L1 系统 prompt"""
         if self.system_prompt_override:
             return self.system_prompt_override
         prompt_path = Path(self.project_root) / "prompts" / "agents_prompts" / "L1_system_prompt.py"
@@ -68,6 +127,7 @@ class ContextBuilder:
         return prompt if isinstance(prompt, str) else ""
 
     def _load_tool_prompts(self) -> str:
+        """加载所有工具的 prompt"""
         prompts_dir = Path(self.project_root) / "prompts" / "tools_prompts"
         if not prompts_dir.exists():
             return ""
@@ -82,6 +142,7 @@ class ContextBuilder:
         return "\n\n".join(p for p in prompts if p)
 
     def _load_code_law(self) -> str:
+        """加载 CODE_LAW.md（带 mtime 缓存）"""
         for filename in ("code_law.md", "CODE_LAW.md"):
             code_law_path = Path(self.project_root) / filename
             if not code_law_path.exists():
@@ -99,3 +160,64 @@ class ContextBuilder:
             self._cached_code_law_mtime = mtime
             return self._cached_code_law
         return ""
+    
+    # =========================================================================
+    # 兼容旧接口（deprecated，保留过渡期）
+    # =========================================================================
+    
+    def build(
+        self,
+        question: str,
+        history_str: str,
+        scratchpad: List[str],
+    ) -> str:
+        """
+        [DEPRECATED] 旧版 prompt 字符串构建方法
+        
+        请使用 build_messages() 代替
+        """
+        import warnings
+        warnings.warn(
+            "ContextBuilder.build() is deprecated, use build_messages() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        
+        # 构建兼容的 prompt 字符串
+        system_prompt = self._load_system_prompt()
+        tools_prompt = self._load_tool_prompts()
+        if tools_prompt:
+            if "{tools}" in system_prompt:
+                system_prompt = system_prompt.replace("{tools}", tools_prompt)
+            else:
+                system_prompt = f"{system_prompt}\n\n# Available Tools\n{tools_prompt}"
+        
+        code_law = self._load_code_law()
+        code_law_block = f"# Project Rules (CODE_LAW)\n{code_law}" if code_law else ""
+        
+        history_block = history_str if history_str else "(no previous conversation)"
+        scratchpad_str = "\n".join(scratchpad) if scratchpad else "(new turn, no actions yet)"
+        
+        template = """# System Instructions
+{system_prompt}
+
+{code_law}
+
+# Chat History
+{history}
+
+# Current Question
+Question: {question}
+
+# Current Turn Scratchpad
+{scratchpad}
+
+Now continue with Thought and Action:"""
+        
+        return template.format(
+            system_prompt=system_prompt.strip(),
+            code_law=code_law_block.strip(),
+            history=history_block,
+            question=question,
+            scratchpad=scratchpad_str,
+        )

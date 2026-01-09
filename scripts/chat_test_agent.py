@@ -30,7 +30,7 @@ def main() -> None:
     parser.add_argument("--name", default="code", help="agent name")
     parser.add_argument("--system", default=None, help="system prompt")
     parser.add_argument("--provider", default="zhipu", help="llm provider")
-    parser.add_argument("--model", default="GLM-4.6", help="model name")
+    parser.add_argument("--model", default="GLM-4.7", help="model name")
     parser.add_argument("--api-key", default=None, help="api key")
     parser.add_argument("--base-url", default="https://open.bigmodel.cn/api/coding/paas/v4", help="base url")
     parser.add_argument("--temperature", type=float, default=0.7, help="temperature")
@@ -73,56 +73,59 @@ def main() -> None:
     print("\nType 'exit' to quit.")
     print("-" * 60)
     
-    while True:
-        try:
-            user_input = input("\nyou> ").strip()
-        except EOFError:
-            print()
-            break
+    try:
+        while True:
+            try:
+                user_input = input("\nyou> ").strip()
+            except EOFError:
+                print()
+                break
 
-        if not user_input:
-            continue
-        if user_input.lower() in {"exit", "quit", "q"}:
-            break
+            if not user_input:
+                continue
+            if user_input.lower() in {"exit", "quit", "q"}:
+                break
 
-        # 检测是否为初始化命令
-        if "init" in user_input.lower():
-            if code_law_exists:
-                print("\n⚠️  code_law.md 已存在，是否重新生成？")
-                confirm = input("输入 'yes' 确认重新生成: ").strip().lower()
-                if confirm != "yes":
-                    print("已取消。")
-                    continue
-            
-            print("\n🚀 开始生成 code_law.md...")
-            print("   Agent 将探索项目结构并生成文档...")
-            
-            # 将生成提示词附加到用户输入
-            enhanced_input = f"{CODE_LAW_GENERATION_PROMPT}\n\n请使用 LS、Glob、Grep、Read 等工具探索项目，然后使用 Write 工具生成 code_law.md 文件。"
-            
-            response = agent.run(enhanced_input, show_raw=args.show_raw)
-            print("\n=== assistant ===")
-            print(response)
-            print("====================")
-            
-            # 检查是否成功生成
-            if check_code_law_exists(PROJECT_ROOT):
-                print("\n✅ code_law.md 已成功生成！")
-                code_law_exists = True
+            # 检测是否为初始化命令
+            if "init" in user_input.lower():
+                if code_law_exists:
+                    print("\n⚠️  code_law.md 已存在，是否重新生成？")
+                    confirm = input("输入 'yes' 确认重新生成: ").strip().lower()
+                    if confirm != "yes":
+                        print("已取消。")
+                        continue
+                
+                print("\n🚀 开始生成 code_law.md...")
+                print("   Agent 将探索项目结构并生成文档...")
+                
+                # 将生成提示词附加到用户输入
+                enhanced_input = f"{CODE_LAW_GENERATION_PROMPT}\n\n请使用 LS、Glob、Grep、Read 等工具探索项目，然后使用 Write 工具生成 code_law.md 文件。"
+                
+                response = agent.run(enhanced_input, show_raw=args.show_raw)
+                print("\n=== assistant ===")
+                print(response)
+                print("====================")
+                
+                # 检查是否成功生成
+                if check_code_law_exists(PROJECT_ROOT):
+                    print("\n✅ code_law.md 已成功生成！")
+                    code_law_exists = True
+                else:
+                    print("\n⚠️  code_law.md 未能生成，请检查 Agent 输出")
             else:
-                print("\n⚠️  code_law.md 未能生成，请检查 Agent 输出")
-        else:
-            # 正常对话
-            response = agent.run(user_input, show_raw=args.show_raw)
-            print("\n=== assistant ===")
-            print(response)
-            print("====================")
+                # 正常对话
+                response = agent.run(user_input, show_raw=args.show_raw)
+                print("\n=== assistant ===")
+                print(response)
+                print("====================")
 
-        if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
-            print()
-            print("----- raw response -----")
-            print(json.dumps(agent.last_response_raw, ensure_ascii=False, indent=2))
-            print("------------------------")
+            if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
+                print()
+                print("----- raw response -----")
+                print(json.dumps(agent.last_response_raw, ensure_ascii=False, indent=2))
+                print("------------------------")
+    finally:
+        agent.close()
 
 
 if __name__ == "__main__":

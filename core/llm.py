@@ -1,6 +1,7 @@
 """HelloAgents统一LLM接口 - 基于OpenAI原生API"""
 
 import os
+import time
 from typing import Literal, Optional, Iterator, Dict
 from openai import OpenAI
 
@@ -56,7 +57,9 @@ class HelloAgentsLLM:
         self.model = model or self._get_env("LLM_MODEL_ID")
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.timeout = timeout or int(self._get_env("LLM_TIMEOUT", "60"))
+        self.timeout = timeout or int(self._get_env("LLM_TIMEOUT", "120"))
+        self.max_retries = int(self._get_env("LLM_MAX_RETRIES", "2"))
+        self.retry_backoff = float(self._get_env("LLM_RETRY_BACKOFF", "1.0"))
         self.kwargs = kwargs
 
         # 自动检测provider或使用指定的provider
@@ -360,34 +363,44 @@ class HelloAgentsLLM:
         非流式调用LLM，返回完整响应。
         适用于不需要流式输出的场景。
         """
-        try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=kwargs.get('temperature', self.temperature),
-                max_tokens=kwargs.get('max_tokens', self.max_tokens),
-                **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise HelloAgentsException(f"LLM调用失败: {str(e)}")
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=kwargs.get('temperature', self.temperature),
+                    max_tokens=kwargs.get('max_tokens', self.max_tokens),
+                    **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                if attempt >= self.max_retries:
+                    raise HelloAgentsException(f"LLM调用失败: {str(e)}")
+                wait_s = self.retry_backoff * (2 ** attempt)
+                print(f"⚠️ LLM调用失败，{wait_s:.1f}s后重试（{attempt + 1}/{self.max_retries}）: {e}")
+                time.sleep(wait_s)
 
     def invoke_raw(self, messages: list[dict[str, str]], **kwargs):
         """
         非流式调用LLM，返回原始响应对象。
         适用于需要查看完整结构的场景。
         """
-        try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=kwargs.get('temperature', self.temperature),
-                max_tokens=kwargs.get('max_tokens', self.max_tokens),
-                **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
-            )
-            return response
-        except Exception as e:
-            raise HelloAgentsException(f"LLM调用失败: {str(e)}")
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=kwargs.get('temperature', self.temperature),
+                    max_tokens=kwargs.get('max_tokens', self.max_tokens),
+                    **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
+                )
+                return response
+            except Exception as e:
+                if attempt >= self.max_retries:
+                    raise HelloAgentsException(f"LLM调用失败: {str(e)}")
+                wait_s = self.retry_backoff * (2 ** attempt)
+                print(f"⚠️ LLM调用失败，{wait_s:.1f}s后重试（{attempt + 1}/{self.max_retries}）: {e}")
+                time.sleep(wait_s)
 
     def stream_invoke(self, messages: list[dict[str, str]], **kwargs) -> Iterator[str]:
         """
