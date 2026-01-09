@@ -3,7 +3,6 @@
 ## 项目概况（当前结构）
 - `core/`：基础能力（`Agent` 抽象基类、`HelloAgentsLLM`、`Message`、`Config`、异常体系）。
 - `agents/`：Agent 实现（`CodeAgent`）。
-- `agentEngines/`：推理引擎层（已合并到 `CodeAgent`）。
 - `tools/`：工具系统
   - `base.py`：`Tool` 抽象基类 + `ToolParameter` 数据模型 + 响应协议支持。
   - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）+ 旧格式适配器。
@@ -17,7 +16,6 @@
   - `edit_file_multi.py`：`MultiEditTool` (MultiEdit) - 多点编辑工具。
   - `todo_write.py`：`TodoWriteTool` (TodoWrite) - 任务清单管理工具。
   - `bash.py`：`BashTool` (Bash) - 命令执行工具。
-  - `calculator.py`：`CalculatorTool` - 数学计算工具（demo 工具，未遵循新协议）。
 - `scripts/`：交互脚本（`chat_test_agent.py`）。
 - `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`、`read_prompt.py`、`write_prompt.py`、`edit_prompt.py`、`multi_edit_prompt.py`、`todo_write_prompt.py`、`bash_prompt.py`）。
 - `docs/`：文档（`DEV_HANDOFF.md`、`通用工具响应协议.md`）。
@@ -35,7 +33,7 @@
    - 工具通过 `ToolRegistry` 统一管理，支持 Tool 对象和函数两种注册方式。
 
 3. **响应协议重构**
-   - 所有内置工具（LS/Glob/Grep）已遵循《通用工具响应协议》（`docs/通用工具响应协议.md`）。
+   - 所有内置工具已遵循《通用工具响应协议》（`docs/通用工具响应协议.md`）。
    - 统一顶层字段：`status`、`data`、`text`、`error`（仅 error 时存在）、`stats`、`context`。
    - 框架层提供旧格式适配器，支持渐进式迁移。
 
@@ -343,37 +341,6 @@ export ENABLE_LEGACY_ADAPTER=true  # 默认启用
 
 ---
 
-## 4) Calculator 工具（python_calculator）
-**文件**：`tools/builtin/calculator.py`
-
-> **注意**：Calculator 是 demo 工具，未遵循《通用工具响应协议》。
-
-### 设计目标
-- 安全执行数学计算表达式。
-- 支持基本运算符和常用数学函数。
-- 使用 AST 解析确保安全性（避免任意代码执行）。
-
-### 参数
-- `input` 或 `expression`（必填）：要计算的数学表达式字符串。
-
-### 支持的操作
-- **运算符**：`+`, `-`, `*`, `/`, `**`（幂）, `^`（异或）, `-`（负号）
-- **函数**：`abs`, `round`, `max`, `min`, `sum`, `sqrt`, `sin`, `cos`, `tan`, `log`, `exp`
-- **常量**：`pi`, `e`
-
-### 关键实现逻辑
-- **AST 解析**：使用 `ast.parse(expression, mode='eval')` 解析表达式。
-- **递归求值**：`_eval_node` 方法递归处理 AST 节点。
-- **白名单机制**：仅允许预定义的操作符和函数，确保安全。
-- **错误处理**：捕获所有异常并返回友好错误信息。
-
-### 示例
-- `2+3*4` → `14`
-- `sqrt(16)` → `4.0`
-- `sin(pi/2)` → `1.0`
-
----
-
 # 后续建议
 - **统一工具注册**：封装 `register_builtin_tools(project_root)` 函数，简化工具初始化流程。
 - **测试覆盖**：为 LS/Glob/Grep 增加单元测试用例，覆盖：
@@ -387,4 +354,4 @@ export ENABLE_LEGACY_ADAPTER=true  # 默认启用
   - 监控旧格式适配器日志，追踪未迁移的工具。
   - 当所有工具迁移完成后，设置 `ENABLE_LEGACY_ADAPTER=false` 验证。
   - 最终移除适配器代码。
-- **扩展性**：考虑添加更多内置工具（如 `read_file`、`write_file` 等），新工具必须遵循《通用工具响应协议》。
+- **扩展性**：考虑添加更高层的工程工具（如 lint/format/test/诊断类），新工具必须遵循《通用工具响应协议》。

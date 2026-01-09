@@ -390,7 +390,7 @@ Best Practices:
 - Read the file first to understand its current content before writing.
 - Check the returned 'diff_preview' to verify your changes are correct.
 - If diff is truncated, use Read to verify the full content.
-- If the file already exists, you MUST use Read before Write (enforced by prompt in MVP; code-level check is TODO).
+- If the file already exists, you MUST use Read before Write (enforced by prompt and code-level optimistic-lock checks).
 ```
 
 ---
@@ -399,7 +399,7 @@ Best Practices:
 
 ```
 tools/builtin/write_file.py          # 主实现
-tools/prompts/write_prompt.py        # 提示词
+prompts/tools_prompts/write_prompt.py  # 提示词
 tests/test_write_tool.py             # 单元测试
 ```
 

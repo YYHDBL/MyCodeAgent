@@ -1,151 +1,86 @@
 # MyCodeAgent
 
-基于 ReAct（Reasoning + Acting）架构的 AI 智能体框架，用于自动化代码分析和编程任务。
+A production‑ready ReAct agent framework for code analysis and autonomous software tasks.
 
-## 特性
+```
+ __  __       ____          _      ___                 _
+|  \/  |_   _/ ___|___   __| | ___|_ _|_ __ ___   __ _| |
+| |\/| | | | | |   / _ \ / _` |/ _ \| || '_ ` _ \ / _` | |
+| |  | | |_| | |__| (_) | (_| |  __/| || | | | | | (_| | |
+|_|  |_|\__, |\____\___/ \__,_|\___|___|_| |_| |_|\__,_|_|
+        |___/
+```
 
-- **ReAct 推理引擎**：Thought → Action → Observation 循环，智能决策和执行
-- **统一工具协议**：所有工具遵循标准响应协议，输出结构一致
-- **多 LLM 支持**：支持 OpenAI、DeepSeek、Qwen、智谱 AI 等
-- **沙箱安全**：文件操作严格限制在项目根目录内
-- **完整测试**：提供单元测试和协议合规性验证
+## Why this exists
+MyCodeAgent turns a codebase into an executable workspace: reasoning + tools + safety.
+It is built for long‑running, tool‑rich sessions with strict protocol guarantees.
 
-## 快速开始
+## Highlights
+- ReAct loop with Thought → Action → Observation
+- Unified tool response protocol (schema‑stable, agent‑friendly)
+- Tool result compression + history summary to control context growth
+- Multi‑provider LLM support (OpenAI/DeepSeek/Qwen/Zhipu/Kimi/ModelScope/Ollama/vLLM/local)
+- Sandbox‑safe file ops and command execution
+- Deterministic, offline‑friendly tests
 
-### 安装
+## Architecture at a glance
+```
+core/      = base agent, LLM client, messages, config, history, context
+agents/    = concrete agents (CodeAgent)
+tools/     = registry + protocol helpers
+tools/builtin/ = LS/Glob/Grep/Read/Write/Edit/MultiEdit/TodoWrite/Bash
+prompts/   = agent/tool prompts
+scripts/   = entrypoints
+```
 
+## Built‑in tools
+| Tool | Purpose | Notes |
+|------|---------|------|
+| LS | List directories | pagination, ignore rules |
+| Glob | Find files by pattern | deterministic ordering |
+| Grep | Search code | regex + rg fallback |
+| Read | Read files | paging + line numbers |
+| Write | Create/overwrite | diff preview + optimistic lock |
+| Edit | Single replacement | unique anchor required |
+| MultiEdit | Batch edits | atomic multi‑replace |
+| TodoWrite | Task list | recap + persistence |
+| Bash | Shell command | sandbox + safety rules |
+
+All tools return a unified response envelope. See `docs/通用工具响应协议.md`.
+
+## Quickstart
+### Install
 ```bash
-# 克隆项目
-git clone <repository-url>
-cd MyCodeAgent
-
-# 安装依赖
 pip install -r requirements.txt
 ```
 
-### 配置
-
-创建 `.env` 文件或设置环境变量：
-
+### Configure
 ```bash
-# OpenAI（默认）
+# OpenAI
 export OPENAI_API_KEY="your-api-key"
 
-# DeepSeek
+# Other providers
 export DEEPSEEK_API_KEY="your-api-key"
-
-# 智谱 AI
 export GLM_API_KEY="your-api-key"
-
-# 自定义 API 地址
 export LLM_BASE_URL="https://your-api-endpoint"
 ```
 
-### 运行
-
+### Run
 ```bash
-# 运行代码智能体
 python scripts/chat_test_agent.py --show-raw
 
-# 指定提供商和模型
+# Explicit provider/model
 python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
 ```
 
-## 架构
-
-```
-MyCodeAgent
-├── core/              # 基础层
-│   ├── agent.py       # Agent 基类
-│   ├── llm.py         # HelloAgentsLLM 统一接口
-│   ├── message.py     # 消息系统
-│   └── config.py      # 配置管理
-├── agents/            # 智能体层
-│   └── codeAgent.py   # 代码智能体
-├── agentEngines/      # 推理引擎层（已合并到 CodeAgent）
-├── tools/             # 工具层
-│   ├── registry.py    # 工具注册中心
-│   └── builtin/       # 内置工具
-│       ├── list_files.py         → LS（目录列表）
-│       ├── search_files_by_name.py → Glob（文件搜索）
-│       ├── search_code.py        → Grep（代码搜索）
-│       ├── read_file.py          → Read（文件读取）
-│       └── write_file.py         → Write（文件写入）
-└── prompts/           # 提示词
-    └── tools_prompts/ # 工具描述
-```
-
-## 内置工具
-
-| 工具 | 功能 |
-|------|------|
-| **LS** | 列出目录内容，支持递归和限制条目数 |
-| **Glob** | 按通配符模式搜索文件 |
-| **Grep** | 在代码中搜索文本或正则表达式 |
-| **Read** | 读取文件内容，支持行范围和限制 |
-| **Write** | 写入或覆盖文件，支持 diff 预览和 dry-run |
-
-所有工具响应遵循 [通用工具响应协议](docs/通用工具响应协议.md)。
-
-## 开发
-
-### 运行测试
-
-```bash
-# 运行所有测试
-python -m pytest tests/ -v
-
-# 运行单个工具测试
-python -m pytest tests/test_write_tool.py -v
-python -m pytest tests/test_read_tool.py -v
-
-# 协议合规性测试
-python -m pytest tests/test_protocol_compliance.py -v
-```
-
-### 添加新工具
-
-1. 继承 `tools.base.Tool` 基类
-2. 实现 `run()` 方法，返回标准响应格式
-3. 在 `tools.registry.ToolRegistry` 中注册
-4. 在 `prompts/tools_prompts/` 添加工具描述
-
-示例：
-
-```python
-from tools.base import Tool, ToolStatus, ErrorCode
-
-class MyTool(Tool):
-    def run(self, parameters: dict) -> str:
-        # 参数校验
-        if not parameters.get("required_param"):
-            return self.create_error_response(
-                error_code=ErrorCode.INVALID_PARAM,
-                message="required_param is missing",
-                params_input=parameters,
-            )
-
-        # 执行逻辑
-        result = self._do_work(parameters)
-
-        # 返回响应
-        return self.create_success_response(
-            data={"result": result},
-            text=f"操作成功: {result}",
-            params_input=parameters,
-        )
-```
-
-### 工具响应协议
-
-所有工具必须返回以下结构：
-
+## Tool protocol (contract)
+Every tool returns:
 ```json
 {
   "status": "success" | "partial" | "error",
   "data": { ... },
-  "text": "人类可读摘要",
-  "stats": { "time_ms": 100, ... },
+  "text": "human-readable summary",
+  "stats": { "time_ms": 123, ... },
   "context": {
     "cwd": ".",
     "params_input": { ... }
@@ -154,18 +89,24 @@ class MyTool(Tool):
 }
 ```
 
-详细规范见 [docs/通用工具响应协议.md](docs/通用工具响应协议.md)。
+## Development
+### Tests
+```bash
+python -m pytest tests/ -v
+python -m pytest tests/test_write_tool.py -v
+python -m pytest tests/test_read_tool.py -v
+python -m pytest tests/test_protocol_compliance.py -v
+```
 
-## 项目结构
+### Add a new tool
+1) Inherit `tools.base.Tool`
+2) Implement `run()` and `get_parameters()`
+3) Register in `tools/registry.py`
+4) Add prompt in `prompts/tools_prompts/`
 
-- `AGENTS.md` - 项目指南和编码规范
-- `CLAUDE.md` - Claude Code 工作指南
-- `docs/` - 详细设计文档
-  - `通用工具响应协议.md` - 工具响应协议规范
-  - `WriteTool设计文档.md` - Write 工具设计
-  - `ReAct历史管理设计分析.md` - ReAct 历史管理分析
-- `tests/` - 测试套件
+## Project rules
+- `CODE_LAW.md` is auto‑injected into system context (L2)
+- When tool behavior changes, update prompts in `prompts/tools_prompts/`
 
-## 许可证
-
-[待添加]
+## License
+TBD
