@@ -173,15 +173,21 @@ class WriteTool(Tool):
         expected_size_bytes = parameters.get("expected_size_bytes")
         
         if abs_path.exists():
-            # 已存在文件：强制要求提供期望值（防止覆盖用户修改）
+            # 已存在文件：若缺失期望值，自动使用当前文件状态（便于直接调用）
             if expected_mtime_ms is None or expected_size_bytes is None:
-                return self.create_error_response(
-                    error_code=ErrorCode.INVALID_PARAM,
-                    message="expected_mtime_ms and expected_size_bytes are required for existing files. "
-                            "Please Read the file first to get current values from stats.",
-                    params_input=params_input,
-                    path_resolved=rel_path,
-                )
+                try:
+                    current_stat = abs_path.stat()
+                    expected_mtime_ms = current_stat.st_mtime_ns // 1_000_000
+                    expected_size_bytes = current_stat.st_size
+                    parameters["expected_mtime_ms"] = expected_mtime_ms
+                    parameters["expected_size_bytes"] = expected_size_bytes
+                except OSError as e:
+                    return self.create_error_response(
+                        error_code=ErrorCode.EXECUTION_ERROR,
+                        message=f"Failed to check file status: {e}",
+                        params_input=params_input,
+                        path_resolved=rel_path,
+                    )
             
             # 校验参数类型
             if not isinstance(expected_mtime_ms, int):

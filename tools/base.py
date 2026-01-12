@@ -314,6 +314,12 @@ class Tool(ABC):
             context.update(extra_context)
         
         # 构建 stats（time_ms 必填）
+        try:
+            time_ms = int(time_ms)
+        except Exception:
+            time_ms = 0
+        if status != ToolStatus.ERROR and time_ms <= 0:
+            time_ms = 1
         stats: Dict[str, Any] = {"time_ms": time_ms}
         if extra_stats:
             stats.update(extra_stats)

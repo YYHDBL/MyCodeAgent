@@ -1,5 +1,8 @@
 import json
+import os
+import logging
 import re
+import sys
 import traceback as tb
 from typing import Any, Optional, List, Tuple
 
@@ -21,9 +24,11 @@ from tools.builtin.write_file import WriteTool
 from tools.builtin.edit_file import EditTool
 from tools.builtin.edit_file_multi import MultiEditTool
 from tools.builtin.todo_write import TodoWriteTool
+from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
 from utils import setup_logger
+from core.skills.skill_loader import SkillLoader
 
 
 class CodeAgent(Agent):
@@ -55,7 +60,9 @@ class CodeAgent(Agent):
         )
         self.last_response_raw: Optional[Any] = None
         self.max_steps = 50
-        self.verbose = True
+        self.verbose = bool(self.config.debug)
+        self.console_verbose = bool(self.config.show_react_steps)
+        self.console_progress = bool(self.config.show_progress)
         
         # 创建 Summary 生成器（Phase 7）
         summary_generator = create_summary_generator(
@@ -70,6 +77,11 @@ class CodeAgent(Agent):
             summary_generator=summary_generator,
         )
         
+        # Skills
+        self._skill_loader = SkillLoader(self.project_root)
+        self._skills_prompt = ""
+        self._refresh_skills_prompt()
+
         # 注册工具
         self._register_builtin_tools()
         self._mcp_clients = []
@@ -82,6 +94,7 @@ class CodeAgent(Agent):
             project_root=self.project_root,
             system_prompt_override=self.system_prompt,
             mcp_tools_prompt=self._mcp_tools_prompt,
+            skills_prompt=self._skills_prompt,
         )
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
@@ -101,7 +114,19 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(EditTool(project_root=self.project_root))
         self.tool_registry.register_tool(MultiEditTool(project_root=self.project_root))
         self.tool_registry.register_tool(TodoWriteTool(project_root=self.project_root))
+        self.tool_registry.register_tool(
+            SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
+        )
         self.tool_registry.register_tool(BashTool(project_root=self.project_root))
+
+    def _refresh_skills_prompt(self) -> None:
+        refresh = os.getenv("SKILLS_REFRESH_ON_CALL", "true").lower() in {"1", "true", "yes", "y", "on"}
+        if refresh:
+            self._skill_loader.refresh_if_stale()
+        elif not self._skills_prompt:
+            self._skill_loader.scan()
+        budget = int(os.getenv("SKILLS_PROMPT_CHAR_BUDGET", "12000"))
+        self._skills_prompt = self._skill_loader.format_skills_for_prompt(budget)
 
     def _register_mcp_tools(self) -> None:
         """可选：注册 MCP 工具（基于 MCP_SERVERS 配置）"""
@@ -110,14 +135,15 @@ class CodeAgent(Agent):
             self._mcp_clients = clients
             self._mcp_tools_prompt = format_mcp_tools_prompt(tools_meta)
             if tools_meta:
-                print("\n🔌 MCP tools loaded:")
-                for tool in tools_meta:
-                    name = tool.get("name") or ""
-                    description = (tool.get("description") or "").strip()
-                    if description:
-                        print(f"  - {name}: {description}")
-                    else:
-                        print(f"  - {name}")
+                self.logger.info("MCP tools loaded: %d", len(tools_meta))
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    for tool in tools_meta:
+                        name = tool.get("name") or ""
+                        description = (tool.get("description") or "").strip()
+                        if description:
+                            self.logger.debug("MCP tool: %s - %s", name, description)
+                        else:
+                            self.logger.debug("MCP tool: %s", name)
         except Exception as exc:
             if self.logger:
                 self.logger.warning("MCP registration skipped: %s", exc)
@@ -143,14 +169,25 @@ class CodeAgent(Agent):
         if not show_raw:
             self.last_response_raw = None
 
+        if self.console_progress:
+            self._console("⏳ Agent 正在处理，请稍候...")
+
         # 1. 预处理用户输入（@file 解析）
+        self._refresh_skills_prompt()
+        self.context_builder.set_skills_prompt(self._skills_prompt)
         preprocess_result = preprocess_input(input_text)
         processed_input = preprocess_result.processed_input
         
-        if preprocess_result.mentioned_files and self.verbose:
-            print(f"\n📎 检测到文件引用: {', '.join(preprocess_result.mentioned_files)}")
-            if preprocess_result.truncated_count > 0:
-                print(f"   (另有 {preprocess_result.truncated_count} 个文件被省略)")
+        if preprocess_result.mentioned_files:
+            mentioned = ", ".join(preprocess_result.mentioned_files)
+            if self.console_verbose:
+                self._console(f"\n📎 检测到文件引用: {mentioned}")
+                if preprocess_result.truncated_count > 0:
+                    self._console(f"   (另有 {preprocess_result.truncated_count} 个文件被省略)")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("检测到文件引用: %s", mentioned)
+                if preprocess_result.truncated_count > 0:
+                    self.logger.debug("另有 %d 个文件被省略", preprocess_result.truncated_count)
 
         trace_logger = self.trace_logger
         self._run_id += 1
@@ -177,8 +214,10 @@ class CodeAgent(Agent):
                 "message_count": self.history_manager.get_message_count(),
             }, step=0)
             
-            if self.verbose:
-                print("\n📦 触发历史压缩...")
+            if self.console_verbose:
+                self._console("\n📦 触发历史压缩...")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("触发历史压缩")
             
             rounds_before = self.history_manager.get_rounds_count()
             messages_before = self.history_manager.get_message_count()
@@ -210,8 +249,11 @@ class CodeAgent(Agent):
                     step=0,
                 )
                 
-                if self.verbose:
-                    print(f"✅ 压缩完成，当前轮次数: {rounds_after}")
+                if self.console_verbose:
+                    self._console(f"✅ 压缩完成，当前轮次数: {rounds_after}")
+                    self._print_context_preview(final_context)
+                elif self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("压缩完成，当前轮次数: %d", rounds_after)
                     self._print_context_preview(final_context)
 
         # 3. 将用户消息写入 history（轮次开始时写入）
@@ -219,8 +261,10 @@ class CodeAgent(Agent):
         trace_logger.log_event("user_input", {"text": input_text, "processed": processed_input}, step=0)
         self._log_message_write(trace_logger, "user", processed_input, {}, step=0)
 
-        if self.verbose:
-            print(f"\n⚙️ Engine 启动: {input_text}")
+        if self.console_verbose:
+            self._console(f"\n⚙️ Engine 启动: {input_text}")
+        elif self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Engine 启动: %s", input_text)
 
         response_text = ""
         try:
@@ -234,6 +278,8 @@ class CodeAgent(Agent):
                 {"run_id": run_id, "final": response_text if "response_text" in locals() else ""},
                 step=0,
             )
+        if self.console_progress:
+            self._console("✅ Agent 已完成")
 
         self.logger.debug("response=%s", response_text)
         self.logger.info("history_size=%d, rounds=%d", 
@@ -272,8 +318,12 @@ class CodeAgent(Agent):
         5. 若为工具调用：执行工具，将 assistant + tool 消息追加到 history
         """
         for step in range(1, self.max_steps + 1):
-            if self.verbose:
-                print(f"\n--- Step {step}/{self.max_steps} ---")
+            if self.console_verbose:
+                self._console(f"\n--- Step {step}/{self.max_steps} ---")
+            elif self.console_progress:
+                self._console(f"… Step {step}/{self.max_steps}")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("Step %d/%d", step, self.max_steps)
 
             # 构建 messages 列表
             history_messages = self.history_manager.to_messages()
@@ -342,12 +392,16 @@ class CodeAgent(Agent):
                         },
                         step=step,
                     )
-                    if self.verbose:
-                        print("⚠️ LLM返回空响应，追加提示后重试一次")
+                    if self.console_verbose:
+                        self._console("⚠️ LLM返回空响应，追加提示后重试一次")
+                    else:
+                        self.logger.warning("LLM返回空响应，追加提示后重试一次")
                     continue
 
-                if self.verbose:
-                    print("❌ LLM返回空响应")
+                if self.console_verbose:
+                    self._console("❌ LLM返回空响应")
+                else:
+                    self.logger.error("LLM返回空响应")
                 trace_logger.log_event(
                     "error",
                     {
@@ -365,8 +419,11 @@ class CodeAgent(Agent):
 
             thought, action = self._parse_thought_action(str(response_text))
 
-            if self.verbose and thought:
-                print(f"\n🤔 Thought:\n{thought}\n")
+            if thought:
+                if self.console_verbose:
+                    self._console(f"\n🤔 Thought:\n{thought}\n")
+                elif self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("Thought: %s", thought)
 
             # 处理无 Action 的情况
             if not action:
@@ -379,8 +436,10 @@ class CodeAgent(Agent):
                         metadata={"step": step, "action_type": "finish"},
                     )
                     self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "finish"}, step)
-                    if self.verbose:
-                        print("\n✅ Finish\n")
+                    if self.console_verbose:
+                        self._console("\n✅ Finish\n")
+                    elif self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug("Finish")
                     trace_logger.log_event(
                         "parsed_action",
                         {"thought": thought or "", "action": "Finish", "args": {"payload": finish_payload}},
@@ -408,8 +467,10 @@ class CodeAgent(Agent):
                 )
                 self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "finish"}, step)
                 
-                if self.verbose:
-                    print("\n✅ Finish\n")
+                if self.console_verbose:
+                    self._console("\n✅ Finish\n")
+                elif self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("Finish")
                 trace_logger.log_event(
                     "parsed_action",
                     {"thought": thought or "", "action": "Finish", "args": {"payload": final_answer}},
@@ -437,8 +498,10 @@ class CodeAgent(Agent):
 
             trace_logger.log_event("tool_call", {"tool": tool_name, "args": tool_input}, step=step)
 
-            if self.verbose:
-                print(f"\n🎬 Action: {tool_name}[{tool_input}]\n")
+            if self.console_verbose:
+                self._console(f"\n🎬 Action: {tool_name}[{tool_input}]\n")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("Action: %s %s", tool_name, tool_input)
 
             # 写入 assistant 消息（Thought + Action）
             assistant_content = f"Thought: {thought or ''}\nAction: {tool_name}[{json.dumps(tool_input, ensure_ascii=False)}]"
@@ -462,9 +525,12 @@ class CodeAgent(Agent):
             self.history_manager.append_tool(tool_name=tool_name, raw_result=observation, metadata={"step": step})
             self._log_message_write(trace_logger, "tool", observation, {"tool_name": tool_name}, step)
 
-            if self.verbose:
+            if self.console_verbose:
                 display_obs = observation[:300] + "..." if len(observation) > 300 else observation
-                print(f"\n👀 Observation: {display_obs}\n")
+                self._console(f"\n👀 Observation: {display_obs}\n")
+            elif self.logger.isEnabledFor(logging.DEBUG):
+                display_obs = observation[:300] + "..." if len(observation) > 300 else observation
+                self.logger.debug("Observation: %s", display_obs)
 
         return "抱歉，我无法在限定步数内完成这个任务。"
 
@@ -494,20 +560,35 @@ class CodeAgent(Agent):
         content_limit: int = 200,
     ) -> None:
         if not messages:
-            print("（当前上下文为空）")
+            if self.console_verbose:
+                self._console("（当前上下文为空）")
+            else:
+                self.logger.debug("当前上下文为空")
             return
         total = len(messages)
         preview = messages[:max_messages]
-        print("\n📌 当前上下文（最多显示 10 条）")
+        if self.console_verbose:
+            self._console(f"\n📌 当前上下文（最多显示 {max_messages} 条）")
+        else:
+            self.logger.debug("当前上下文（最多显示 %d 条）", max_messages)
         for msg in preview:
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
             content = str(content).replace("\n", "\\n")
             if len(content) > content_limit:
                 content = content[:content_limit] + "...(truncated)"
-            print(f'message({role}, "{content}")')
+            if self.console_verbose:
+                self._console(f'message({role}, "{content}")')
+            else:
+                self.logger.debug('message(%s, "%s")', role, content)
         if total > max_messages:
-            print(f"...（其余 {total - max_messages} 条已省略）")
+            if self.console_verbose:
+                self._console(f"...（其余 {total - max_messages} 条已省略）")
+            else:
+                self.logger.debug("其余 %d 条已省略", total - max_messages)
+
+    def _console(self, message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
         res = self.tool_registry.execute_tool(tool_name, tool_input)
@@ -634,6 +715,42 @@ class CodeAgent(Agent):
             content = _get_attr(message, "content")
             if content and str(content).strip():
                 return str(content), {"source": "content"}
+        except Exception:
+            return None, None
+
+        return None, None
+
+    @staticmethod
+    def _recover_from_reasoning(raw_response: Any) -> Tuple[Optional[str], Optional[dict]]:
+        """尝试从 reasoning_content 中恢复 Action/Finish。"""
+        def _get_attr(obj, key: str):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
+
+        try:
+            choices = _get_attr(raw_response, "choices")
+            if not choices:
+                return None, None
+            choice = choices[0]
+            message = _get_attr(choice, "message")
+            if not message:
+                return None, None
+            reasoning = _get_attr(message, "reasoning_content") or _get_attr(message, "reasoning")
+            if not reasoning:
+                return None, None
+            reasoning_text = str(reasoning)
+
+            action_match = list(re.finditer(r"^Action:\s*(.+)$", reasoning_text, flags=re.MULTILINE))
+            if action_match:
+                action_line = action_match[-1].group(1).strip()
+                return f"Action: {action_line}", {"source": "reasoning_action"}
+
+            finish_match = re.search(r"Finish\[(.*)\]", reasoning_text, flags=re.DOTALL)
+            if finish_match:
+                return f"Finish[{finish_match.group(1).strip()}]", {"source": "reasoning_finish"}
         except Exception:
             return None, None
 

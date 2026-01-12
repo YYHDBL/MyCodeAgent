@@ -514,12 +514,17 @@ class EditTool(Tool):
             
             # 截断检查
             if not diff_truncated:
-                line_bytes = len(line.encode("utf-8"))
+                preview_line = line
+                if (line.startswith("+") and not line.startswith("+++")) or (
+                    line.startswith("-") and not line.startswith("---")
+                ):
+                    preview_line = line[0] + line[1:].lstrip()
+                line_bytes = len(preview_line.encode("utf-8"))
                 if len(preview_lines) >= self.MAX_DIFF_LINES or preview_bytes + line_bytes > self.MAX_DIFF_BYTES:
                     diff_truncated = True
                     break
                 else:
-                    preview_lines.append(line)
+                    preview_lines.append(preview_line)
                     preview_bytes += line_bytes
         
         diff_preview = "\n".join(preview_lines)

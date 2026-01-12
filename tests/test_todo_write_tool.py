@@ -325,7 +325,7 @@ class TestTodoWriteTool(unittest.TestCase):
             recap = parsed["data"]["recap"]
 
             # 验证进度指示
-            self.assertIn("[2/9]", recap)  # 1 completed + 2 cancelled = 2, total 9
+            self.assertIn("[4/9]", recap)  # 1 completed + 3 cancelled = 4, total 9
 
             # 验证 in_progress（最多 1 个）
             self.assertIn("In progress: 进行中", recap)
@@ -385,7 +385,7 @@ class TestTodoWriteTool(unittest.TestCase):
         tool, temp_dir = self._create_tool()
         try:
             # 60 字符的 content
-            content = "这是一个很长的任务描述，它包含了六十个字符作为上限的测试内容"
+            content = "x" * 60
 
             response = tool.run({
                 "summary": "测试",
@@ -578,7 +578,7 @@ class TestTodoWriteTool(unittest.TestCase):
 
             # 空列表是允许的
             self.assertEqual(parsed["stats"]["total"], 0)
-            self.assertEqual(parsed["data"]["recap"], "[0/0] In progress: None.")
+            self.assertEqual(parsed["data"]["recap"], "[0/0]. In progress: None.")
         finally:
             self._cleanup_temp_dir(temp_dir)
 
@@ -674,7 +674,7 @@ class TestTodoWriteTool(unittest.TestCase):
         tool, temp_dir = self._create_tool()
         try:
             # 61 字符（超过上限 60）
-            content = "这是一个超过六十个字符限制的任务描述，会导致校验失败返回错误"
+            content = "x" * 61
 
             response = tool.run({
                 "summary": "测试",

@@ -419,37 +419,7 @@ class HistoryManager:
         
         return messages
     
-    def serialize_for_prompt(self) -> str:
-        """
-        [DEPRECATED] 将历史消息序列化为 prompt 字符串
-        
-        请使用 to_messages() 代替
-        
-        格式（E1）：
-        - user/assistant: [role] content
-        - tool: [tool] compressed_json
-        - summary: 原样插入
-        
-        Returns:
-            序列化后的字符串
-        """
-        if not self._messages:
-            return "(empty)"
-        
-        lines: List[str] = []
-        for msg in self._messages:
-            if msg.role == "summary":
-                # Summary 原样插入
-                lines.append(msg.content)
-            elif msg.role == "tool":
-                # Tool 消息带上 tool_name 以便区分来源
-                tool_name = (msg.metadata or {}).get("tool_name", "unknown")
-                lines.append(f"[tool:{tool_name}] {msg.content}")
-            else:
-                # 其他消息使用 [role] content 格式
-                lines.append(f"[{msg.role}] {msg.content}")
-        
-        return "\n".join(lines)
+    # 兼容旧接口已移除，请使用 to_messages()
     
     def get_rounds_count(self) -> int:
         """获取当前轮次数"""

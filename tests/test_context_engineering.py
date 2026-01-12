@@ -138,6 +138,24 @@ class TestToolResultCompressor:
         assert "data" in parsed
         assert parsed["data"] == {}
 
+    def test_compress_skill_preserves_content(self):
+        """Skill 工具：保留完整 data 内容"""
+        result = {
+            "status": "success",
+            "data": {
+                "name": "ui-ux-pro-max",
+                "base_dir": "skills/ui-ux-pro-max",
+                "content": "x" * 2000,
+            },
+            "text": "Loaded skill",
+        }
+        compressed = compress_tool_result("Skill", json.dumps(result))
+        parsed = json.loads(compressed)
+
+        assert parsed["status"] == "success"
+        assert parsed["data"]["name"] == "ui-ux-pro-max"
+        assert len(parsed["data"]["content"]) == 2000
+
 
 class TestInputPreprocessor:
     """InputPreprocessor @file 预处理测试"""
@@ -330,15 +348,18 @@ class TestCodeAgentRecovery:
         assert hm.get_rounds_count() == 2  # 保留最后 2 轮
 
     def test_serialize_for_prompt(self):
-        """序列化为 prompt 格式"""
+        """序列化为 messages 格式"""
         hm = HistoryManager()
         hm.append_user("Hello")
         hm.append_assistant("Hi there")
-        
-        output = hm.serialize_for_prompt()
-        
-        assert "[user] Hello" in output
-        assert "[assistant] Hi there" in output
+
+        messages = hm.to_messages()
+
+        assert len(messages) == 2
+        assert messages[0]["role"] == "user"
+        assert messages[0]["content"] == "Hello"
+        assert messages[1]["role"] == "assistant"
+        assert messages[1]["content"] == "Hi there"
 
 
 class TestReadToolMtime:

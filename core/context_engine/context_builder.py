@@ -43,10 +43,12 @@ class ContextBuilder:
     project_root: str
     system_prompt_override: Optional[str] = None
     mcp_tools_prompt: Optional[str] = None
+    skills_prompt: Optional[str] = None
     _cached_code_law: str = field(default="", init=False)
     _cached_code_law_mtime: Optional[float] = field(default=None, init=False)
     _cached_system_messages: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
     _mcp_tools_prompt: str = field(default="", init=False)
+    _skills_prompt: str = field(default="", init=False)
 
     def build_messages(
         self,
@@ -84,6 +86,8 @@ class ContextBuilder:
 
         if self._mcp_tools_prompt == "" and self.mcp_tools_prompt:
             self._mcp_tools_prompt = self.mcp_tools_prompt
+        if self._skills_prompt == "" and self.skills_prompt:
+            self._skills_prompt = self.skills_prompt
 
         # 如果缓存有效且 CODE_LAW 未变，直接返回
         if self._cached_system_messages is not None:
@@ -128,6 +132,11 @@ class ContextBuilder:
         self._mcp_tools_prompt = prompt or ""
         self._cached_system_messages = None
 
+    def set_skills_prompt(self, prompt: str) -> None:
+        """更新 Skills 提示，并清空 system cache。"""
+        self._skills_prompt = prompt or ""
+        self._cached_system_messages = None
+
     def _load_system_prompt(self) -> str:
         """加载 L1 系统 prompt"""
         if self.system_prompt_override:
@@ -151,7 +160,10 @@ class ContextBuilder:
             data = runpy.run_path(str(path))
             for name, value in data.items():
                 if name.endswith("_prompt") and isinstance(value, str):
-                    prompts.append(value.strip())
+                    prompt_value = value.strip()
+                    if self._skills_prompt and "{{available_skills}}" in prompt_value:
+                        prompt_value = prompt_value.replace("{{available_skills}}", self._skills_prompt)
+                    prompts.append(prompt_value)
         return "\n\n".join(p for p in prompts if p)
 
     def _load_code_law(self) -> str:
@@ -174,63 +186,4 @@ class ContextBuilder:
             return self._cached_code_law
         return ""
     
-    # =========================================================================
-    # 兼容旧接口（deprecated，保留过渡期）
-    # =========================================================================
-    
-    def build(
-        self,
-        question: str,
-        history_str: str,
-        scratchpad: List[str],
-    ) -> str:
-        """
-        [DEPRECATED] 旧版 prompt 字符串构建方法
-        
-        请使用 build_messages() 代替
-        """
-        import warnings
-        warnings.warn(
-            "ContextBuilder.build() is deprecated, use build_messages() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        
-        # 构建兼容的 prompt 字符串
-        system_prompt = self._load_system_prompt()
-        tools_prompt = self._load_tool_prompts()
-        if tools_prompt:
-            if "{tools}" in system_prompt:
-                system_prompt = system_prompt.replace("{tools}", tools_prompt)
-            else:
-                system_prompt = f"{system_prompt}\n\n# Available Tools\n{tools_prompt}"
-        
-        code_law = self._load_code_law()
-        code_law_block = f"# Project Rules (CODE_LAW)\n{code_law}" if code_law else ""
-        
-        history_block = history_str if history_str else "(no previous conversation)"
-        scratchpad_str = "\n".join(scratchpad) if scratchpad else "(new turn, no actions yet)"
-        
-        template = """# System Instructions
-{system_prompt}
-
-{code_law}
-
-# Chat History
-{history}
-
-# Current Question
-Question: {question}
-
-# Current Turn Scratchpad
-{scratchpad}
-
-Now continue with Thought and Action:"""
-        
-        return template.format(
-            system_prompt=system_prompt.strip(),
-            code_law=code_law_block.strip(),
-            history=history_block,
-            question=question,
-            scratchpad=scratchpad_str,
-        )
+    # 兼容旧接口已移除，请使用 build_messages()

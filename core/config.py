@@ -16,6 +16,8 @@ class Config(BaseModel):
     # 系统配置
     debug: bool = False
     log_level: str = "INFO"
+    show_react_steps: bool = True
+    show_progress: bool = True
     
     # 历史记录配置
     max_history_length: int = 100
@@ -32,6 +34,8 @@ class Config(BaseModel):
         return cls(
             debug=os.getenv("DEBUG", "false").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            show_react_steps=os.getenv("SHOW_REACT_STEPS", "true").lower() == "true",
+            show_progress=os.getenv("SHOW_PROGRESS", "true").lower() == "true",
             temperature=float(os.getenv("TEMPERATURE", "0.7")),
             max_tokens=int(os.getenv("MAX_TOKENS")) if os.getenv("MAX_TOKENS") else None,
             context_window=int(os.getenv("CONTEXT_WINDOW", "10000")),

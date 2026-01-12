@@ -136,7 +136,6 @@ prompts/           → 提示词
 ## 框架机制
 
 - **乐观锁**：Read 后自动缓存 `file_mtime_ms`/`file_size_bytes`，Edit/MultiEdit 自动注入校验
-- **Legacy Adapter**：由 `ENABLE_LEGACY_ADAPTER` 环境变量控制（默认 true），迁移期自动转换旧格式响应
 - **LLM 自动检测**：HelloAgentsLLM 支持 openai/deepseek/qwen/zhipu 等提供商，provider=`auto` 时根据 base_url 自动推断
 - **三层上下文**：L1（系统提示词+工具描述）+ L2（CODE_LAW.md）+ L3（会话历史）
 - **结果压缩**：工具结果写入历史时自动压缩（LS/Glob/Grep 截断列表，Edit/Write 仅保留摘要）
@@ -148,7 +147,6 @@ prompts/           → 提示词
 - `DEEPSEEK_API_KEY`：DeepSeek API 密钥
 - `GLM_API_KEY`：智谱 AI API 密钥
 - `LLM_BASE_URL`：LLM 服务基础 URL
-- `ENABLE_LEGACY_ADAPTER=false`：禁用传统适配器转换
 
 ## CODE_LAW.md
 

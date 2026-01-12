@@ -9,12 +9,15 @@
 """
 
 import json
+import logging
 import os
 import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class TraceLogger:
@@ -92,7 +95,7 @@ class TraceLogger:
             self._write_md_header()
             
         except Exception as e:
-            print(f"⚠️ TraceLogger init failed: {e}")
+            logger.warning("TraceLogger init failed: %s", e)
             self.enabled = False
     
     def log_event(self, event: str, payload: Dict[str, Any], step: int = 0):
@@ -124,7 +127,7 @@ class TraceLogger:
             self._update_stats(event, payload, step)
             
         except Exception as e:
-            print(f"⚠️ TraceLogger log_event failed: {e}")
+            logger.warning("TraceLogger log_event failed: %s", e)
 
     def log_system_messages(self, messages: list[dict[str, Any]]):
         """
@@ -170,10 +173,10 @@ class TraceLogger:
                 self._md_handle.close()
                 self._md_handle = None
             
-            print(f"✅ Trace saved to {self._filepath}")
+            logger.info("Trace saved to %s", self._filepath)
             
         except Exception as e:
-            print(f"⚠️ TraceLogger finalize failed: {e}")
+            logger.warning("TraceLogger finalize failed: %s", e)
     
     def _write_line(self, event_obj: Dict[str, Any]):
         """内部方法：追加写入一行 JSON（加锁保证线程安全）"""

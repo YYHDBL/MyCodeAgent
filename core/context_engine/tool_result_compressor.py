@@ -90,6 +90,7 @@ class ToolResultCompressor:
             "Write": self._compress_write,
             "Bash": self._compress_bash,
             "TodoWrite": self._compress_todo_write,
+            "Skill": self._compress_skill,
         }
         return compressors.get(tool_name, self._compress_default)
 
@@ -395,6 +396,14 @@ class ToolResultCompressor:
         }
         
         return compressed
+
+    def _compress_skill(self, data: Dict[str, Any], full_result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Skill 压缩：保留 data 原样
+
+        Skill 结果需要完整可读，避免丢失指令内容。
+        """
+        return data
 
     def _compress_default(self, data: Dict[str, Any], full_result: Dict[str, Any]) -> Dict[str, Any]:
         """

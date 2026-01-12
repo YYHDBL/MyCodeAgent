@@ -5,7 +5,7 @@
 - `agents/`：Agent 实现（`CodeAgent`）。
 - `tools/`：工具系统
   - `base.py`：`Tool` 抽象基类 + `ToolParameter` 数据模型 + 响应协议支持。
-  - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）+ 旧格式适配器。
+  - `registry.py`：`ToolRegistry` 工具注册表（支持 Tool 对象和函数注册）。
 - `tools/builtin/`：内置工具
   - `list_files.py`：`ListFilesTool` (LS) - 目录浏览工具。
   - `search_files_by_name.py`：`SearchFilesByNameTool` (Glob) - 文件搜索工具。
@@ -35,7 +35,7 @@
 3. **响应协议重构**
    - 所有内置工具已遵循《通用工具响应协议》（`docs/通用工具响应协议.md`）。
    - 统一顶层字段：`status`、`data`、`text`、`error`（仅 error 时存在）、`stats`、`context`。
-   - 框架层提供旧格式适配器，支持渐进式迁移。
+  - 框架层统一要求工具直接返回协议格式。
 
 4. **关键 Bug 修复**
    - Glob：匹配锚点改为相对 `path`；修复 `**/*.md` 根目录匹配问题；`project_root` 强制注入。
@@ -120,33 +120,7 @@
 全局注册表可通过 `tools.registry.global_registry` 访问。
 
 ### 旧格式适配器
-为支持渐进式迁移，`ToolRegistry.execute_tool()` 内置旧格式检测与转换逻辑。
-
-**启用方式**：
-```bash
-export ENABLE_LEGACY_ADAPTER=true  # 默认启用
-```
-
-**工作原理**：
-1. 工具返回后，先尝试 JSON 解析。
-2. 检查是否存在 `status` 顶层字段：
-   - 有：判定为新协议格式，直接返回。
-   - 无：判定为旧格式，执行转换并记录警告日志。
-3. 旧格式转换规则：
-   - 顶层 `error: string` → `status: "error"` + `error: {code, message}`
-   - `flags.truncated` → `data.truncated`
-   - `matches/items` → 保留在 `data` 中
-   - 缺失字段补充默认值
-
-**日志示例**：
-```
-[LEGACY_ADAPTER] Tool 'LS' returned legacy format, auto-converted to protocol format
-```
-
-**迁移计划**：
-- 当前：适配器默认启用，记录警告日志。
-- 后续：设置 `ENABLE_LEGACY_ADAPTER=false` 可禁用适配器（要求所有工具已迁移）。
-- 最终：移除适配器代码。
+旧格式适配器已移除，所有工具必须直接返回《通用工具响应协议》格式。
 
 ---
 
@@ -350,8 +324,6 @@ export ENABLE_LEGACY_ADAPTER=true  # 默认启用
   - 响应协议字段完整性验证。
   - 状态判定逻辑（success/partial/error）。
 - **文档与提示词**：保持 `prompts/tools_prompts/` 中的提示词与代码实现同步更新。
-- **适配器迁移**：
-  - 监控旧格式适配器日志，追踪未迁移的工具。
-  - 当所有工具迁移完成后，设置 `ENABLE_LEGACY_ADAPTER=false` 验证。
-  - 最终移除适配器代码。
+- **协议一致性**：
+  - 保证所有工具始终输出《通用工具响应协议》。
 - **扩展性**：考虑添加更高层的工程工具（如 lint/format/test/诊断类），新工具必须遵循《通用工具响应协议》。

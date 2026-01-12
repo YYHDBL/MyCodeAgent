@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyCodeAgent | ReAct AI Agent Framework</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-tertiary: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-purple: #8b5cf6;
+            --accent-pink: #ec4899;
+            --border-color: #374151;
+            --glow-cyan: 0 0 20px rgba(6, 182, 212, 0.3);
+            --glow-green: 0 0 20px rgba(16, 185, 129, 0.3);
+        }
+
+        body {
+            font-family: 'Courier New', 'Fira Code', 'Consolas', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        /* Matrix Rain Background */
+        .matrix-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.05;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(6, 182, 212, 0.1) 2px,
+                rgba(6, 182, 212, 0.1) 4px
+            );
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, transparent 100%);
+            padding: 2rem 0;
+            border-bottom: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        .header::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple), var(--accent-pink), var(--accent-cyan));
+            background-size: 400% 100%;
+            animation: gradient 8s ease infinite;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: pulse 2s ease-in-out infinite;
+            text-shadow: var(--glow-cyan);
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-top: 0.5rem;
+        }
+
+        @keyframes gradient {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.02); }
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 4rem 0;
+            text-align: center;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.3rem;
+            color: var(--text-secondary);
+            max-width: 800px;
+            margin: 0 auto 2rem;
+        }
+
+        .ascii-art {
+            font-size: 0.7rem;
+            color: var(--accent-green);
+            margin: 2rem auto;
+            text-align: left;
+            display: inline-block;
+            animation: glow 2s ease-in-out infinite alternate;
+        }
+
+        @keyframes glow {
+            from { text-shadow: 0 0 5px var(--accent-green), 0 0 10px var(--accent-green); }
+            to { text-shadow: 0 0 10px var(--accent-green), 0 0 20px var(--accent-green), 0 0 30px var(--accent-green); }
+        }
+
+        /* Architecture Section */
+        .section {
+            padding: 4rem 0;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .section-title {
+            font-size: 2rem;
+            margin-bottom: 2rem;
+            color: var(--accent-cyan);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .section-title::before {
+            content: '>';
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .architecture-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .arch-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .arch-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-green));
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .arch-card:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--glow-cyan);
+            border-color: var(--accent-cyan);
+        }
+
+        .arch-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .arch-card h3 {
+            color: var(--accent-green);
+            margin-bottom: 0.5rem;
+            font-size: 1.2rem;
+        }
+
+        .arch-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        .arch-card .path {
+            display: block;
+            color: var(--accent-purple);
+            font-size: 0.85rem;
+            margin-top: 1rem;
+            font-family: 'Fira Code', monospace;
+        }
+
+        /* ReAct Flow */
+        .react-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 2rem;
+            margin: 3rem 0;
+            flex-wrap: wrap;
+        }
+
+        .flow-step {
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem 2rem;
+            text-align: center;
+            min-width: 150px;
+            transition: all 0.3s ease;
+        }
+
+        .flow-step:hover {
+            border-color: var(--accent-cyan);
+            box-shadow: var(--glow-cyan);
+            transform: scale(1.05);
+        }
+
+        .flow-step.thought { border-color: var(--accent-purple); }
+        .flow-step.action { border-color: var(--accent-cyan); }
+        .flow-step.observation { border-color: var(--accent-green); }
+
+        .flow-step span {
+            display: block;
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .flow-arrow {
+            font-size: 2rem;
+            color: var(--accent-cyan);
+            animation: arrow-move 1.5s ease-in-out infinite;
+        }
+
+        @keyframes arrow-move {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(10px); }
+        }
+
+        /* Tools Section */
+        .tools-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .tool-badge {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .tool-badge:hover {
+            background: var(--bg-secondary);
+            border-color: var(--accent-cyan);
+            box-shadow: var(--glow-cyan);
+        }
+
+        .tool-badge .name {
+            color: var(--accent-cyan);
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .tool-badge .desc {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-top: 0.3rem;
+        }
+
+        /* Code Block */
+        .code-block {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 2rem 0;
+        }
+
+        .code-header {
+            background: var(--bg-tertiary);
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .code-header .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .code-header .dot.red { background: #ef4444; }
+        .code-header .dot.yellow { background: #f59e0b; }
+        .code-header .dot.green { background: #10b981; }
+
+        .code-header .filename {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-left: 0.5rem;
+        }
+
+        .code-content {
+            padding: 1.5rem;
+            overflow-x: auto;
+            font-size: 0.9rem;
+        }
+
+        .code-content pre {
+            color: var(--text-primary);
+        }
+
+        .code-content .keyword { color: var(--accent-purple); }
+        .code-content .string { color: var(--accent-green); }
+        .code-content .comment { color: var(--text-secondary); font-style: italic; }
+        .code-content .function { color: var(--accent-cyan); }
+
+        /* Installation Section */
+        .install-steps {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 2rem;
+            border-left: 4px solid var(--accent-cyan);
+        }
+
+        .install-steps code {
+            background: var(--bg-tertiary);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            color: var(--accent-cyan);
+        }
+
+        .install-steps pre {
+            background: var(--bg-primary);
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 1rem 0;
+            overflow-x: auto;
+        }
+
+        /* Features List */
+        .features-list {
+            list-style: none;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .features-list li {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 1rem 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            transition: all 0.3s ease;
+        }
+
+        .features-list li:hover {
+            border-color: var(--accent-green);
+            box-shadow: var(--glow-green);
+        }
+
+        .features-list li::before {
+            content: '✓';
+            color: var(--accent-green);
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        /* Footer */
+        .footer {
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+            padding: 2rem 0;
+            text-align: center;
+            margin-top: 4rem;
+        }
+
+        .footer p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .footer .terminal-prompt {
+            color: var(--accent-green);
+            font-weight: bold;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .logo {
+                font-size: 1.8rem;
+            }
+            
+            .react-flow {
+                flex-direction: column;
+                gap: 1rem;
+            }
+            
+            .flow-arrow {
+                transform: rotate(90deg);
+            }
+            
+            @keyframes arrow-move {
+                0%, 100% { transform: translateY(0) rotate(90deg); }
+                50% { transform: translateY(10px) rotate(90deg); }
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="matrix-bg"></div>
+    
+    <header class="header">
+        <div class="container">
+            <h1 class="logo">MyCodeAgent</h1>
+            <p class="subtitle">Production-Ready ReAct Agent Framework</p>
+        </div>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <pre class="ascii-art">
+ __  __       ____          _      ___                 _
+|  \/  |_   _/ ___|___   __| | ___|_ _|_ __ ___   __ _| |
+| |\/| | | | | |   / _ \ / _` |/ _ \| || '_ ` _ \ / _` | |
+| |  | | |_| | |__| (_) | (_| |  __/| || | | | | | (_| | |
+|_|  |_|\__, |\____\___/ \__,_|\___|___|_| |_| |_|\__,_|_|
+        |___/
+                </pre>
+                <h1>把代码库变成可执行工作区</h1>
+                <p>Reasoning + Tools + Safety | 基于ReAct模式的生产级AI Agent框架</p>
+            </div>
+        </section>
+
+        <!-- ReAct Flow -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">ReAct循环</h2>
+                <div class="react-flow">
+                    <div class="flow-step thought">
+                        <span>🤔</span>
+                        <strong>THOUGHT</strong>
+                    </div>
+                    <div class="flow-arrow">→</div>
+                    <div class="flow-step action">
+                        <span>⚡</span>
+                        <strong>ACTION</strong>
+                    </div>
+                    <div class="flow-arrow">→</div>
+                    <div class="flow-step observation">
+                        <span>👁️</span>
+                        <strong>OBSERVATION</strong>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Architecture -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">核心架构</h2>
+                <div class="architecture-grid">
+                    <div class="arch-card">
+                        <h3>🧠 Core Layer</h3>
+                        <p>Agent基类、LLM接口、消息系统、配置管理</p>
+                        <span class="path">core/</span>
+                    </div>
+                    <div class="arch-card">
+                        <h3>🤖 Agent Layer</h3>
+                        <p>具体Agent实现，支持代码分析和自动化任务</p>
+                        <span class="path">agents/</span>
+                    </div>
+                    <div class="arch-card">
+                        <h3>🔧 Tool System</h3>
+                        <p>工具注册、协议助手、标准响应格式</p>
+                        <span class="path">tools/</span>
+                    </div>
+                    <div class="arch-card">
+                        <h3>🛠️ Built-in Tools</h3>
+                        <p>文件操作、代码搜索、命令执行等内置工具</p>
+                        <span class="path">tools/builtin/</span>
+                    </div>
+                    <div class="arch-card">
+                        <h3>📝 Prompts</h3>
+                        <p>Agent和工具的提示词模板</p>
+                        <span class="path">prompts/</span>
+                    </div>
+                    <div class="arch-card">
+                        <h3>🚀 Scripts</h3>
+                        <p>入口程序和实用工具</p>
+                        <span class="path">scripts/</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tools -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">内置工具</h2>
+                <div class="tools-grid">
+                    <div class="tool-badge">
+                        <div class="name">LS</div>
+                        <div class="desc">目录列表</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Glob</div>
+                        <div class="desc">文件查找</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Grep</div>
+                        <div class="desc">代码搜索</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Read</div>
+                        <div class="desc">文件读取</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Write</div>
+                        <div class="desc">文件写入</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Edit</div>
+                        <div class="desc">单处替换</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">MultiEdit</div>
+                        <div class="desc">批量编辑</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">TodoWrite</div>
+                        <div class="desc">任务列表</div>
+                    </div>
+                    <div class="tool-badge">
+                        <div class="name">Bash</div>
+                        <div class="desc">命令执行</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Protocol -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">统一工具响应协议</h2>
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">response.json</span>
+                    </div>
+                    <div class="code-content">
+<pre>{
+  <span class="string">"status"</span>: <span class="string">"success"</span> | <span class="string">"partial"</span> | <span class="string">"error"</span>,
+  <span class="string">"data"</span>: { <span class="comment">/* 核心载荷 */</span> },
+  <span class="string">"text"</span>: <span class="string">"人类可读摘要"</span>,
+  <span class="string">"stats"</span>: { <span class="string">"time_ms"</span>: 123 },
+  <span class="string">"context"</span>: {
+    <span class="string">"cwd"</span>: <span class="string">"."</span>,
+    <span class="string">"params_input"</span>: { }
+  },
+  <span class="comment">/* error字段仅在status="error"时存在 */</span>
+}</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">核心特性</h2>
+                <ul class="features-list">
+                    <li>ReAct循环（Thought → Action → Observation）</li>
+                    <li>统一工具响应协议（schema稳定，agent友好）</li>
+                    <li>工具结果压缩 + 历史摘要控制上下文增长</li>
+                    <li>多LLM提供商支持（OpenAI/DeepSeek/Qwen/Zhipu等）</li>
+                    <li>沙箱安全的文件操作和命令执行</li>
+                    <li>确定性、离线友好的测试</li>
+                    <li>乐观锁机制防止文件冲突</li>
+                    <li>支持分页、忽略规则的目录操作</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Installation -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">快速开始</h2>
+                <div class="install-steps">
+                    <h3>1️⃣ 安装依赖</h3>
+                    <pre><code>pip install -r requirements.txt</code></pre>
+                    
+                    <h3>2️⃣ 配置API密钥</h3>
+                    <pre><code># OpenAI
+export OPENAI_API_KEY="your-api-key"
+
+# 其他提供商
+export DEEPSEEK_API_KEY="your-api-key"
+export GLM_API_KEY="your-api-key"
+export LLM_BASE_URL="https://your-api-endpoint"</code></pre>
+                    
+                    <h3>3️⃣ 运行Agent</h3>
+                    <pre><code># 交互式对话
+python scripts/chat_test_agent.py --show-raw
+
+# 指定提供商和模型
+python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7</code></pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- Code Example -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">代码示例</h2>
+                <div class="code-block">
+                    <div class="code-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="filename">core/agent.py</span>
+                    </div>
+                    <div class="code-content">
+<pre><span class="keyword">from</span> core.agent <span class="keyword">import</span> Agent
+<span class="keyword">from</span> core.llm <span class="keyword">import</span> HelloAgentsLLM
+<span class="keyword">from</span> agents.codeAgent <span class="keyword">import</span> CodeAgent
+
+<span class="comment"># 初始化LLM</span>
+llm = HelloAgentsLLM(
+    provider=<span class="string">"openai"</span>,
+    model=<span class="string">"gpt-4"</span>,
+    api_key=<span class="string">"your-key"</span>
+)
+
+<span class="comment"># 创建Agent</span>
+agent = CodeAgent(
+    name=<span class="string">"CodeAnalyzer"</span>,
+    llm=llm
+)
+
+<span class="comment"># 运行Agent</span>
+response = agent.run(<span class="string">"分析这个项目的架构"</span>)
+<span class="function">print</span>(response)</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Testing -->
+        <section class="section">
+            <div class="container">
+                <h2 class="section-title">测试</h2>
+                <div class="install-steps">
+                    <pre><code># 运行所有测试
+python -m pytest tests/ -v
+
+# 运行特定工具测试
+python -m pytest tests/test_write_tool.py -v
+python -m pytest tests/test_protocol_compliance.py -v</code></pre>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p><span class="terminal-prompt">$</span> Built with ❤️ for the developer community</p>
+            <p style="margin-top: 0.5rem;">MyCodeAgent - Turn your codebase into an executable workspace</p>
+        </div>
+    </footer>
+</body>
+</html>

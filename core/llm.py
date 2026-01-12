@@ -1,11 +1,14 @@
 """HelloAgents统一LLM接口 - 基于OpenAI原生API"""
 
+import logging
 import os
 import time
 from typing import Literal, Optional, Iterator, Dict
 from openai import OpenAI
 
 from .exceptions import HelloAgentsException
+
+logger = logging.getLogger(__name__)
 
 # 支持的LLM提供商
 SUPPORTED_PROVIDERS = Literal[
@@ -335,7 +338,7 @@ class HelloAgentsLLM:
         Yields:
             str: 流式响应的文本片段
         """
-        print(f"🧠 正在调用 {self.model} 模型...")
+        logger.info("正在调用 %s 模型...", self.model)
         try:
             response = self._client.chat.completions.create(
                 model=self.model,
@@ -346,16 +349,14 @@ class HelloAgentsLLM:
             )
 
             # 处理流式响应
-            print("✅ 大语言模型响应成功:")
+            logger.debug("大语言模型响应成功（streaming）")
             for chunk in response:
                 content = chunk.choices[0].delta.content or ""
                 if content:
-                    print(content, end="", flush=True)
                     yield content
-            print()  # 在流式输出结束后换行
 
         except Exception as e:
-            print(f"❌ 调用LLM API时发生错误: {e}")
+            logger.error("调用LLM API时发生错误: %s", e)
             raise HelloAgentsException(f"LLM调用失败: {str(e)}")
 
     def invoke(self, messages: list[dict[str, str]], **kwargs) -> str:
@@ -377,7 +378,13 @@ class HelloAgentsLLM:
                 if attempt >= self.max_retries:
                     raise HelloAgentsException(f"LLM调用失败: {str(e)}")
                 wait_s = self.retry_backoff * (2 ** attempt)
-                print(f"⚠️ LLM调用失败，{wait_s:.1f}s后重试（{attempt + 1}/{self.max_retries}）: {e}")
+                logger.warning(
+                    "LLM调用失败，%.1fs后重试（%d/%d）: %s",
+                    wait_s,
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
                 time.sleep(wait_s)
 
     def invoke_raw(self, messages: list[dict[str, str]], **kwargs):
@@ -399,7 +406,13 @@ class HelloAgentsLLM:
                 if attempt >= self.max_retries:
                     raise HelloAgentsException(f"LLM调用失败: {str(e)}")
                 wait_s = self.retry_backoff * (2 ** attempt)
-                print(f"⚠️ LLM调用失败，{wait_s:.1f}s后重试（{attempt + 1}/{self.max_retries}）: {e}")
+                logger.warning(
+                    "LLM调用失败，%.1fs后重试（%d/%d）: %s",
+                    wait_s,
+                    attempt + 1,
+                    self.max_retries,
+                    e,
+                )
                 time.sleep(wait_s)
 
     def stream_invoke(self, messages: list[dict[str, str]], **kwargs) -> Iterator[str]:

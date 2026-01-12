@@ -4,7 +4,7 @@
 - `core/`: foundational types/services (Agent base, LLM wrapper, message, config, trace logger).
 - `agents/`: concrete agents (`codeAgent.py`) that wire tools and ReAct.
 - `agentEngines/`: (merged into `CodeAgent`).
-- `tools/`: tool base + registry (protocol helpers, legacy adapter, optimistic‑lock injection).
+- `tools/`: tool base + registry (protocol helpers, optimistic‑lock injection).
 - `tools/builtin/`: built‑in tools (LS/Glob/Grep/Read/Write/Edit/MultiEdit/TodoWrite/Bash).
 - `prompts/tools_prompts/`: tool prompts (Python string constants).
 - `prompts/agents_prompts/`: agent prompts (e.g., `codeAgentPrompt.md`).
@@ -16,7 +16,6 @@
 - Install deps: `pip install -r requirements.txt`
 - Run interactive chat:
   - `python scripts/chat_test_agent.py --show-raw`
-- Optional: disable legacy adapter with `ENABLE_LEGACY_ADAPTER=false`.
 
 ## Coding Style & Naming Conventions
 - Python 3, 4‑space indentation.

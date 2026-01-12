@@ -135,7 +135,7 @@ class TodoWriteTool(Tool):
                 )
             content = content.strip()
             
-            # content 长度上限：60 字
+            # content 长度上限：60（按字符长度计算）
             if len(content) > MAX_CONTENT_LENGTH:
                 return self.create_error_response(
                     error_code=ErrorCode.INVALID_PARAM,
@@ -232,26 +232,26 @@ class TodoWriteTool(Tool):
         done = stats["completed"] + stats["cancelled"]
         total = stats["total"]
         
-        parts = [f"[{done}/{total}]"]
-        
+        sentences = [f"[{done}/{total}]"]
+
         # In progress（最多 1 个）
         in_progress_items = [t["content"] for t in todos if t["status"] == "in_progress"]
         if in_progress_items:
-            parts.append(f"In progress: {in_progress_items[0]}.")
+            sentences.append(f"In progress: {in_progress_items[0]}")
         else:
-            parts.append("In progress: None.")
-        
+            sentences.append("In progress: None")
+
         # Pending（最多 3 个）
         pending_items = [t["content"] for t in todos if t["status"] == "pending"][:3]
         if pending_items:
-            parts.append(f"Pending: {'; '.join(pending_items)}.")
-        
+            sentences.append(f"Pending: {'; '.join(pending_items)}")
+
         # Cancelled（最多 2 个）
         cancelled_items = [t["content"] for t in todos if t["status"] == "cancelled"][:2]
         if cancelled_items:
-            parts.append(f"Cancelled: {'; '.join(cancelled_items)}.")
-        
-        return " ".join(parts)
+            sentences.append(f"Cancelled: {'; '.join(cancelled_items)}")
+
+        return ". ".join(sentences) + "."
 
     def _check_all_done(self, todos: List[Dict[str, Any]]) -> bool:
         """检查是否所有任务都已完成或取消"""
@@ -365,6 +365,8 @@ class TodoWriteTool(Tool):
             "recap": recap,
             "summary": summary,
         }
+        if persisted_path:
+            data["persisted_to"] = persisted_path
         
         
         # =========================================
@@ -383,6 +385,8 @@ class TodoWriteTool(Tool):
             lines.append(f"{status_icon} {todo['content']}")
         
         lines.append("-------------------")
+        if persisted_path:
+            lines.append(f"(Saved to {persisted_path})")
         
         text = "\n".join(lines)
         

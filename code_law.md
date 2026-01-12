@@ -103,7 +103,6 @@ Required response format:
 
 - Store API keys in `.env` files or environment variables
 - Never commit secrets or API keys
-- Use `ENABLE_LEGACY_ADAPTER=false` to disable legacy components
 - File operations are sandboxed to project root for security
 
 ## Architecture Overview

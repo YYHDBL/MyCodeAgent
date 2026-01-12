@@ -233,8 +233,8 @@ class TestEditTool(unittest.TestCase):
             tool = EditTool(project_root=project.root)
             response = tool.run({
                 "path": "unicode.txt",
-                "old_string": "世界",
-                "new_string": "World",
+                "old_string": "Hello 世界",
+                "new_string": "Hello World",
                 "expected_mtime_ms": mtime_ms,
                 "expected_size_bytes": size_bytes,
             })

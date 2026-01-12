@@ -13,10 +13,13 @@
 """
 
 import concurrent.futures
+import logging
 from typing import List, Optional, Callable
 
 from ..message import Message
 from ..config import Config
+
+logger = logging.getLogger(__name__)
 
 
 def create_summary_generator(
@@ -59,7 +62,7 @@ def create_summary_generator(
         prompt = _build_summary_prompt(conversation_text)
         
         if verbose:
-            print(f"\n📝 生成 Summary（超时: {timeout}s）...")
+            logger.info("生成 Summary（超时: %ss）...", timeout)
         
         # 使用 ThreadPoolExecutor 实现超时控制
         def _call_llm():
@@ -68,7 +71,7 @@ def create_summary_generator(
                 return response
             except Exception as e:
                 if verbose:
-                    print(f"⚠️ LLM 调用失败: {e}")
+                    logger.warning("LLM 调用失败: %s", e)
                 return None
         
         try:
@@ -81,7 +84,7 @@ def create_summary_generator(
                     return None
                 
                 if verbose:
-                    print("✅ Summary 生成完成")
+                    logger.info("Summary 生成完成")
                 
                 return result.strip()
             except concurrent.futures.TimeoutError:
@@ -89,14 +92,17 @@ def create_summary_generator(
                 future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
                 if verbose:
-                    print(f"⏰ Summary generation timed out ({timeout}s), keeping recent history only.")
+                    logger.warning(
+                        "Summary generation timed out (%ss), keeping recent history only.",
+                        timeout,
+                    )
                 return None
             finally:
                 # 正常完成时也要关闭 executor（但这里用 wait=False 避免阻塞）
                 executor.shutdown(wait=False)
         except Exception as e:
             if verbose:
-                print(f"⚠️ Summary 生成异常: {e}")
+                logger.warning("Summary 生成异常: %s", e)
             return None
     
     return generate_summary
