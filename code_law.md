@@ -11,7 +11,7 @@ MyCodeAgent/
 │   ├── llm.py         # LLM interface wrapper
 │   ├── message.py     # Message system
 │   ├── config.py      # Configuration management
-│   └── trace_logger.py # Logging utilities
+│   └── context_engine/ # Context engineering components
 ├── agents/            # Agent implementations
 │   └── codeAgent.py   # Main code analysis agent
 ├── tools/             # Tool system

@@ -42,9 +42,11 @@ class ContextBuilder:
     tool_registry: "ToolRegistry"  # noqa: F821
     project_root: str
     system_prompt_override: Optional[str] = None
+    mcp_tools_prompt: Optional[str] = None
     _cached_code_law: str = field(default="", init=False)
     _cached_code_law_mtime: Optional[float] = field(default=None, init=False)
     _cached_system_messages: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
+    _mcp_tools_prompt: str = field(default="", init=False)
 
     def build_messages(
         self,
@@ -79,7 +81,10 @@ class ContextBuilder:
         """获取系统消息（带缓存）"""
         # 检查 CODE_LAW 是否更新
         code_law = self._load_code_law()
-        
+
+        if self._mcp_tools_prompt == "" and self.mcp_tools_prompt:
+            self._mcp_tools_prompt = self.mcp_tools_prompt
+
         # 如果缓存有效且 CODE_LAW 未变，直接返回
         if self._cached_system_messages is not None:
             # 检查 CODE_LAW 是否需要更新
@@ -98,6 +103,9 @@ class ContextBuilder:
                 system_prompt = system_prompt.replace("{tools}", tools_prompt)
             else:
                 system_prompt = f"{system_prompt}\n\n# Available Tools\n{tools_prompt}"
+
+        if self._mcp_tools_prompt:
+            system_prompt = f"{system_prompt}\n\n# MCP Tools\n{self._mcp_tools_prompt}"
         
         if system_prompt.strip():
             messages.append({
@@ -114,6 +122,11 @@ class ContextBuilder:
         
         self._cached_system_messages = messages
         return messages
+
+    def set_mcp_tools_prompt(self, prompt: str) -> None:
+        """更新 MCP 工具提示，并清空 system cache。"""
+        self._mcp_tools_prompt = prompt or ""
+        self._cached_system_messages = None
 
     def _load_system_prompt(self) -> str:
         """加载 L1 系统 prompt"""

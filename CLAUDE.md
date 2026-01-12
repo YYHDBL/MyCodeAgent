@@ -42,9 +42,13 @@ core/              → 基础层
   ├── llm.py                # HelloAgentsLLM 统一接口
   ├── message.py            # 消息系统
   ├── config.py             # 配置管理
-  ├── context_builder.py    # 上下文构建（L1/L2/L3 拼接、CODE_LAW 加载）
-  ├── trace_logger.py       # 轨迹记录器（JSONL + Markdown）
-  └── tool_result_compressor.py  # 工具结果压缩器（历史写入用）
+  ├── context_engine/       # 上下文工程组件
+  │   ├── context_builder.py    # 上下文构建（L1/L2/L3 拼接、CODE_LAW 加载）
+  │   ├── history_manager.py    # 历史管理与压缩
+  │   ├── input_preprocessor.py # @file 预处理
+  │   ├── summary_compressor.py # Summary 生成器
+  │   ├── tool_result_compressor.py  # 工具结果压缩器
+  │   └── trace_logger.py       # 轨迹记录器（JSONL + Markdown）
 agents/            → 具体智能体
   └── codeAgent.py   # 代码智能体（内置 ReAct 循环）
 tools/             → 工具层

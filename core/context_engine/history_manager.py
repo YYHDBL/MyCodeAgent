@@ -18,8 +18,8 @@
 from typing import List, Optional, Callable, Tuple, Dict, Any
 from datetime import datetime
 
-from .message import Message
-from .config import Config
+from ..message import Message
+from ..config import Config
 from .tool_result_compressor import compress_tool_result
 
 

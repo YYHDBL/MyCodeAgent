@@ -7,11 +7,11 @@ from core.agent import Agent
 from core.llm import HelloAgentsLLM
 from core.message import Message
 from core.config import Config
-from core.context_builder import ContextBuilder
-from core.trace_logger import create_trace_logger
-from core.history_manager import HistoryManager
-from core.input_preprocessor import preprocess_input
-from core.summary_compressor import create_summary_generator
+from core.context_engine.context_builder import ContextBuilder
+from core.context_engine.trace_logger import create_trace_logger
+from core.context_engine.history_manager import HistoryManager
+from core.context_engine.input_preprocessor import preprocess_input
+from core.context_engine.summary_compressor import create_summary_generator
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -22,6 +22,7 @@ from tools.builtin.edit_file import EditTool
 from tools.builtin.edit_file_multi import MultiEditTool
 from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.bash import BashTool
+from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
 from utils import setup_logger
 
 
@@ -71,12 +72,16 @@ class CodeAgent(Agent):
         
         # 注册工具
         self._register_builtin_tools()
+        self._mcp_clients = []
+        self._mcp_tools_prompt = ""
+        self._register_mcp_tools()
         
         # 上下文构建器
         self.context_builder = ContextBuilder(
             tool_registry=self.tool_registry,
             project_root=self.project_root,
             system_prompt_override=self.system_prompt,
+            mcp_tools_prompt=self._mcp_tools_prompt,
         )
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
@@ -97,6 +102,25 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(MultiEditTool(project_root=self.project_root))
         self.tool_registry.register_tool(TodoWriteTool(project_root=self.project_root))
         self.tool_registry.register_tool(BashTool(project_root=self.project_root))
+
+    def _register_mcp_tools(self) -> None:
+        """可选：注册 MCP 工具（基于 MCP_SERVERS 配置）"""
+        try:
+            clients, tools_meta = register_mcp_servers(self.tool_registry, self.project_root)
+            self._mcp_clients = clients
+            self._mcp_tools_prompt = format_mcp_tools_prompt(tools_meta)
+            if tools_meta:
+                print("\n🔌 MCP tools loaded:")
+                for tool in tools_meta:
+                    name = tool.get("name") or ""
+                    description = (tool.get("description") or "").strip()
+                    if description:
+                        print(f"  - {name}: {description}")
+                    else:
+                        print(f"  - {name}")
+        except Exception as exc:
+            if self.logger:
+                self.logger.warning("MCP registration skipped: %s", exc)
 
     def run(self, input_text: str, **kwargs) -> str:
         """
@@ -222,6 +246,11 @@ class CodeAgent(Agent):
         if self.trace_logger:
             self.trace_logger.finalize()
             self.trace_logger = None
+        for client in getattr(self, "_mcp_clients", []):
+            try:
+                client.close_sync()
+            except Exception:
+                pass
 
     # =========================================================================
     # ReAct Core（Message List 自然累积模式）
@@ -511,13 +540,13 @@ class CodeAgent(Agent):
         return payload if payload else ""
 
     def _parse_tool_call(self, action: str) -> Tuple[Optional[str], str]:
-        m = re.match(r"^([A-Za-z0-9_\-]+)\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
+        m = re.match(r"^([A-Za-z0-9_\-:.]+)\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
         if not m:
             return None, ""
         return m.group(1), m.group(2).strip()
 
     def _parse_bracket_payload(self, action: str) -> str:
-        m = re.match(r"^[A-Za-z0-9_\-]+\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
+        m = re.match(r"^[A-Za-z0-9_\-:.]+\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
         return (m.group(1).strip() if m else "").strip()
 
     def _ensure_json_input(self, raw: str) -> Tuple[Any, Optional[str]]:

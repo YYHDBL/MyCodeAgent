@@ -15,8 +15,8 @@
 import concurrent.futures
 from typing import List, Optional, Callable
 
-from .message import Message
-from .config import Config
+from ..message import Message
+from ..config import Config
 
 
 def create_summary_generator(
