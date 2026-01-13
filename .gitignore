@@ -10,3 +10,4 @@ __pycache__/
 .uv_tools/
 .npm_cache/
 skills/
+.chat_history
