@@ -27,6 +27,8 @@ class Config(BaseModel):
     compression_threshold: float = 0.8  # 触发压缩的阈值比例
     min_retain_rounds: int = 10  # 最少保留的轮次数
     summary_timeout: int = 120  # Summary 生成超时（秒）
+    # 工具消息序列化策略：strict(标准tool_call) / compat(Observation文本)
+    tool_message_format: str = "strict"
     
     @classmethod
     def from_env(cls) -> "Config":
@@ -42,6 +44,7 @@ class Config(BaseModel):
             compression_threshold=float(os.getenv("COMPRESSION_THRESHOLD", "0.8")),
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),
             summary_timeout=int(os.getenv("SUMMARY_TIMEOUT", "120")),
+            tool_message_format=os.getenv("TOOL_MESSAGE_FORMAT", "strict"),
         )
     
     def to_dict(self) -> Dict[str, Any]:

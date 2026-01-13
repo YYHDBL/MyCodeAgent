@@ -1,4 +1,5 @@
 import json
+import uuid
 import os
 import logging
 import re
@@ -513,9 +514,25 @@ class CodeAgent(Agent):
                 self.logger.debug("Action: %s %s", tool_name, tool_input)
 
             # 写入 assistant 消息（Thought + Action）
+            tool_call_id = f"call_{uuid.uuid4().hex}"
             assistant_content = f"Thought: {thought or ''}\nAction: {tool_name}[{json.dumps(tool_input, ensure_ascii=False)}]"
-            self.history_manager.append_assistant(content=assistant_content, metadata={"step": step, "action_type": "tool_call", "tool_name": tool_name})
-            self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "tool_call", "tool_name": tool_name}, step)
+            self.history_manager.append_assistant(
+                content=assistant_content,
+                metadata={
+                    "step": step,
+                    "action_type": "tool_call",
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "tool_args": tool_input,
+                },
+            )
+            self._log_message_write(
+                trace_logger,
+                "assistant",
+                assistant_content,
+                {"action_type": "tool_call", "tool_name": tool_name, "tool_call_id": tool_call_id},
+                step,
+            )
 
             # 执行工具
             try:
@@ -534,10 +551,16 @@ class CodeAgent(Agent):
             self.history_manager.append_tool(
                 tool_name=tool_name, 
                 raw_result=observation, 
-                metadata={"step": step},
+                metadata={"step": step, "tool_call_id": tool_call_id},
                 project_root=self.project_root,
             )
-            self._log_message_write(trace_logger, "tool", observation, {"tool_name": tool_name}, step)
+            self._log_message_write(
+                trace_logger,
+                "tool",
+                observation,
+                {"tool_name": tool_name, "tool_call_id": tool_call_id},
+                step,
+            )
 
             if self.console_verbose:
                 display_obs = observation[:300] + "..." if len(observation) > 300 else observation

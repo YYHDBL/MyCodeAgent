@@ -11,3 +11,6 @@ __pycache__/
 .npm_cache/
 skills/
 .chat_history
+AGENTS.md
+claude_code_env.sh
+.vscode/

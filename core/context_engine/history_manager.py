@@ -15,6 +15,7 @@
 - A6: 压缩触发条件：estimated_total >= 0.8 * context_window 且消息数 >= 3
 """
 
+import logging
 from typing import List, Optional, Callable, Tuple, Dict, Any
 from datetime import datetime
 
@@ -386,13 +387,17 @@ class HistoryManager:
         Message List 模式：
         - user: {"role": "user", "content": "..."}
         - assistant: {"role": "assistant", "content": "Thought: ...\nAction: ..."}
-        - tool: {"role": "user", "content": "Observation (ToolName): {...}"}
+        - tool (compat): {"role": "user", "content": "Observation (ToolName): {...}"}
+        - tool (strict): {"role": "tool", "tool_call_id": "...", "content": "..."}
         - summary: {"role": "system", "content": "## Summary\n..."}
                   作为 system 消息注入
         
         Returns:
             OpenAI messages 格式的列表
         """
+        logger = logging.getLogger(__name__)
+        format_mode = (self._config.tool_message_format or "compat").lower().strip()
+        strict_mode = format_mode in {"strict", "openai", "tool"}
         messages: List[Dict[str, Any]] = []
         
         for msg in self._messages:
@@ -402,17 +407,51 @@ class HistoryManager:
                     "content": msg.content,
                 })
             elif msg.role == "assistant":
-                messages.append({
+                assistant_msg: Dict[str, Any] = {
                     "role": "assistant",
                     "content": msg.content,
-                })
+                }
+                if strict_mode and (msg.metadata or {}).get("action_type") == "tool_call":
+                    tool_name = (msg.metadata or {}).get("tool_name")
+                    tool_call_id = (msg.metadata or {}).get("tool_call_id")
+                    tool_args = (msg.metadata or {}).get("tool_args")
+                    if tool_name and tool_call_id:
+                        try:
+                            import json
+                            assistant_msg["tool_calls"] = [{
+                                "id": tool_call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(tool_args or {}, ensure_ascii=False),
+                                },
+                            }]
+                        except Exception as exc:
+                            logger.warning("Failed to build tool_calls metadata: %s", exc)
+                    else:
+                        logger.warning("Strict tool mode active but missing tool_call_id/tool_name")
+                messages.append(assistant_msg)
             elif msg.role == "tool":
                 tool_name = (msg.metadata or {}).get("tool_name", "unknown")
-                # Use user role to avoid strict tool_call_id requirements in OpenAI-compatible APIs.
-                messages.append({
-                    "role": "user",
-                    "content": f"Observation ({tool_name}): {msg.content}",
-                })
+                if strict_mode:
+                    tool_call_id = (msg.metadata or {}).get("tool_call_id")
+                    if tool_call_id:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": msg.content,
+                        })
+                    else:
+                        logger.warning("Strict tool mode active but missing tool_call_id; falling back to compat")
+                        messages.append({
+                            "role": "user",
+                            "content": f"Observation ({tool_name}): {msg.content}",
+                        })
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": f"Observation ({tool_name}): {msg.content}",
+                    })
             elif msg.role == "summary":
                 # Summary 作为 system 消息注入
                 messages.append({
