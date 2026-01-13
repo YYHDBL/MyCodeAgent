@@ -26,6 +26,7 @@ from tools.builtin.edit_file_multi import MultiEditTool
 from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
+from tools.builtin.task import TaskTool
 from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
 from utils import setup_logger
 from core.skills.skill_loader import SkillLoader
@@ -118,6 +119,14 @@ class CodeAgent(Agent):
             SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
         )
         self.tool_registry.register_tool(BashTool(project_root=self.project_root))
+        # Task tool for subagent delegation
+        self.tool_registry.register_tool(
+            TaskTool(
+                project_root=self.project_root,
+                main_llm=self.llm,
+                tool_registry=self.tool_registry,
+            )
+        )
 
     def _refresh_skills_prompt(self) -> None:
         refresh = os.getenv("SKILLS_REFRESH_ON_CALL", "true").lower() in {"1", "true", "yes", "y", "on"}
@@ -521,8 +530,13 @@ class CodeAgent(Agent):
                 observation = json.dumps(error_result, ensure_ascii=False)
                 trace_logger.log_event("error", {"stage": "tool_execution", "error_code": "EXECUTION_ERROR", "message": str(e), "tool": tool_name, "traceback": tb.format_exc()}, step=step)
 
-            # 写入 tool 消息到 history（压缩版）
-            self.history_manager.append_tool(tool_name=tool_name, raw_result=observation, metadata={"step": step})
+            # 写入 tool 消息到 history（截断版）
+            self.history_manager.append_tool(
+                tool_name=tool_name, 
+                raw_result=observation, 
+                metadata={"step": step},
+                project_root=self.project_root,
+            )
             self._log_message_write(trace_logger, "tool", observation, {"tool_name": tool_name}, step)
 
             if self.console_verbose:
@@ -821,7 +835,12 @@ class CodeAgent(Agent):
         elif message.role == "tool":
             # 注意：旧接口没有 tool_name，使用 metadata 中的值
             tool_name = (message.metadata or {}).get("tool_name", "unknown")
-            self.history_manager.append_tool(tool_name, message.content, message.metadata)
+            self.history_manager.append_tool(
+                tool_name, 
+                message.content, 
+                message.metadata,
+                project_root=self.project_root,
+            )
         elif message.role == "summary":
             self.history_manager.append_summary(message.content)
     

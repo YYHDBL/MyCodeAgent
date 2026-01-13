@@ -15,9 +15,11 @@
   - `edit_file.py`：`EditTool` (Edit) - 单点编辑工具。
   - `edit_file_multi.py`：`MultiEditTool` (MultiEdit) - 多点编辑工具。
   - `todo_write.py`：`TodoWriteTool` (TodoWrite) - 任务清单管理工具。
+  - `skill.py`：`SkillTool` (Skill) - 加载项目内技能指令。
+  - `task.py`：`TaskTool` (Task) - 子代理委派（MVP）。
   - `bash.py`：`BashTool` (Bash) - 命令执行工具。
 - `scripts/`：交互脚本（`chat_test_agent.py`）。
-- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`、`read_prompt.py`、`write_prompt.py`、`edit_prompt.py`、`multi_edit_prompt.py`、`todo_write_prompt.py`、`bash_prompt.py`）。
+- `prompts/tools_prompts/`：工具提示词（`list_file_prompt.py`、`glob_prompt.py`、`grep_prompt.py`、`read_prompt.py`、`write_prompt.py`、`edit_prompt.py`、`multi_edit_prompt.py`、`todo_write_prompt.py`、`skill_prompt.py`、`task_prompt.py`、`bash_prompt.py`）。
 - `docs/`：文档（`DEV_HANDOFF.md`、`通用工具响应协议.md`）。
 
 ## 当前进度摘要

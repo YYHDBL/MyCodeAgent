@@ -3,9 +3,9 @@
 根据《上下文工程方案》实现历史记录的管理、压缩和轮次控制。
 
 核心职责（D2）：
-1. 轮内写入：在 ReAct 每一步同步写入 assistant（Thought/Action）与 tool（压缩结果）消息
+1. 轮内写入：在 ReAct 每一步同步写入 assistant（Thought/Action）与 tool（截断结果）消息
 2. 轮间管理：提供 append/get/compact 接口；基于 user 消息分轮
-3. 压缩策略：调用 ToolResultCompressor；仅保留 status + 压缩 data + error
+3. 截断策略：调用 ObservationTruncator；统一截断工具输出并落盘保存
 4. 触发 Summary 生成并插入 summary 消息
 
 规则要点：
@@ -20,7 +20,7 @@ from datetime import datetime
 
 from ..message import Message
 from ..config import Config
-from .tool_result_compressor import compress_tool_result
+from .observation_truncator import truncate_observation
 
 
 class HistoryManager:
@@ -103,24 +103,26 @@ class HistoryManager:
         tool_name: str,
         raw_result: str,
         metadata: Optional[dict] = None,
+        project_root: Optional[str] = None,
     ) -> Message:
         """
-        添加工具消息（压缩后写入）
+        添加工具消息（截断后写入）
         
         Args:
             tool_name: 工具名称（如 "LS", "Grep", "Read" 等）
             raw_result: 工具返回的原始 JSON 字符串
             metadata: 可选的元数据（如 step、tool_name 等）
+            project_root: 项目根目录（用于落盘路径）
         
         Returns:
-            创建的 Message 对象（content 为压缩后的 JSON）
+            创建的 Message 对象（content 为截断后的 JSON）
         """
-        # 使用 ToolResultCompressor 压缩工具结果
-        compressed_result = compress_tool_result(tool_name, raw_result)
+        # 使用 ObservationTruncator 截断工具结果
+        truncated_result = truncate_observation(tool_name, raw_result, project_root)
         
         # 注意：先展开 metadata，再写 tool_name，确保 tool_name 不被覆盖
         msg = Message(
-            content=compressed_result,
+            content=truncated_result,
             role="tool",
             metadata={
                 **(metadata or {}),
@@ -384,7 +386,7 @@ class HistoryManager:
         Message List 模式：
         - user: {"role": "user", "content": "..."}
         - assistant: {"role": "assistant", "content": "Thought: ...\nAction: ..."}
-        - tool: {"role": "tool", "content": "Observation (ToolName): {...}"}
+        - tool: {"role": "user", "content": "Observation (ToolName): {...}"}
         - summary: {"role": "system", "content": "## Summary\n..."}
                   作为 system 消息注入
         
@@ -406,8 +408,9 @@ class HistoryManager:
                 })
             elif msg.role == "tool":
                 tool_name = (msg.metadata or {}).get("tool_name", "unknown")
+                # Use user role to avoid strict tool_call_id requirements in OpenAI-compatible APIs.
                 messages.append({
-                    "role": "tool",
+                    "role": "user",
                     "content": f"Observation ({tool_name}): {msg.content}",
                 })
             elif msg.role == "summary":

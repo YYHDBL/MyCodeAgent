@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic AI - Web-Based AI Agent Platform</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --primary: #FFFFFF;
+            --secondary: #94A3B8;
+            --cta: #3B82F6;
+            --background: #0B0B10;
+            --text: #F8FAFC;
+            --border: #1E293B;
+            --glass-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --glow: 0 0 20px rgba(59, 130, 246, 0.3);
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--background);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        h1, h2, h3, h4 {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 600;
+            line-height: 1.2;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+        }
+        
+        /* Glassmorphism effects */
+        .glass-card {
+            background: var(--glass-bg);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 2rem;
+            box-shadow: var(--glow);
+            transition: all 0.3s ease;
+        }
+        
+        .glass-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
+            border-color: rgba(59, 130, 246, 0.3);
+        }
+        
+        /* Header */
+        header {
+            padding: 2rem 0;
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            background: rgba(11, 11, 16, 0.9);
+            backdrop-filter: blur(10px);
+            z-index: 100;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .logo i {
+            color: var(--cta);
+            font-size: 2rem;
+        }
+        
+        /* Hero Section */
+        .hero {
+            padding: 6rem 0 4rem;
+            text-align: center;
+        }
+        
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1.5rem;
+            background: linear-gradient(90deg, var(--primary), var(--cta));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            max-width: 700px;
+            margin: 0 auto 2rem;
+            color: var(--secondary);
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background: var(--cta);
+            color: white;
+            padding: 1rem 2.5rem;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            border: 2px solid transparent;
+        }
+        
+        .cta-button:hover {
+            background: transparent;
+            border-color: var(--cta);
+            color: var(--cta);
+            transform: scale(1.05);
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 4rem 0;
+        }
+        
+        .section-title {
+            text-align: center;
+            margin-bottom: 3rem;
+            font-size: 2.5rem;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+        }
+        
+        .feature {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .feature-icon {
+            width: 60px;
+            height: 60px;
+            background: rgba(59, 130, 246, 0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: var(--cta);
+            margin-bottom: 1rem;
+        }
+        
+        .feature h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        /* Tech Stack Section */
+        .tech-stack {
+            padding: 4rem 0;
+        }
+        
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        
+        .tech-item {
+            text-align: center;
+            padding: 1.5rem;
+        }
+        
+        .tech-icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: var(--cta);
+        }
+        
+        /* Footer */
+        footer {
+            padding: 3rem 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--secondary);
+        }
+        
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            margin: 2rem 0;
+        }
+        
+        .footer-links a {
+            color: var(--secondary);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        
+        .footer-links a:hover {
+            color: var(--cta);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            
+            .section-title {
+                font-size: 2rem;
+            }
+            
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <i class="fas fa-robot"></i>
+                <span>Agentic AI</span>
+            </div>
+        </div>
+    </header>
+    
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1>Web-Based AI Agent Platform</h1>
+                <p>A modern React/TypeScript platform for creating, managing, and interacting with AI agents directly in your browser. Built with cutting-edge technology for seamless AI experiences.</p>
+                <a href="#features" class="cta-button">Explore Features</a>
+            </div>
+        </section>
+        
+        <section id="features" class="features">
+            <div class="container">
+                <h2 class="section-title">Platform Features</h2>
+                <div class="features-grid">
+                    <div class="glass-card feature">
+                        <div class="feature-icon">
+                            <i class="fas fa-brain"></i>
+                        </div>
+                        <h3>Intelligent Agent System</h3>
+                        <p>Create and manage multiple AI agents with different personalities and capabilities. Each agent can be customized for specific tasks and interactions.</p>
+                    </div>
+                    
+                    <div class="glass-card feature">
+                        <div class="feature-icon">
+                            <i class="fas fa-code"></i>
+                        </div>
+                        <h3>Modern Tech Stack</h3>
+                        <p>Built with React, TypeScript, and Vite for optimal performance. Type-safe development ensures reliability and maintainability.</p>
+                    </div>
+                    
+                    <div class="glass-card feature">
+                        <div class="feature-icon">
+                            <i class="fas fa-bolt"></i>
+                        </div>
+                        <h3>Real-time Interaction</h3>
+                        <p>Experience seamless, real-time conversations with AI agents. Low-latency responses powered by modern web technologies.</p>
+                    </div>
+                    
+                    <div class="glass-card feature">
+                        <div class="feature-icon">
+                            <i class="fas fa-shield-alt"></i>
+                        </div>
+                        <h3>Secure & Private</h3>
+                        <p>All interactions are processed locally when possible. Your data privacy is our priority with secure client-side operations.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section class="tech-stack">
+            <div class="container">
+                <h2 class="section-title">Technology Stack</h2>
+                <div class="glass-card">
+                    <div class="tech-grid">
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fab fa-react"></i>
+                            </div>
+                            <h3>React</h3>
+                            <p>Component-based UI library</p>
+                        </div>
+                        
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fas fa-code"></i>
+                            </div>
+                            <h3>TypeScript</h3>
+                            <p>Type-safe JavaScript</p>
+                        </div>
+                        
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fas fa-bolt"></i>
+                            </div>
+                            <h3>Vite</h3>
+                            <p>Fast build tool</p>
+                        </div>
+                        
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fas fa-palette"></i>
+                            </div>
+                            <h3>Tailwind CSS</h3>
+                            <p>Utility-first styling</p>
+                        </div>
+                        
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fas fa-cogs"></i>
+                            </div>
+                            <h3>ESLint</h3>
+                            <p>Code quality tool</p>
+                        </div>
+                        
+                        <div class="tech-item">
+                            <div class="tech-icon">
+                                <i class="fas fa-network-wired"></i>
+                            </div>
+                            <h3>AI Integration</h3>
+                            <p>Multiple model support</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section class="features">
+            <div class="container">
+                <h2 class="section-title">Project Architecture</h2>
+                <div class="glass-card">
+                    <h3>Layered Architecture</h3>
+                    <p>The project follows a clean, layered architecture for AI agents built on ReAct (Reasoning + Acting) principles:</p>
+                    <ul style="margin: 1rem 0 1rem 2rem; color: var(--secondary);">
+                        <li><strong>Core Layer</strong>: Foundational components including agent base classes, LLM interfaces, and configuration management</li>
+                        <li><strong>Agents Layer</strong>: Implementations of various AI agents with specialized capabilities</li>
+                        <li><strong>Tools Layer</strong>: Tool system with built-in utilities for file operations, code search, and system interactions</li>
+                        <li><strong>UI Layer</strong>: Modern React interface for seamless user interaction with AI agents</li>
+                    </ul>
+                    <p>All components communicate through a unified response protocol ensuring consistency and reliability across the agent ecosystem.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <footer>
+        <div class="container">
+            <div class="logo" style="justify-content: center; margin-bottom: 1rem;">
+                <i class="fas fa-robot"></i>
+                <span>Agentic AI</span>
+            </div>
+            <p>Modern web platform for AI agent interaction and management</p>
+            
+            <div class="footer-links">
+                <a href="#">GitHub</a>
+                <a href="#">Documentation</a>
+                <a href="#">Examples</a>
+                <a href="#">Contact</a>
+            </div>
+            
+            <p style="margin-top: 2rem; font-size: 0.9rem;">Built with React, TypeScript, and modern web technologies</p>
+        </div>
+    </footer>
+</body>
+</html>

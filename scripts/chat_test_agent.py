@@ -36,6 +36,7 @@ from agents.codeAgent import CodeAgent
 from tools.registry import ToolRegistry
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
 from core.config import Config
+from utils.ui_components import EnhancedUI, ToolCallTree
 
 # Geeky Theme
 custom_theme = Theme({
@@ -57,6 +58,40 @@ class RichConsoleCodeAgent(CodeAgent):
     Extensions of CodeAgent with Rich UI features.
     Overrides _console and _execute_tool to provide better visual feedback.
     """
+    
+    def __init__(self, *args, ui: Optional['EnhancedUI'] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ui = ui
+        self._step_count = 0
+        self._current_step_input_tokens = 0
+        self._thinking_active = False
+        
+    def run(self, user_input: str, show_raw: bool = False) -> str:
+        """Override run to integrate with enhanced UI"""
+        # Start thinking timer
+        if self.ui and not self._thinking_active:
+            self.ui.start_thinking()
+            self._thinking_active = True
+            
+        try:
+            result = super().run(user_input, show_raw=show_raw)
+            return result
+        finally:
+            # Stop thinking timer
+            if self.ui and self._thinking_active:
+                self.ui.stop_thinking()
+                self._thinking_active = False
+                
+                # Update token tracker from trace logger if available
+                if hasattr(self, 'trace_logger') and self.trace_logger:
+                    usage = self.trace_logger._total_usage
+                    if usage.get("total_tokens", 0) > 0:
+                        self.ui.add_token_usage(
+                            usage.get("prompt_tokens", 0),
+                            usage.get("completion_tokens", 0),
+                            "Session Total"
+                        )
+        
     def _console(self, message: str) -> None:
         """Override to render messages with Rich"""
         msg = message.strip()
@@ -108,7 +143,11 @@ class RichConsoleCodeAgent(CodeAgent):
                 console.print(f"[dim]{msg}[/dim]")
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
-        """Override to show spinner during actual tool execution"""
+        """Override to show tool call in UI tree and spinner during execution"""
+        # Show tool call in enhanced UI
+        if self.ui:
+            self.ui.show_tool_call(tool_name, tool_input)
+        
         with console.status(f"[bold cyan]Executing {tool_name}...[/bold cyan]", spinner="dots"):
             # artificial small delay to make the spinner visible if tool is too fast
             # time.sleep(0.1) 
@@ -129,18 +168,23 @@ def _env_int(name: str, default: int) -> int:
     except ValueError:
         return default
 
-def _print_banner(code_law_exists: bool) -> None:
-    banner_text = """
+def _print_banner(code_law_exists: bool, ui: Optional['EnhancedUI'] = None) -> None:
+    """Print banner - use enhanced UI if available"""
+    if ui:
+        ui.show_banner()
+    else:
+        banner_text = r"""
    ______          __      ___                     __ 
   / ____/___  ____/ /___  /   |____ ____  ____  / /_
  / /   / __ \/ __  / _ \/ /| / __ `/ _ \/ __ \/ __/
 / /___/ /_/ / /_/ /  __/ ___ / /_/ /  __/ / / / /_  
 \____/\____/\__,_/\___/_/  |_\__, /\___/_/ /_/\__/  
                             /____/                  
-    """
-    console.print(Text(banner_text, style="banner"))
-    console.print("[dim]Powered by Nihil CodeAgent v1.0[/dim]")
-    console.print("[dim]Type 'exit' to quit[/dim]")
+        """
+        console.print(Text(banner_text, style="banner"))
+        console.print("[dim]Powered by Nihil CodeAgent v1.0[/dim]")
+    
+    console.print("[dim]Type 'exit' to quit, '/model' to see model info[/dim]")
     
     if not code_law_exists:
         console.print(Panel("⚠️  code_law.md missing. Type 'init' to generate it.", style="yellow", title="Setup Required"))
@@ -186,6 +230,15 @@ def main() -> None:
     config = Config.from_env()
     config.show_react_steps = True
 
+    # Initialize Enhanced UI
+    enhanced_ui = EnhancedUI(
+        console=console,
+        model=args.model,
+        provider=args.provider,
+        project_root=PROJECT_ROOT,
+        version="v1.0"
+    )
+
     agent = RichConsoleCodeAgent(
         name=args.name,
         llm=llm,
@@ -193,10 +246,11 @@ def main() -> None:
         project_root=PROJECT_ROOT,
         system_prompt=args.system,
         config=config,
+        ui=enhanced_ui,
     )
 
     code_law_exists = check_code_law_exists(PROJECT_ROOT)
-    _print_banner(code_law_exists)
+    _print_banner(code_law_exists, enhanced_ui)
 
     # Setup history for prompt_toolkit
     history_file = os.path.join(PROJECT_ROOT, ".chat_history")
@@ -225,6 +279,24 @@ def main() -> None:
             if user_input.lower() in {"exit", "quit", "q"}:
                 console.print("\n[dim]Shutting down...[/dim]")
                 break
+                
+            # Handle slash commands
+            if user_input.startswith("/"):
+                if user_input.lower() in ["/model", "/info"]:
+                    enhanced_ui.show_banner()
+                    enhanced_ui.show_detailed_token_summary()
+                    continue
+                elif user_input.lower() == "/help":
+                    console.print(Panel(
+                        "[bold]Available Commands:[/bold]\n"
+                        "/model, /info - Show model and usage info\n"
+                        "/help - Show this help\n"
+                        "exit, quit, q - Exit the chat\n"
+                        "init - Generate code_law.md",
+                        title="Help",
+                        border_style="cyan"
+                    ))
+                    continue
 
             # Init command handling
             if "init" in user_input.lower() and len(user_input) < 10:
@@ -238,12 +310,28 @@ def main() -> None:
                 console.print("[info]Initiailizing Agent Protocol...[/info]")
                 enhanced_input = f"{CODE_LAW_GENERATION_PROMPT}\n\n请使用 LS、Glob、Grep、Read 等工具探索项目，然后使用 Write 工具生成 code_law.md 文件。"
                 
-                # Use a specific status for the overall process if not covered by internal steps
-                # But since RichConsoleCodeAgent prints steps, we don't want a blocking status spinner covering them.
-                # So we just run it.
+                # Reset UI state for new request
+                enhanced_ui.tool_tree = ToolCallTree()
+                enhanced_ui.token_tracker.calls.clear()
+                
+                start_time = time.time()
+                console.print()
+                
                 response = agent.run(enhanced_input, show_raw=args.show_raw)
                 
+                elapsed = time.time() - start_time
+                
+                # Show tool tree and token summary
+                console.print()
+                enhanced_ui.show_tool_tree()
                 _print_assistant_response(response)
+                
+                # Show timing and summary
+                timing_text = Text()
+                timing_text.append(f"⏱️  Completed in {elapsed:.1f}s", style="dim cyan")
+                console.print(timing_text)
+                enhanced_ui.show_token_summary()
+                console.print()
                 
                 if check_code_law_exists(PROJECT_ROOT):
                     console.print("[bold green]✓ code_law.md generated successfully.[/bold green]")
@@ -252,15 +340,29 @@ def main() -> None:
                     console.print("[bold red]✗ Failed to generate code_law.md[/bold red]")
             else:
                 # Normal chat
-                # We remove the outer 'status' context manager because RichConsoleCodeAgent 
-                # will manage its own output and spinners for tools.
-                # Use a simple "Thinking..." indicator that is cleared once agent starts printing.
-                # Since agent prints immediately "Engine Started", we can skips the outer spinner or use a transient one.
+                # Reset UI state for new request
+                enhanced_ui.tool_tree = ToolCallTree()
+                enhanced_ui.token_tracker.calls.clear()  # Clear previous call tracking
                 
-                console.print("[italic yellow]Agent is thinking...[/italic yellow]")
+                # Show thinking with live timer
+                start_time = time.time()
+                console.print()
+                
                 response = agent.run(user_input, show_raw=args.show_raw)
                 
+                elapsed = time.time() - start_time
+                
+                # Show tool tree and response
+                console.print()
+                enhanced_ui.show_tool_tree()
                 _print_assistant_response(response)
+                
+                # Show timing and token summary
+                timing_text = Text()
+                timing_text.append(f"⏱️  Completed in {elapsed:.1f}s", style="dim cyan")
+                console.print(timing_text)
+                enhanced_ui.show_token_summary()
+                console.print()
 
             if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
                 console.print(Panel(json.dumps(agent.last_response_raw, ensure_ascii=False, indent=2), title="Raw Response", border_style="dim"))

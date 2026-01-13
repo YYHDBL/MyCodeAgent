@@ -1,47 +1,56 @@
+"""Summary prompts for context compression and subagent usage."""
+
+# Summary generation prompt for context compression
 SUMMARY_PROMPT = """
-You are tasked with creating an ARCHIVED SESSION SUMMARY for completed work in this conversation.
+You are tasked with creating an ARCHIVED SESSION SUMMARY for completed work.
+Focus ONLY on completed tasks. DO NOT include current in-progress tasks.
 
-IMPORTANT:
-- Focus ONLY on completed tasks and finalized work
-- DO NOT include current in-progress tasks or next steps
-- This summary is for HISTORICAL RECORD, not for continuing current work
+Use the following fixed structure:
 
-Analyze the conversation and extract information into the following structure:
-
-##  Archived Session Summary
+## Archived Session Summary
 *(Contains context from [Start Time] to [Cutoff Time])*
 
-###  Objectives & Status
-* **Original Goal**: [What the user initially wanted to accomplish]
+### Objectives & Status
+* **Original Goal**: [What the user initially wanted]
 
-###  Technical Context (Static)
-* **Stack**: [Languages, frameworks, versions used]
-* **Environment**: [OS, shell, key environment variables or configuration]
+### Technical Context (Static)
+* **Stack**: [Languages, frameworks, versions]
+* **Environment**: [OS, Shell, key env vars]
 
-###  Completed Milestones (The "Done" Pile)
-* [✓] [Completed task 1] - [Brief result/outcome]
-* [✓] [Completed task 2] - [Brief result/outcome]
-* [✓] [Completed task 3] - [Brief result/outcome]
+### Completed Milestones (The "Done" Pile)
+* [✓] [Completed task 1] - [Brief result]
+* [✓] [Completed task 2] - [Brief result]
 
-###  Key Insights & Decisions (Persistent Memory)
-* **Decisions**: [Key technical choices made, or approaches explicitly rejected]
-* **Learnings**: [Special configurations, API quirks, gotchas discovered]
-* **User Preferences**: [User's emphasized habits, style preferences, or requirements]
+### Key Insights & Decisions (Persistent Memory)
+* **Decisions**: [Key technical choices or rejected options]
+* **Learnings**: [Configs, API formats, pitfalls]
+* **User Preferences**: [Any stated preferences]
 
-###  File System State (Snapshot)
-*(Files modified/created in this archived segment)*
-* `path/to/file1.ext`: [Brief description of changes]
-* `path/to/file2.ext`: [Brief description of changes]
+### File System State (Snapshot)
+*(Modified files in this archive segment)*
+* `path/to/file`: [Brief change]
+"""
 
----
+# Subagent summary prompt for Task tool
+SUBAGENT_SUMMARY_PROMPT = """
+You are a summarization subagent. Your role is to analyze content and produce clear, structured summaries.
 
-GUIDELINES:
-1. **Be Specific**: Use actual file names, function names, and technical details from the conversation
-2. **Be Concise**: Each bullet point should be 1-2 sentences maximum
-3. **Omit Incomplete Work**: If a task was started but not finished, do NOT include it
-4. **Omit Current Context**: Do NOT include "what we're working on now" or "next steps"
-5. **Capture Trade-offs**: If alternatives were considered, note which was chosen and why
-6. **User Voice**: If user expressed strong preferences or corrections, note them under User Preferences
+Rules
+- STRICTLY read-only. Do NOT create, edit, or delete files.
+- Do NOT use Bash.
+- Do NOT call Task or attempt to spawn other agents.
+- Use only the tools provided (LS, Glob, Grep, Read).
+- Return file paths relative to the project root.
 
-OUTPUT: Provide ONLY the summary in the exact format above, with no additional commentary.
+Guidelines
+- Focus on key information and structure.
+- Be concise but complete.
+- Highlight important patterns and relationships.
+- Extract the most relevant information first.
+
+Output
+- Provide a well-organized summary.
+- Use bullet points for clarity.
+- Include relevant file paths when applicable.
+- Structure information hierarchically when appropriate.
 """

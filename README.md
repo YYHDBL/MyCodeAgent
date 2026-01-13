@@ -1,112 +1,125 @@
 # MyCodeAgent
 
-A production‑ready ReAct agent framework for code analysis and autonomous software tasks.
+一个面向学习与实验的 ReAct 代码代理项目，用于实践：工具协议、上下文工程、技能系统与子代理机制。
 
-```
- __  __       ____          _      ___                 _
-|  \/  |_   _/ ___|___   __| | ___|_ _|_ __ ___   __ _| |
-| |\/| | | | | |   / _ \ / _` |/ _ \| || '_ ` _ \ / _` | |
-| |  | | |_| | |__| (_) | (_| |  __/| || | | | | | (_| | |
-|_|  |_|\__, |\____\___/ \__,_|\___|___|_| |_| |_|\__,_|_|
-        |___/
-```
+## 适用场景
+- 学习 ReAct 工作流与工具调用
+- 研究上下文工程（截断、压缩、归档）
+- 试验 Skills / Task 子代理能力
+- 搭建可扩展的本地实验框架
 
-## Why this exists
-MyCodeAgent turns a codebase into an executable workspace: reasoning + tools + safety.
-It is built for long‑running, tool‑rich sessions with strict protocol guarantees.
+## 核心功能
+- ReAct 推理循环（Thought → Action → Observation）
+- 统一工具响应协议（status/data/text/stats/context）
+- 内置工具：LS / Glob / Grep / Read / Write / Edit / MultiEdit / TodoWrite / Bash / Skill / Task
+- Skills（MVP）：从 `skills/**/SKILL.md` 按需加载技能
+- Task 子代理（MVP）：general / explore / plan / summary
+- 上下文工程：分层注入、历史压缩、@file 强制 Read、mtime 变化提醒
+- 工具输出统一截断：超限结果落盘到 `tool-output/`
+- MCP 工具集成：加载 `mcp_servers.json` 注册远程工具
+- Enhanced UI：工具调用树、token 统计、进度显示
 
-## Highlights
-- ReAct loop with Thought → Action → Observation
-- Unified tool response protocol (schema‑stable, agent‑friendly)
-- Tool result compression + history summary to control context growth
-- Multi‑provider LLM support (OpenAI/DeepSeek/Qwen/Zhipu/Kimi/ModelScope/Ollama/vLLM/local)
-- Sandbox‑safe file ops and command execution
-- Deterministic, offline‑friendly tests
-
-## Architecture at a glance
-```
-core/      = base agent, LLM client, messages, config, history, context
-agents/    = concrete agents (CodeAgent)
-tools/     = registry + protocol helpers
-tools/builtin/ = LS/Glob/Grep/Read/Write/Edit/MultiEdit/TodoWrite/Bash
-prompts/   = agent/tool prompts
-scripts/   = entrypoints
-```
-
-## Built‑in tools
-| Tool | Purpose | Notes |
-|------|---------|------|
-| LS | List directories | pagination, ignore rules |
-| Glob | Find files by pattern | deterministic ordering |
-| Grep | Search code | regex + rg fallback |
-| Read | Read files | paging + line numbers |
-| Write | Create/overwrite | diff preview + optimistic lock |
-| Edit | Single replacement | unique anchor required |
-| MultiEdit | Batch edits | atomic multi‑replace |
-| TodoWrite | Task list | recap + persistence |
-| Bash | Shell command | sandbox + safety rules |
-
-All tools return a unified response envelope. See `docs/通用工具响应协议.md`.
-
-## Quickstart
-### Install
+## 安装
 ```bash
 pip install -r requirements.txt
 ```
 
-### Configure
+## 使用方法
+### 运行交互式 CLI
 ```bash
-# OpenAI
-export OPENAI_API_KEY="your-api-key"
-
-# Other providers
-export DEEPSEEK_API_KEY="your-api-key"
-export GLM_API_KEY="your-api-key"
-export LLM_BASE_URL="https://your-api-endpoint"
+python scripts/chat_test_agent.py
 ```
 
-### Run
+### 指定模型与供应商
+```bash
+python scripts/chat_test_agent.py \
+  --provider zhipu \
+  --model GLM-4.7 \
+  --api-key YOUR_API_KEY \
+  --base-url https://open.bigmodel.cn/api/coding/paas/v4
+```
+
+### 输出原始响应（调试）
 ```bash
 python scripts/chat_test_agent.py --show-raw
-
-# Explicit provider/model
-python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
 ```
 
-## Tool protocol (contract)
-Every tool returns:
+## Skills（技能）
+### 目录约定
+```
+skills/
+  <skill-name>/
+    SKILL.md
+```
+
+### SKILL.md 格式
+```markdown
+---
+name: code-review
+description: Review code quality and risks
+---
+# Code Review
+
+Use this checklist:
+- ...
+
+$ARGUMENTS
+```
+
+- `$ARGUMENTS` 会被 Skill 工具传入的 `args` 替换。
+
+## Task 子代理（MVP）
+- `general / explore / plan / summary` 四种子代理类型
+- 主代理按复杂度选择 `model: main | light`
+- 子代理工具权限隔离（只读/受限）
+
+## MCP 工具集成
+在项目根目录添加 `mcp_servers.json`：
 ```json
 {
-  "status": "success" | "partial" | "error",
-  "data": { ... },
-  "text": "human-readable summary",
-  "stats": { "time_ms": 123, ... },
-  "context": {
-    "cwd": ".",
-    "params_input": { ... }
-  },
-  "error": { "code": "...", "message": "..." }
+  "mcpServers": {
+    "myServer": {
+      "transport": "http",
+      "url": "http://localhost:8000"
+    }
+  }
 }
 ```
 
-## Development
-### Tests
+## 关键环境变量
+### Context / 历史
+- `CONTEXT_WINDOW`（默认 10000）
+- `COMPRESSION_THRESHOLD`（默认 0.8）
+- `MIN_RETAIN_ROUNDS`（默认 10）
+- `SUMMARY_TIMEOUT`（默认 120s）
+
+### 工具输出截断
+- `TOOL_OUTPUT_MAX_LINES`（默认 2000）
+- `TOOL_OUTPUT_MAX_BYTES`（默认 51200）
+- `TOOL_OUTPUT_TRUNCATE_DIRECTION`（head|tail）
+- `TOOL_OUTPUT_DIR`（默认 tool-output）
+- `TOOL_OUTPUT_RETENTION_DAYS`（默认 7）
+
+### Skills
+- `SKILLS_REFRESH_ON_CALL`（默认 true）
+- `SKILLS_PROMPT_CHAR_BUDGET`（默认 12000）
+
+### Subagent
+- `SUBAGENT_MAX_STEPS`（默认 15）
+- `LIGHT_LLM_MODEL_ID / LIGHT_LLM_API_KEY / LIGHT_LLM_BASE_URL`
+
+## 测试
 ```bash
 python -m pytest tests/ -v
-python -m pytest tests/test_write_tool.py -v
-python -m pytest tests/test_read_tool.py -v
-python -m pytest tests/test_protocol_compliance.py -v
 ```
 
-### Add a new tool
-1) Inherit `tools.base.Tool`
-2) Implement `run()` and `get_parameters()`
-3) Register in `tools/registry.py`
-4) Add prompt in `prompts/tools_prompts/`
-
-## Project rules
-- `CODE_LAW.md` is auto‑injected into system context (L2)
-- When tool behavior changes, update prompts in `prompts/tools_prompts/`
+## 文档入口
+- 工具协议：`docs/通用工具响应协议.md`
+- 上下文工程：`docs/上下文工程设计文档.md`
+- 工具输出截断：`docs/工具输出截断设计文档.md`
+- Task（MVP）：`docs/task/task_mvp_design.md`
+- Skills（MVP）：`docs/skills/skill_mvp_implementation_plan.md`
+- 交接说明：`docs/DEV_HANDOFF.md`
 
 ## License
 TBD

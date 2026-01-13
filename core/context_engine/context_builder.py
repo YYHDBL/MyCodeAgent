@@ -5,7 +5,7 @@
 - L1/L2 用 role=system 放在 messages 头部
 - L3 就是 messages 中的 user/assistant/tool
 - L4 当前用户输入以 role=user 追加
-- Todo recap 作为 tool message 自然进入上下文
+- Todo recap 作为 user 观察消息进入上下文（避免 tool_call_id 约束）
 
 Messages 格式：
 [
@@ -13,7 +13,7 @@ Messages 格式：
   {"role": "system", "content": "L2: CODE_LAW.md（如有）"},
   {"role": "user", "content": "...问题..."},
   {"role": "assistant", "content": "Thought: ...\nAction: ..."},
-  {"role": "tool", "content": "{压缩后的JSON}", "tool_name": "Grep"},
+  {"role": "user", "content": "Observation (Grep): {压缩后的JSON}"},
   ...
 ]
 """

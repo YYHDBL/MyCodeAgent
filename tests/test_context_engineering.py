@@ -1,7 +1,7 @@
 """上下文工程模块测试
 
 测试内容（D7.8）：
-1. ToolResultCompressor 压缩规则
+1. 工具输出统一截断规则
 2. InputPreprocessor @file 预处理
 3. HistoryManager 轮次管理和压缩触发
 4. ReadTool mtime 追踪
@@ -18,143 +18,46 @@ from core.config import Config
 from agents.codeAgent import CodeAgent
 
 
-class TestToolResultCompressor:
-    """ToolResultCompressor 压缩规则测试"""
+class TestToolOutputTruncation:
+    """统一截断策略测试（全工具通用）"""
 
-    def test_compress_ls_truncates_to_10_items(self):
-        """LS 工具：截断到前 10 项"""
-        entries = [{"path": f"file{i}.txt", "type": "file"} for i in range(20)]
+    def test_small_output_not_truncated(self):
+        """小输出保持原样"""
         result = {
             "status": "success",
-            "data": {"entries": entries},
-            "stats": {"total_entries": 20, "time_ms": 50},
-            "text": "Listed 20 items",
+            "data": {"message": "ok"},
         }
-        compressed = compress_tool_result("LS", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "success"
-        assert len(parsed["data"]["entries"]) == 10
-        assert parsed["data"]["total_count"] == 20
-        assert "stats" not in parsed
-        assert "text" not in parsed
+        raw = json.dumps(result)
+        output = compress_tool_result("AnyTool", raw)
+        assert output == raw
 
-    def test_compress_grep_truncates_to_5_matches(self):
-        """Grep 工具：截断到前 5 个匹配"""
-        matches = [{"file": f"file{i}.py", "line": i, "content": "test"} for i in range(15)]
+    def test_large_output_truncated(self):
+        """超过阈值时触发统一截断"""
+        content = "x" * (60 * 1024)  # 60KB
         result = {
             "status": "success",
-            "data": {"matches": matches},
-            "stats": {"total_matches": 15, "files_searched": 100},
-            "text": "Found 15 matches",
+            "data": {"content": content},
         }
-        compressed = compress_tool_result("Grep", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "success"
-        assert len(parsed["data"]["matches"]) == 5
-        assert parsed["data"]["total_matches"] == 15
-        assert "stats" not in parsed
+        raw = json.dumps(result)
+        output = compress_tool_result("AnyTool", raw)
+        parsed = json.loads(output)
 
-    def test_compress_read_truncates_to_500_lines(self):
-        """Read 工具：截断到 500 行"""
-        lines = "\n".join([f"line {i}" for i in range(1000)])
+        assert parsed["status"] == "partial"
+        assert parsed["data"]["truncated"] is True
+        assert parsed["data"]["truncation"]["original_bytes"] > 50 * 1024
+        assert "preview" in parsed["data"]
+
+    def test_skip_truncation_flag(self):
+        """context.truncation_skip 生效"""
+        content = "x" * (60 * 1024)
         result = {
             "status": "success",
-            "data": {"content": lines, "truncated": False},
-            "stats": {"lines_read": 1000, "total_lines": 1000},
+            "data": {"content": content},
+            "context": {"truncation_skip": True},
         }
-        compressed = compress_tool_result("Read", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "success"
-        # 内容应被截断
-        content_lines = parsed["data"]["content"].strip().split("\n")
-        assert len(content_lines) <= 500
-        assert parsed["data"]["truncated"] == True
-
-    def test_compress_edit_keeps_applied_drops_diff(self):
-        """Edit 工具：保留 applied，丢弃 diff_preview"""
-        result = {
-            "status": "success",
-            "data": {
-                "applied": True,
-                "diff_preview": "--- a/file.py\n+++ b/file.py\n@@ -1,3 +1,3 @@",
-            },
-            "text": "Edit applied",
-        }
-        compressed = compress_tool_result("Edit", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "success"
-        assert parsed["data"]["applied"] == True
-        assert "diff_preview" not in parsed["data"]
-
-    def test_compress_bash_summarizes_stdout(self):
-        """Bash 工具：stdout 截断到 200 字符，stderr 保留最后 20 行"""
-        long_stdout = "x" * 500
-        stderr_lines = "\n".join([f"error line {i}" for i in range(30)])
-        result = {
-            "status": "success",
-            "data": {
-                "stdout": long_stdout,
-                "stderr": stderr_lines,
-                "exit_code": 0,
-            },
-        }
-        compressed = compress_tool_result("Bash", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "success"
-        assert len(parsed["data"]["stdout_summary"]) <= 203  # 200 + "..."
-        stderr_result_lines = parsed["data"]["stderr_tail"].strip().split("\n")
-        assert len(stderr_result_lines) <= 20
-
-    def test_compress_preserves_error_completely(self):
-        """错误响应：完整保留 error 字段"""
-        result = {
-            "status": "error",
-            "error": {
-                "code": "NOT_FOUND",
-                "message": "File not found: test.py",
-            },
-        }
-        compressed = compress_tool_result("Read", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert parsed["status"] == "error"
-        assert parsed["error"]["code"] == "NOT_FOUND"
-        assert parsed["error"]["message"] == "File not found: test.py"
-
-    def test_compress_always_includes_data_field(self):
-        """data 字段必须始终存在"""
-        result = {
-            "status": "success",
-            "text": "Operation completed",
-        }
-        compressed = compress_tool_result("Unknown", json.dumps(result))
-        parsed = json.loads(compressed)
-        
-        assert "data" in parsed
-        assert parsed["data"] == {}
-
-    def test_compress_skill_preserves_content(self):
-        """Skill 工具：保留完整 data 内容"""
-        result = {
-            "status": "success",
-            "data": {
-                "name": "ui-ux-pro-max",
-                "base_dir": "skills/ui-ux-pro-max",
-                "content": "x" * 2000,
-            },
-            "text": "Loaded skill",
-        }
-        compressed = compress_tool_result("Skill", json.dumps(result))
-        parsed = json.loads(compressed)
-
-        assert parsed["status"] == "success"
-        assert parsed["data"]["name"] == "ui-ux-pro-max"
-        assert len(parsed["data"]["content"]) == 2000
+        raw = json.dumps(result)
+        output = compress_tool_result("AnyTool", raw)
+        assert output == raw
 
 
 class TestInputPreprocessor:
@@ -290,7 +193,7 @@ class TestCodeAgentRecovery:
         assert meta["source"] == "reasoning_finish"
 
     def test_append_tool_compresses_result(self):
-        """tool 消息自动压缩"""
+        """tool 消息自动截断（小结果保持原样）"""
         hm = HistoryManager()
         entries = [{"path": f"file{i}.txt", "type": "file"} for i in range(20)]
         raw_result = json.dumps({
@@ -304,7 +207,8 @@ class TestCodeAgentRecovery:
         messages = hm.get_messages()
         assert len(messages) == 1
         parsed = json.loads(messages[0].content)
-        assert len(parsed["data"]["entries"]) == 10  # 压缩到 10 项
+        assert parsed["data"]["entries"] == entries
+        assert parsed["status"] == "success"
 
     def test_should_compress_below_threshold(self):
         """低于阈值时不触发压缩"""
