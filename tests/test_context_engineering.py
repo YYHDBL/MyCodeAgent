@@ -266,6 +266,66 @@ class TestCodeAgentRecovery:
         assert messages[1]["content"] == "Hi there"
 
 
+class TestLongHorizonCompression:
+    """长程任务上下文压缩测试"""
+
+    @staticmethod
+    def _append_round(hm: HistoryManager, idx: int):
+        hm.append_user(f"Question {idx}")
+        hm.append_assistant(
+            'Thought: list files\nAction: LS[{"path": "."}]',
+            metadata={
+                "action_type": "tool_call",
+                "tool_name": "LS",
+                "tool_call_id": f"call_{idx}",
+                "tool_args": {"path": "."},
+            },
+        )
+        tool_result = json.dumps({
+            "status": "success",
+            "data": {"entries": [{"path": f"file_{idx}.txt", "type": "file"}]},
+            "stats": {"total_entries": 1},
+            "context": {"cwd": "."},
+        })
+        hm.append_tool("LS", tool_result, metadata={"tool_call_id": f"call_{idx}"})
+        hm.append_assistant(f"Answer {idx}")
+
+    def test_compact_inserts_summary_and_retains_recent_rounds(self):
+        """压缩后插入 Summary，保留最近轮次与工具对"""
+        config = Config(min_retain_rounds=2, tool_message_format="strict")
+        summary_generator = lambda msgs: f"summary({len(msgs)})"
+        hm = HistoryManager(config=config, summary_generator=summary_generator)
+
+        for i in range(6):
+            self._append_round(hm, i)
+
+        info = hm.compact(return_info=True)
+
+        assert info.get("compressed") is True
+        assert hm.get_rounds_count() == 2
+
+        messages = hm.get_messages()
+        summaries = [m for m in messages if m.role == "summary"]
+        assert len(summaries) == 1
+        assert "summary(" in summaries[0].content
+
+        tool_msgs = [m for m in messages if m.role == "tool"]
+        assert len(tool_msgs) == 2
+        assert all((m.metadata or {}).get("tool_call_id") for m in tool_msgs)
+
+        serialized = hm.to_messages()
+        tool_serialized = [m for m in serialized if m.get("role") == "tool"]
+        assert len(tool_serialized) == 2
+        assert all(m.get("tool_call_id") for m in tool_serialized)
+
+        summary_serialized = [
+            m for m in serialized
+            if m.get("role") == "system"
+            and "Archived History Summary" in m.get("content", "")
+        ]
+        assert summary_serialized
+
+
 class TestReadToolMtime:
     """ReadTool mtime 追踪测试"""
 

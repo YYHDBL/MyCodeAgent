@@ -11,6 +11,8 @@ MVP Implementation following docs/task/task_mvp_design.md:
 import os
 import time
 import logging
+import json
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -145,6 +147,7 @@ class SubagentRunner:
         system_prompt: str,
         project_root: Path,
         max_steps: int = 15,
+        tool_message_format: str = "strict",
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -153,6 +156,8 @@ class SubagentRunner:
         self.max_steps = max_steps
         self.messages: List[Dict[str, str]] = []
         self.tool_usage: Dict[str, int] = {}
+        format_mode = (tool_message_format or "strict").lower().strip()
+        self._strict_tools = format_mode in {"strict", "openai", "tool"}
         
     def run(self, task_prompt: str) -> Tuple[str, Dict[str, int]]:
         """
@@ -182,8 +187,9 @@ class SubagentRunner:
             if not response:
                 return "Error: Empty response from subagent", self.tool_usage
             
-            # Add assistant response to history
-            self.messages.append({"role": "assistant", "content": response})
+            # Add assistant response to history (may be enriched with tool_calls)
+            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response}
+            self.messages.append(assistant_msg)
             
             # Parse for tool call or final answer
             tool_call = self._parse_tool_call(response)
@@ -196,13 +202,32 @@ class SubagentRunner:
             
             # Execute tool
             tool_name, tool_input = tool_call
+
+            tool_call_id = f"call_{uuid.uuid4().hex}"
+            if self._strict_tools:
+                assistant_msg["tool_calls"] = [{
+                    "id": tool_call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_name,
+                        "arguments": json.dumps(tool_input, ensure_ascii=False),
+                    },
+                }]
+
             observation = self._execute_tool(tool_name, tool_input)
-            
+
             # Add observation to history
-            self.messages.append({
-                "role": "user",
-                "content": f"Observation:\n{observation}"
-            })
+            if self._strict_tools:
+                self.messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": observation,
+                })
+            else:
+                self.messages.append({
+                    "role": "user",
+                    "content": f"Observation ({tool_name}):\n{observation}"
+                })
         
         # Max steps reached
         return "Subagent reached maximum steps without completing.", self.tool_usage
@@ -218,6 +243,18 @@ class SubagentRunner:
         import re
         import json
         
+        # Strip any XML-like tool_call tags the model may emit
+        if response and "<tool_call" in response:
+            response = re.sub(r"<tool_call>.*?</tool_call>", "", response, flags=re.DOTALL | re.IGNORECASE)
+            if "<tool_call" in response:
+                lines = []
+                for line in response.splitlines():
+                    idx = line.find("<tool_call")
+                    if idx != -1:
+                        line = line[:idx].rstrip()
+                    lines.append(line)
+                response = "\n".join(lines)
+
         # Pattern: ToolName[{...}] or Action: ToolName[{...}]
         pattern = r'(?:Action:\s*)?(\w+)\[(\{.*?\})\]'
         match = re.search(pattern, response, re.DOTALL)
@@ -336,6 +373,7 @@ class TaskTool(Tool):
         self._light_llm: Optional[HelloAgentsLLM] = None
         self._tool_registry = tool_registry
         self._subagent_max_steps = int(os.getenv("SUBAGENT_MAX_STEPS", "15"))
+        self._tool_message_format = Config.from_env().tool_message_format
     
     def get_parameters(self) -> List[ToolParameter]:
         return [
@@ -424,6 +462,7 @@ class TaskTool(Tool):
                 system_prompt=system_prompt,
                 project_root=self._project_root,
                 max_steps=self._subagent_max_steps,
+                tool_message_format=self._tool_message_format,
             )
             
             result, tool_usage = runner.run(prompt)

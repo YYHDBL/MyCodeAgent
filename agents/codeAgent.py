@@ -391,7 +391,7 @@ class CodeAgent(Agent):
                 if not empty_retry_used:
                     empty_retry_used = True
                     hint = "上次 content 为空，请务必在 content 输出 Thought/Action 或 Finish"
-                    messages = base_messages + [{"role": "system", "content": hint}]
+                    messages = base_messages + [{"role": "user", "content": hint}]
                     trace_logger.log_event(
                         "empty_response_retry",
                         {
@@ -427,7 +427,14 @@ class CodeAgent(Agent):
             if not response_text or not str(response_text).strip():
                 break
 
-            thought, action = self._parse_thought_action(str(response_text))
+            sanitized_text, stripped = self._strip_tool_call_tags(str(response_text))
+            if stripped:
+                trace_logger.log_event(
+                    "output_sanitized",
+                    {"reason": "strip_tool_call_tags"},
+                    step=step,
+                )
+            thought, action = self._parse_thought_action(sanitized_text)
 
             if thought:
                 if self.console_verbose:
@@ -632,6 +639,26 @@ class CodeAgent(Agent):
         return str(res)
 
     def _parse_thought_action(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        解析 LLM 输出中的 Thought 和 Action
+        
+        从 LLM 返回的文本中提取最后的 Thought 和 Action 内容。
+        支持多行格式，使用正则表达式匹配以 "Action:" 开头的行。
+        
+        Args:
+            text: LLM 返回的完整文本
+            
+        Returns:
+            Tuple[Optional[str], Optional[str]]: 
+                - thought: 最后一个 Thought 块的内容，如果没有则返回 None
+                - action_line: Action 行的内容，如果没有 Action 则返回 None
+                
+        示例:
+            输入:
+                "Thought: 分析问题\nAction: search_file\n\nThought: 深入思考\nAction: read_file"
+            输出:
+                ("深入思考", "read_file")
+        """
         action_spans = list(re.finditer(r"^Action:\s*", text, flags=re.MULTILINE))
         if not action_spans:
             return self._extract_last_block(text, "Thought"), None
@@ -662,6 +689,27 @@ class CodeAgent(Agent):
         if not m:
             return None, ""
         return m.group(1), m.group(2).strip()
+
+    @staticmethod
+    def _strip_tool_call_tags(text: str) -> Tuple[str, bool]:
+        """Strip XML-like <tool_call>...</tool_call> tags from model output."""
+        if text is None:
+            return "", False
+        original = str(text)
+        if "<tool_call" not in original:
+            return original, False
+        cleaned = re.sub(r"<tool_call>.*?</tool_call>", "", original, flags=re.DOTALL | re.IGNORECASE)
+        if "<tool_call" in cleaned:
+            lines = []
+            removed = cleaned != original
+            for line in cleaned.splitlines():
+                idx = line.find("<tool_call")
+                if idx != -1:
+                    line = line[:idx].rstrip()
+                    removed = True
+                lines.append(line)
+            cleaned = "\n".join(lines)
+        return cleaned.strip(), cleaned != original
 
     def _parse_bracket_payload(self, action: str) -> str:
         m = re.match(r"^[A-Za-z0-9_\-:.]+\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)

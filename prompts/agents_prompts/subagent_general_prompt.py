@@ -7,6 +7,7 @@ Rules
 - Do NOT call Task or attempt to spawn other agents.
 - Use only the tools provided (typically LS, Glob, Grep, Read).
 - Return file paths relative to the project root.
+- Tool call format: only `Action: ToolName[JSON]`. Do NOT output `<tool_call>...</tool_call>` tags.
 
 Workflow
 1) Understand the task and identify what information is needed.

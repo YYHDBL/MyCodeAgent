@@ -2,109 +2,55 @@
 
 ## Project Structure & Module Organization
 
-This project follows a layered architecture for AI agents built on ReAct (Reasoning + Acting) principles:
-
 ```
 MyCodeAgent/
-├── core/              # Foundational layer
-│   ├── agent.py       # Agent base class
-│   ├── llm.py         # LLM interface wrapper
-│   ├── message.py     # Message system
-│   ├── config.py      # Configuration management
-│   └── context_engine/ # Context engineering components
-├── agents/            # Agent implementations
-│   └── codeAgent.py   # Main code analysis agent
-├── tools/             # Tool system
-│   ├── base.py        # Tool base class
-│   ├── registry.py    # Tool registration
-│   └── builtin/       # Built-in tools (LS, Glob, Grep, Read, Write, Edit, etc.)
-├── prompts/           # Prompt templates
-├── scripts/           # Entry points and utilities
-├── tests/             # Test suite
-└── docs/              # Design documentation
+├── agents/          # Agent implementations
+├── core/            # Core ReAct loop and tool protocols
+├── docs/            # Design documentation
+├── eval/            # Evaluation scripts
+├── memory/          # Memory and context management
+├── prompts/         # System prompts and templates
+├── scripts/         # Entry points (chat_test_agent.py)
+├── skills/          # Skill definitions (SKILL.md per skill)
+├── tests/           # Test suite
+├── tools/           # Built-in tools (LS, Glob, Grep, etc.)
+├── utils/           # Utility functions
+└── tool-output/     # Truncated tool outputs cache
 ```
 
 ## Build, Test, and Development Commands
 
-### Installation
-```bash
-pip install -r requirements.txt
-```
-
-### Running the Agent
-```bash
-# Interactive chat with raw output
-python scripts/chat_test_agent.py --show-raw
-
-# Specify provider and model
-python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
-```
-
-### Testing
-```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Run specific tool tests
-python -m pytest tests/test_write_tool.py -v
-python -m pytest tests/test_protocol_compliance.py -v
-```
+- **Install dependencies**: `pip install -r requirements.txt`
+- **Run interactive CLI**: `python scripts/chat_test_agent.py`
+- **Run with custom model**: `python scripts/chat_test_agent.py --provider <provider> --model <model> --api-key <key> --base-url <url>`
+- **Run tests**: `python -m pytest tests/ -v`
+- **Debug raw responses**: `python scripts/chat_test_agent.py --show-raw`
 
 ## Coding Style & Naming Conventions
 
-- **Language**: Python 3 with 4-space indentation
-- **Naming**: `snake_case` for functions/variables, `PascalCase` for classes
-- **Imports**: Use repo-absolute imports (e.g., `from core.llm import HelloAgentsLLM`)
-- **Documentation**: Include docstrings for all public classes and methods
-- **Type Hints**: Use type annotations where applicable
-
-## Tool Development Guidelines
-
-All tools must follow the Universal Tool Response Protocol defined in `docs/通用工具响应协议.md`:
-
-1. Inherit from `tools.base.Tool`
-2. Implement `run()` method returning structured response
-3. Register in `tools.registry.ToolRegistry`
-4. Add tool description in `prompts/tools_prompts/`
-
-Required response format:
-```json
-{
-  "status": "success" | "partial" | "error",
-  "data": { ... },
-  "text": "Human-readable summary",
-  "stats": { "time_ms": 100, ... },
-  "context": { "cwd": ".", "params_input": { ... } },
-  "error": { "code": "...", "message": "..." }
-}
-```
+- **Language**: Python 3.x
+- **Dependencies**: openai>=1.0.0, pydantic>=1.10.0, mcp>=1.0.0, anyio>=3.0.0, rich>=13.0.0
+- **Key patterns**:
+  - Tool responses follow Universal Tool Response Protocol (status/data/text/stats/context)
+  - Skills use `skills/<skill-name>/SKILL.md` format with frontmatter (name, description)
+  - Environment variables for configuration (CONTEXT_WINDOW, TOOL_OUTPUT_MAX_LINES, etc.)
 
 ## Testing Guidelines
 
 - **Framework**: pytest
-- **Location**: `tests/` directory with descriptive names (e.g., `test_write_tool.py`)
-- **Naming**: `test_` prefix for test functions
-- **Coverage**: Maintain protocol compliance tests in `test_protocol_compliance.py`
-- **Determinism**: Tests should be offline and deterministic
+- **Test location**: `tests/` directory
+- **Run tests**: `python -m pytest tests/ -v`
+- **Coverage**: Test tool protocols, agent loops, and context management
+- **Naming**: Use descriptive test names following `test_<functionality>_<scenario>` pattern
 
-## Commit & Pull Request Guidelines
+## Skills & Subagent Guidelines
 
-### Commit Messages
-- Format: `type: short summary` (e.g., `feat: add Grep tool`, `fix: resolve Write tool race condition`)
-- Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+- **Skills**: Place in `skills/<name>/SKILL.md` with frontmatter; use `$ARGUMENTS` placeholder for dynamic content
+- **Task subagents**: Use `general` for execution, `explore` for codebase scanning, `plan` for implementation steps, `summary` for compression
+- **MCP tools**: Register in `mcp_servers.json` at project root
 
-### Pull Requirements
-- Clear description of changes and motivation
-- Verification steps for testing
-- Related issues linked if applicable
-- Configuration/environment changes documented
+## Architecture Notes
 
-## Security & Configuration Tips
-
-- Store API keys in `.env` files or environment variables
-- Never commit secrets or API keys
-- File operations are sandboxed to project root for security
-
-## Architecture Overview
-
-This framework implements the ReAct pattern: **Thought → Action → Observation**. Tools provide standardized interfaces for file operations, code search, and system interactions. All components communicate through a unified response protocol ensuring consistency and reliability across the agent ecosystem.
+- **ReAct pattern**: Thought → Action → Observation loop
+- **Context engineering**: Layered injection, history compression, @file references force Read
+- **Tool isolation**: Subagents have restricted toolsets (read-only/limited)

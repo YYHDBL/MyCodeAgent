@@ -11,11 +11,16 @@
 - `docs/`: design docs and handoff notes (`通用工具响应协议.md`, `DEV_HANDOFF.md`).
 - `scripts/`: entry points (`scripts/chat_test_agent.py`).
 - `tests/`: automated tests.
+- `eval/`: evaluation suites, fixtures, and runner (`eval/run_eval.py`).
 
 ## Build, Test, and Development Commands
 - Install deps: `pip install -r requirements.txt`
 - Run interactive chat:
   - `python scripts/chat_test_agent.py --show-raw`
+- Run eval suites:
+  - `python eval/run_eval.py --suite base`
+  - `python eval/run_eval.py --suite long_horizon`
+  - `python eval/run_eval.py --suite all`
 
 ## Coding Style & Naming Conventions
 - Python 3, 4‑space indentation.
@@ -30,6 +35,15 @@
 ## Testing Guidelines
 - Tests live under `tests/` (pytest style). Keep them deterministic and offline.
 - For quick validation, use `scripts/chat_test_agent.py` and inspect `--show-raw`.
+- For evaluation, use `eval/run_eval.py`; reports are written to `eval/reports/`.
+
+## Evaluation & Runner Notes
+- Suites: `eval/tasks/base.json` and `eval/tasks/long_horizon.json` define tasks and checks.
+- Fixtures live under `eval/fixtures/` (Python/TypeScript, long logs, etc).
+- Provider selection: if multiple providers are configured, set `LLM_PROVIDER` or pass `--provider`.
+- Optional overrides: `--model`, `--base-url`, `--api-key` map to `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY`.
+- Traces: the runner enables tracing and writes JSONL to `eval/traces/` for tool-usage checks.
+- MCP servers: if eval appears to hang on MCP startup, set `MCP_CONNECT_MODE=disabled` (or clear MCP configs).
 
 ## Commit & Pull Request Guidelines
 - No enforced convention; recommended format: `type: short summary` (e.g., `feat: add Grep tool`).
