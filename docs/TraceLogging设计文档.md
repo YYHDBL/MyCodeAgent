@@ -1,13 +1,13 @@
 # Trace Logging 设计文档（MVP / 全量轨迹）
 
-版本：1.0.0  
-用途：记录 Agent 完整执行轨迹（包含 CoT、工具调用、环境反馈、用户输入、token 用量），用于测试审计与回放分析。  
-注意：本方案不做脱敏，仅适用于测试/内网环境。
+版本：1.1.0  
+用途：记录 Agent 完整执行轨迹（包含工具调用、环境反馈、用户输入、token 用量），用于测试审计与回放分析。  
+注意：默认开启脱敏（可通过环境变量关闭）。
 
 ---
 
 ## 1. 目标
-- 记录完整推理轨迹：**用户输入 + 模型原始输出（含 Thought）+ 工具调用 + 工具结果 + Finish**  
+- 记录完整执行轨迹：**用户输入 + 模型输出 + 工具调用 + 工具结果 + Finish**  
 - 记录 token 使用量  
 - 便于后续检索、统计、回放
 
@@ -24,9 +24,10 @@
 ---
 
 ## 3. 事件类型（最小集合）
+- `system_messages`（仅一次）
+- `run_start` / `run_end`
 - `user_input`
-- `model_output`（原始输出，含 CoT）
-- `parsed_action`（解析结果）
+- `model_output`（原始输出）
 - `tool_call`
 - `tool_result`
 - `error`
@@ -79,10 +80,10 @@
 ```
 说明：
 - `usage` 直接取 LLM 返回值；没有就置为 `null`
-- 不做脱敏
+- 该事件会经过 Trace 脱敏器（默认开启）
 
-### 5.3 parsed_action（已弃用）
-Action 文本解析路径已移除，保留事件名仅用于历史兼容。
+### 5.3 parsed_action（已移除）
+Action 文本解析已取消，不再写入该事件。
 
 ### 5.4 tool_call
 ```json
@@ -143,9 +144,9 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 
 ## 6. 采集位置（接入点）
 **最小接入点（框架层）**：
-1. ReAct 循环接收用户输入后 → `user_input`
-2. LLM 返回结果后 → `model_output`
-3. Action 解析后 → `parsed_action`
+1. 会话启动时 → `system_messages`
+2. ReAct 循环接收用户输入后 → `user_input`
+3. LLM 返回结果后 → `model_output`
 4. Tool 执行前 → `tool_call`
 5. Tool 返回后 → `tool_result`
 6. 异常捕获时 → `error`
@@ -156,27 +157,25 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 
 ## 7. 配置开关
 建议通过环境变量控制：
-- `TRACE_ENABLED=true|false`（默认 false）
+- `TRACE_ENABLED=true|false`（默认 true）
 - `TRACE_DIR=memory/traces`（默认该路径）
+- `TRACE_SANITIZE=true|false`（默认 true）
+- `TRACE_MD_INCLUDE_RAW_RESPONSE=true|false`（默认 false）
 
 ---
 
 ## 8. 性能与安全
 - JSONL 追加写入开销低，适合频繁记录
-- **测试环境可用**，生产环境需考虑脱敏与权限控制
+- 默认开启脱敏（API key/token/path/tool_call_id），生产环境仍需权限控制
 
 ---
 
 ## 9. MVP 范围
-本期仅实现：
-- JSONL 记录
+已实现：
+- JSONL 记录 + `trace.md`
 - 标准事件与 token 统计
 - 会话级 summary
-
-后续可选：
-- 追加 `trace.md`（人类友好）
-- 脱敏规则（API key / system prompt）
-- 采样记录（降噪）
+- 脱敏规则（默认开启）
 
 ---
 
