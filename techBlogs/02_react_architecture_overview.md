@@ -17,6 +17,8 @@ Agent 并不是拿到用户输入就直接喂给模型。MyCodeAgent 在真正�
 这一阶段结束后，Agent 才真正进入循环。
 
 ## 2. ReAct 循环是怎么跑起来的
+![React](/Users/yyhdbl/Documents/agent/Nihil/MyCodeAgent/techBlogs/img/React.png)
+
 `CodeAgent._react_loop()` 是整个系统的心脏。它不是抽象逻辑，而是实打实的步骤驱动循环。流程可以概括为：
 
 1) **构建上下文 messages**  
@@ -53,6 +55,8 @@ MyCodeAgent 走的是一种更清晰的“消息列表模式”，而不是把�
 - 历史管理与上下文压缩更可控
 
 ## 4. 工具调用的“闭环”
+![ToolRegistroy](/Users/yyhdbl/Documents/agent/Nihil/MyCodeAgent/techBlogs/img/ToolRegistroy.png)
+
 一次工具调用在代码里是一个完整闭环：
 
 1) **解析 Action**：`_parse_tool_call()` 取出工具名与 JSON 参数  
@@ -81,18 +85,3 @@ MyCodeAgent 走的是一种更清晰的“消息列表模式”，而不是把�
 
 后续章节会把这条链路再拆开：工具系统、上下文工程、日志与复盘，都会在这个主循环里找到落点。
 
----
-
-## 配图建议（可选）
-
-1) **插图位置：放在“2. ReAct 循环是怎么跑起来的”小节之后**  
-**图片内容描述**：
-“一个简洁的流程图，从‘用户输入’开始，经过‘预处理 → 构建 messages → 模型输出 → 解析 Thought/Action → 工具调用/Finish → 写入历史’，形成循环箭头。整体风格极简、技术感、无过多装饰。”
-
-2) **插图位置：放在“3. Message List 模式是核心设计”小节之后**  
-**图片内容描述**：
-“一张并列对比图：左侧是‘scratchpad 拼接’的长文本块，右侧是‘Message List’的结构化列表（system/user/assistant/tool）。用简洁的灰蓝色配色。”
-
-3) **插图位置：放在“4. 工具调用的闭环”小节之后**  
-**图片内容描述**：
-“一个放射式的闭环示意图：中心是 ToolRegistry，外圈依次是‘解析 Action、写入 assistant、执行工具、写入 tool、进入下一轮’。线条干净，中文标注。”

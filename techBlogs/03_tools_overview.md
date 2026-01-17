@@ -9,6 +9,8 @@
 - 顶层字段固定为：`status`、`data`、`text`、`stats`、`context`（错误时可带 `error`）
 - 严禁新增其他顶层字段
 
+![通用工具响应协议](/Users/yyhdbl/Documents/agent/Nihil/MyCodeAgent/techBlogs/img/通用工具响应协议.png)
+
 这套规范写在 `docs/通用工具响应协议.md`。它的意义很实际：
 
 - **LLM 可以读 `text`，程序可以读 `data`**，各司其职
