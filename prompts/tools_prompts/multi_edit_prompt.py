@@ -64,7 +64,7 @@ Note: `expected_mtime_ms` and `expected_size_bytes` are **automatically injected
 ### Multiple independent edits
 Step 1: Read the file
 ```
-Read[{"path": "src/config.py"}]
+{"path": "src/config.py"}
 ```
 
 Step 2: Apply multiple edits atomically

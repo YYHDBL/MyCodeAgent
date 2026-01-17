@@ -54,25 +54,25 @@ Persistence
 Examples
 1) Initialize todo list for a feature
 
-TodoWrite[{"summary": "Implement user authentication", "todos": [
+{"summary": "Implement user authentication", "todos": [
   {"content": "Design auth flow", "status": "in_progress"},
   {"content": "Create login endpoint", "status": "pending"},
   {"content": "Add JWT validation", "status": "pending"}
-]}]
+]}
 
 2) Mark current task done, start next
 
-TodoWrite[{"summary": "Implement user authentication", "todos": [
+{"summary": "Implement user authentication", "todos": [
   {"content": "Design auth flow", "status": "completed"},
   {"content": "Create login endpoint", "status": "in_progress"},
   {"content": "Add JWT validation", "status": "pending"}
-]}]
+]}
 
 3) Complete all tasks (triggers persistence)
 
-TodoWrite[{"summary": "Implement user authentication", "todos": [
+{"summary": "Implement user authentication", "todos": [
   {"content": "Design auth flow", "status": "completed"},
   {"content": "Create login endpoint", "status": "completed"},
   {"content": "Add JWT validation", "status": "cancelled"}
-]}]
+]}
 """

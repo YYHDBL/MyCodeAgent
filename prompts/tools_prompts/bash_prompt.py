@@ -36,11 +36,11 @@ Response Structure
 
 Examples
 1) Run tests in the project root
-Bash[{"command": "pytest tests"}]
+{"command": "pytest tests"}
 
 2) Run a command in a subdirectory
-Bash[{"command": "npm test", "directory": "frontend"}]
+{"command": "npm test", "directory": "frontend"}
 
 3) Chain commands (allowed)
-Bash[{"command": "python -m pip --version && python -V"}]
+{"command": "python -m pip --version && python -V"}
 """

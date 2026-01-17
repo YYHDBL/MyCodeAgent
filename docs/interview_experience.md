@@ -6,7 +6,7 @@
 回答：我先选 CLI 是为了“快验证”和“可控”。CLI 用 Python 很快搭起来，调试简单，所有输出、日志、工具调用都能直接看到。插件体验更好，但要适配 IDE API、UI 框架、版本兼容，成本高。先用 CLI 把核心循环跑通，等逻辑稳定再考虑插件化，这样更稳。
 
 2、问题：不同模型（Claude/DeepSeek/GPT）工具调用格式不一样，你怎么处理？
-回答：主循环和模型层解耦，模型层走统一适配。工具调用尽量用“最小公约数”格式，比如 `Action: Tool[JSON]`，再加一层兼容解析（OpenAI tool_calls / function_call 也能兜住）。换模型时，一般只改配置和 prompt，不动核心循环。
+回答：主循环和模型层解耦，统一走 function calling 的 tool_calls 结构。模型只需要按规范返回 tool_calls，核心逻辑不再依赖 Action 文本。换模型时，通常只需要调整 provider 配置和系统提示，不动主循环。
 
 3、问题：如果 MCP Server 挂了或返回脏数据，会崩吗？
 回答：不会崩，最低标准是“失败可控”：异常要转成明确的工具错误，模型知道“这次失败了”，不会拿脏数据继续推理。更进一步是加轻量熔断，连续失败 N 次就临时禁用这个工具，避免一直浪费 token。
@@ -56,8 +56,8 @@ Message List 模式直接用标准的 Chat Messages 格式：
 [
   {"role": "system", "content": "..."},
   {"role": "user", "content": "用户问题"},
-  {"role": "assistant", "content": "Thought: ... Action: Tool[args]"},
-  {"role": "tool", "content": "{工具响应JSON}"},
+  {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "Read", "arguments": "{...}"}}]},
+  {"role": "tool", "tool_call_id": "call_1", "content": "{工具响应JSON}"},
   ...
 ]
 ```
@@ -87,18 +87,8 @@ Message List 模式直接用标准的 Chat Messages 格式：
 
 关键是：不要信任 LLM 生成的命令。哪怕有黑名单，也要有容器/沙箱兜底。
 
-### 18、问题：为什么用纯文本解析工具调用，而不是 Function Calling API？
-回答：这是一个权衡。Function Calling 更"正规"，但：
-1. 不同模型的格式不统一（OpenAI `tool_calls` vs Claude `tool_use`）
-2. 某些模型干脆不支持
-3. 依赖模型输出结构化 JSON，反而更容易出错
-
-我用的是 `Action: Tool[JSON]` 文本格式 + 正则解析。好处是：
-- 所有模型都能稳定输出
-- 格式可控，调试简单
-- 不依赖特定 API
-
-缺点是 LLM 可能偶尔不按格式输出，但这可以通过 few-shot examples 和重试机制解决。对于一个学习项目来说，通用性比"正统性"更重要。
+### 18、问题：为什么改成 Function Calling？
+回答：主要是稳定性和一致性。tool_calls 是 OpenAI 兼容体系里最稳的结构化协议，能强校验，避免 Action 文本被污染的问题。只要模型支持 tool_calls，主循环就能直接消费结构化参数，省掉正则解析。缺点是对模型兼容性要求更高，但整体可靠性提升很明显。
 
 ---
 

@@ -42,15 +42,15 @@ Response Structure
 Examples
 1) Read a file from the beginning
 
-Read[{"path": "src/main.py"}]
+{"path": "src/main.py"}
 
 2) Read with pagination (lines 101-200)
 
-Read[{"path": "src/main.py", "start_line": 101, "limit": 100}]
+{"path": "src/main.py", "start_line": 101, "limit": 100}
 
 3) Read a specific range
 
-Read[{"path": "config.yaml", "start_line": 50, "limit": 20}]
+{"path": "config.yaml", "start_line": 50, "limit": 20}
 
 Error Handling
 - NOT_FOUND: File does not exist.

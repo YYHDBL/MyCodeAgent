@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from tools.base import Tool, ToolParameter
+from tools.base import Tool, ToolParameter, ErrorCode
 from tools.mcp.protocol import to_protocol_result, to_protocol_error, to_protocol_invalid_param
 
 
@@ -63,11 +63,57 @@ class MCPToolAdapter(Tool):
             invalid = self._validate_params(parameters)
             if invalid:
                 return to_protocol_invalid_param(invalid, parameters, self._remote_name, start_time)
+        except Exception as exc:
+            message = str(exc) or repr(exc)
+            return to_protocol_error(
+                message,
+                parameters,
+                self._remote_name,
+                start_time,
+                error_code=ErrorCode.MCP_PARSE_ERROR,
+            )
+
+        try:
             result = self._mcp_client.call_tool_sync(self._remote_name, parameters)
+        except TimeoutError as exc:
+            message = str(exc) or "MCP tool call timeout"
+            return to_protocol_error(
+                message,
+                parameters,
+                self._remote_name,
+                start_time,
+                error_code=ErrorCode.MCP_TIMEOUT,
+            )
+        except ConnectionError as exc:
+            message = str(exc) or "MCP server connection failed"
+            return to_protocol_error(
+                message,
+                parameters,
+                self._remote_name,
+                start_time,
+                error_code=ErrorCode.MCP_NETWORK_ERROR,
+            )
+        except Exception as exc:
+            message = str(exc) or repr(exc)
+            return to_protocol_error(
+                message,
+                parameters,
+                self._remote_name,
+                start_time,
+                error_code=ErrorCode.MCP_EXECUTION_ERROR,
+            )
+
+        try:
             return to_protocol_result(result, parameters, self._remote_name, start_time)
         except Exception as exc:
             message = str(exc) or repr(exc)
-            return to_protocol_error(message, parameters, self._remote_name, start_time)
+            return to_protocol_error(
+                message,
+                parameters,
+                self._remote_name,
+                start_time,
+                error_code=ErrorCode.MCP_PARSE_ERROR,
+            )
 
     def _validate_params(self, parameters: dict[str, Any]) -> str:
         schema = self._schema if isinstance(self._schema, dict) else {}

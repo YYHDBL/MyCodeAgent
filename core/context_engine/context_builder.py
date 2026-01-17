@@ -12,9 +12,8 @@ Messages 格式：
   {"role": "system", "content": "L1 系统提示 + 工具说明"},
   {"role": "system", "content": "L2: CODE_LAW.md（如有）"},
   {"role": "user", "content": "...问题..."},
-  {"role": "assistant", "content": "Thought: ...\nAction: ..."},
+  {"role": "assistant", "content": "...", "tool_calls": [...]},
   {"role": "tool", "tool_call_id": "...", "content": "{压缩后的JSON}"},
-  {"role": "user", "content": "Observation (Grep): {压缩后的JSON}"},
   ...
 ]
 """
@@ -165,6 +164,18 @@ class ContextBuilder:
                     if self._skills_prompt and "{{available_skills}}" in prompt_value:
                         prompt_value = prompt_value.replace("{{available_skills}}", self._skills_prompt)
                     prompts.append(prompt_value)
+        # 追加被熔断禁用的工具提示（避免无效调用）
+        disabled_tools = []
+        if hasattr(self.tool_registry, "get_disabled_tools"):
+            try:
+                disabled_tools = self.tool_registry.get_disabled_tools()
+            except Exception:
+                disabled_tools = []
+        if disabled_tools:
+            block = ["## Disabled Tools (temporary)\n"]
+            for name in disabled_tools:
+                block.append(f"- {name}\n")
+            prompts.append("".join(block))
         return "\n\n".join(p for p in prompts if p)
 
     def _load_code_law(self) -> str:

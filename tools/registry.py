@@ -6,9 +6,11 @@
 import json
 import time
 import logging
+import os
 from typing import Optional, Any, Callable, TypedDict
 
-from .base import Tool, ToolStatus, ErrorCode
+from .base import Tool, ToolStatus, ErrorCode, ToolParameter
+from .circuit_breaker import CircuitBreaker
 
 # 设置日志
 logger = logging.getLogger(__name__)
@@ -40,6 +42,10 @@ class ToolRegistry:
         # Read 元信息缓存（用于乐观锁自动注入）
         # key: path_resolved 或原始 path
         self._read_cache: dict[str, ReadMeta] = {}
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=int(os.getenv("CIRCUIT_FAILURE_THRESHOLD", "3")),
+            recovery_timeout=int(os.getenv("CIRCUIT_RECOVERY_TIMEOUT", "300")),
+        )
 
 
     def register_tool(self, tool: Tool):
@@ -84,6 +90,104 @@ class ToolRegistry:
         else:
             logger.warning("工具 '%s' 不存在。", name)
 
+    def get_openai_tools(self) -> list[dict[str, Any]]:
+        """
+        构建 OpenAI function calling 所需的 tools 列表。
+
+        Returns:
+            list of {"type": "function", "function": {name, description, parameters}}
+        """
+        tools: list[dict[str, Any]] = []
+
+        for tool in self._tools.values():
+            if not self._circuit_breaker.is_available(tool.name):
+                continue
+            try:
+                params = tool.get_parameters()
+            except Exception:
+                params = []
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "parameters": self._parameters_to_schema(params),
+                },
+            })
+
+        for name, info in self._functions.items():
+            if not self._circuit_breaker.is_available(name):
+                continue
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": info.get("description", "") if isinstance(info, dict) else "",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "input": {
+                                "type": "string",
+                                "description": "raw input string",
+                            }
+                        },
+                        "required": ["input"],
+                        "additionalProperties": False,
+                    },
+                },
+            })
+
+        return tools
+
+    @staticmethod
+    def _parameters_to_schema(params: list[ToolParameter]) -> dict[str, Any]:
+        """
+        将 ToolParameter 列表转换为 JSON Schema。
+        """
+        if not isinstance(params, (list, tuple)):
+            params = []
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for p in params or []:
+            param_type = (p.type or "string").strip().lower()
+            schema: dict[str, Any] = {
+                "type": ToolRegistry._normalize_schema_type(param_type),
+                "description": p.description or "",
+            }
+            if p.default is not None:
+                schema["default"] = p.default
+            properties[p.name] = schema
+            if p.required:
+                required.append(p.name)
+
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+
+    @staticmethod
+    def _normalize_schema_type(param_type: str) -> str:
+        """
+        规范化参数类型到 JSON Schema 类型。
+        """
+        mapping = {
+            "str": "string",
+            "string": "string",
+            "int": "integer",
+            "integer": "integer",
+            "float": "number",
+            "number": "number",
+            "bool": "boolean",
+            "boolean": "boolean",
+            "array": "array",
+            "list": "array",
+            "object": "object",
+            "dict": "object",
+        }
+        return mapping.get(param_type, "string")
+
     def get_tool(self, name: str) -> Optional[Tool]:
         """获取Tool对象"""
         return self._tools.get(name)
@@ -118,6 +222,21 @@ class ToolRegistry:
         if name in {"Write", "Edit", "MultiEdit"}:
             parameters = self._inject_optimistic_lock_params(name, parameters)
         
+        # 熔断检查
+        if not self._circuit_breaker.is_available(name):
+            payload = {
+                "status": ToolStatus.ERROR.value,
+                "data": {},
+                "text": f"工具 '{name}' 因连续失败被临时禁用。",
+                "error": {
+                    "code": ErrorCode.CIRCUIT_OPEN.value,
+                    "message": f"工具 '{name}' 因连续失败被临时禁用。",
+                },
+                "stats": {"time_ms": 0},
+                "context": {"cwd": ".", "params_input": parameters},
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+
         # 优先查找Tool对象
         if name in self._tools:
             tool = self._tools[name]
@@ -151,6 +270,16 @@ class ToolRegistry:
                 params_input={},
             )
         
+        # 熔断记录
+        if isinstance(result_payload, dict):
+            status = result_payload.get("status")
+            if status == ToolStatus.ERROR.value:
+                err = result_payload.get("error", {}) or {}
+                err_msg = err.get("message") if isinstance(err, dict) else None
+                self._circuit_breaker.record_failure(name, str(err_msg or result_payload.get("text") or ""))
+            else:
+                self._circuit_breaker.record_success(name)
+        
         # =====================================================================
         # 乐观锁缓存更新：记录 Read 结果的元信息
         # =====================================================================
@@ -158,6 +287,15 @@ class ToolRegistry:
             self._cache_read_meta(result_payload, parameters)
 
         return json.dumps(result_payload, ensure_ascii=False, indent=2)
+
+    def export_read_cache(self) -> dict[str, ReadMeta]:
+        """导出 Read 缓存（用于会话持久）。"""
+        return dict(self._read_cache)
+
+    def import_read_cache(self, data: dict[str, ReadMeta]) -> None:
+        """恢复 Read 缓存（用于会话持久）。"""
+        if isinstance(data, dict):
+            self._read_cache = dict(data)
     
     def _inject_optimistic_lock_params(self, tool_name: str, parameters: dict) -> dict:
         """
@@ -403,6 +541,10 @@ class ToolRegistry:
     def list_tools(self) -> list[str]:
         """列出所有工具名称"""
         return list(self._tools.keys()) + list(self._functions.keys())
+
+    def get_disabled_tools(self) -> list[str]:
+        """获取当前被熔断禁用的工具列表。"""
+        return self._circuit_breaker.get_disabled_tools()
 
     def get_all_tools(self) -> list[Tool]:
         """获取所有Tool对象"""

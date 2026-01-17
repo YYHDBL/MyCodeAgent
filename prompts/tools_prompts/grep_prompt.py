@@ -53,17 +53,17 @@ Error Codes
 Examples
 1) Find TODO comments in all TypeScript files
 
-Grep[{"pattern": "TODO", "include": "**/*.ts"}]
+{"pattern": "TODO", "include": "**/*.ts"}
 
 2) List all class definitions under src/
 
-Grep[{"pattern": "class\\s+\\w+", "path": "src"}]
+{"pattern": "class\\s+\\w+", "path": "src"}
 
 3) Case-sensitive search for the word "Password" in TS files
 
-Grep[{"pattern": "Password", "path": ".", "include": "src/**/*.ts", "case_sensitive": true}]
+{"pattern": "Password", "path": ".", "include": "src/**/*.ts", "case_sensitive": true}
 
 4) Limit results to the top 3 (newest files first)
 
-Grep[{"pattern": "class ", "path": ".", "limit": 3}]
+{"pattern": "class ", "path": ".", "limit": 3}
 """

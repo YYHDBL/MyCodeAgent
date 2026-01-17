@@ -59,7 +59,7 @@ Note: `expected_mtime_ms` and `expected_size_bytes` are **automatically injected
 ### Simple function rename
 Step 1: Read the file
 ```
-Read[{"path": "src/utils.py"}]
+{"path": "src/utils.py"}
 ```
 
 Step 2: Edit with exact match from Read output

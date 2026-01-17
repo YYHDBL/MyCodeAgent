@@ -154,6 +154,35 @@ class HistoryManager:
     def get_messages(self) -> List[Message]:
         """获取所有历史消息的副本"""
         return self._messages.copy()
+
+    def serialize_messages(self) -> List[Dict[str, Any]]:
+        """
+        将历史消息序列化为可持久化结构（保留 metadata）。
+        """
+        items: List[Dict[str, Any]] = []
+        for msg in self._messages:
+            items.append({
+                "role": msg.role,
+                "content": msg.content,
+                "metadata": (msg.metadata or {}),
+            })
+        return items
+
+    def load_messages(self, items: List[Dict[str, Any]]) -> None:
+        """
+        从序列化结构恢复历史消息。
+        """
+        self._messages = []
+        for item in items or []:
+            role = item.get("role")
+            if role not in {"user", "assistant", "tool", "summary"}:
+                continue
+            msg = Message(
+                content=item.get("content", ""),
+                role=role,
+                metadata=item.get("metadata", {}) or {},
+            )
+            self._messages.append(msg)
     
     def get_message_count(self) -> int:
         """获取消息数量"""
@@ -386,18 +415,17 @@ class HistoryManager:
         
         Message List 模式：
         - user: {"role": "user", "content": "..."}
-        - assistant: {"role": "assistant", "content": "Thought: ...\nAction: ..."}
-        - tool (compat): {"role": "user", "content": "Observation (ToolName): {...}"}
-        - tool (strict): {"role": "tool", "tool_call_id": "...", "content": "..."}
+        - assistant: {"role": "assistant", "content": "...", "tool_calls": [...] (可选)}
+        - tool: {"role": "tool", "tool_call_id": "...", "content": "..."}
         - summary: {"role": "system", "content": "## Summary\n..."}
-                  作为 system 消息注入
+          作为 system 消息注入
         
         Returns:
             OpenAI messages 格式的列表
         """
         logger = logging.getLogger(__name__)
-        format_mode = (self._config.tool_message_format or "compat").lower().strip()
-        strict_mode = format_mode in {"strict", "openai", "tool"}
+        # Function-calling mode only (no compat format)
+        strict_mode = True
         messages: List[Dict[str, Any]] = []
         
         for msg in self._messages:
@@ -412,24 +440,46 @@ class HistoryManager:
                     "content": msg.content,
                 }
                 if strict_mode and (msg.metadata or {}).get("action_type") == "tool_call":
-                    tool_name = (msg.metadata or {}).get("tool_name")
-                    tool_call_id = (msg.metadata or {}).get("tool_call_id")
-                    tool_args = (msg.metadata or {}).get("tool_args")
-                    if tool_name and tool_call_id:
+                    tool_calls = (msg.metadata or {}).get("tool_calls")
+                    if tool_calls:
                         try:
                             import json
-                            assistant_msg["tool_calls"] = [{
-                                "id": tool_call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "arguments": json.dumps(tool_args or {}, ensure_ascii=False),
-                                },
-                            }]
+                            assistant_msg["tool_calls"] = []
+                            for call in tool_calls:
+                                name = call.get("name") or "unknown_tool"
+                                call_id = call.get("id")
+                                arguments = call.get("arguments") or {}
+                                args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
+                                assistant_msg["tool_calls"].append({
+                                    "id": call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": name,
+                                        "arguments": args_str,
+                                    },
+                                })
                         except Exception as exc:
                             logger.warning("Failed to build tool_calls metadata: %s", exc)
                     else:
-                        logger.warning("Strict tool mode active but missing tool_call_id/tool_name")
+                        # 兼容旧结构（单 tool）
+                        tool_name = (msg.metadata or {}).get("tool_name")
+                        tool_call_id = (msg.metadata or {}).get("tool_call_id")
+                        tool_args = (msg.metadata or {}).get("tool_args")
+                        if tool_name and tool_call_id:
+                            try:
+                                import json
+                                assistant_msg["tool_calls"] = [{
+                                    "id": tool_call_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": json.dumps(tool_args or {}, ensure_ascii=False),
+                                    },
+                                }]
+                            except Exception as exc:
+                                logger.warning("Failed to build tool_calls metadata: %s", exc)
+                        else:
+                            logger.warning("Strict tool mode active but missing tool_calls")
                 messages.append(assistant_msg)
             elif msg.role == "tool":
                 tool_name = (msg.metadata or {}).get("tool_name", "unknown")

@@ -2,7 +2,6 @@ import json
 import uuid
 import os
 import logging
-import re
 import sys
 import traceback as tb
 from typing import Any, Optional, List, Tuple
@@ -16,6 +15,7 @@ from core.context_engine.trace_logger import create_trace_logger
 from core.context_engine.history_manager import HistoryManager
 from core.context_engine.input_preprocessor import preprocess_input
 from core.context_engine.summary_compressor import create_summary_generator
+from core.session_store import build_session_snapshot, save_session_snapshot, load_session_snapshot
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -27,6 +27,7 @@ from tools.builtin.edit_file_multi import MultiEditTool
 from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
+from tools.builtin.ask_user import AskUserTool
 from tools.builtin.task import TaskTool
 from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
 from utils import setup_logger
@@ -65,6 +66,7 @@ class CodeAgent(Agent):
         self.verbose = bool(self.config.debug)
         self.console_verbose = bool(self.config.show_react_steps)
         self.console_progress = bool(self.config.show_progress)
+        self.interactive = os.getenv("AGENT_INTERACTIVE", "true").lower() in {"1", "true", "yes", "y", "on"}
         
         # 创建 Summary 生成器（Phase 7）
         summary_generator = create_summary_generator(
@@ -103,6 +105,7 @@ class CodeAgent(Agent):
         self.trace_logger = create_trace_logger()
         self._system_messages_logged = False
         self._run_id = 0
+        self._system_messages_override: Optional[List[dict]] = None
     
     def _register_builtin_tools(self):
         """注册内置工具"""
@@ -120,6 +123,9 @@ class CodeAgent(Agent):
             SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
         )
         self.tool_registry.register_tool(BashTool(project_root=self.project_root))
+        self.tool_registry.register_tool(
+            AskUserTool(project_root=self.project_root, interactive=self.interactive)
+        )
         # Task tool for subagent delegation
         self.tool_registry.register_tool(
             TaskTool(
@@ -327,6 +333,9 @@ class CodeAgent(Agent):
         4. 若为 Finish：返回结果
         5. 若为工具调用：执行工具，将 assistant + tool 消息追加到 history
         """
+        tools_schema = self.tool_registry.get_openai_tools()
+        tool_choice = "auto"
+
         for step in range(1, self.max_steps + 1):
             if self.console_verbose:
                 self._console(f"\n--- Step {step}/{self.max_steps} ---")
@@ -337,7 +346,7 @@ class CodeAgent(Agent):
 
             # 构建 messages 列表
             history_messages = self.history_manager.to_messages()
-            messages = self.context_builder.build_messages(history_messages)
+            messages = self._build_messages(history_messages)
             base_messages = messages
             
             trace_logger.log_event(
@@ -349,10 +358,11 @@ class CodeAgent(Agent):
             usage = None
             empty_retry_used = False
             response_text = ""
+            tool_calls: list[dict[str, Any]] = []
 
             while True:
                 # 调用 LLM
-                raw_response = self.llm.invoke_raw(messages)
+                raw_response = self.llm.invoke_raw(messages, tools=tools_schema, tool_choice=tool_choice)
                 if show_raw:
                     self.last_response_raw = (
                         raw_response.model_dump()
@@ -360,37 +370,33 @@ class CodeAgent(Agent):
                         else raw_response
                     )
 
-                response_text = self._extract_content(raw_response)
+                response_text = self._extract_content(raw_response) or ""
                 usage = self._extract_usage(raw_response)
                 if usage and usage.get("total_tokens") is not None:
                     self.history_manager.update_last_usage(usage["total_tokens"])
 
                 response_meta = self._extract_response_meta(raw_response)
+                tool_calls = self._extract_tool_calls(raw_response)
                 raw_dump = self._extract_raw_response(raw_response)
                 trace_logger.log_event(
                     "model_output",
-                    {"raw": response_text, "usage": usage, "meta": response_meta, "raw_response": raw_dump},
+                    {
+                        "raw": response_text,
+                        "usage": usage,
+                        "meta": response_meta,
+                        "raw_response": raw_dump,
+                        "tool_calls": tool_calls,
+                    },
                     step=step,
                 )
 
-                if response_text and str(response_text).strip():
-                    break
-
-                # 工具/函数调用恢复
-                recovered_text, recover_meta = self._recover_empty_response(raw_response)
-                if recovered_text:
-                    response_text = recovered_text
-                    trace_logger.log_event(
-                        "empty_response_recovered",
-                        {"source": recover_meta.get("source"), "details": recover_meta},
-                        step=step,
-                    )
+                if tool_calls or (response_text and str(response_text).strip()):
                     break
 
                 # 重试一次并追加提示
                 if not empty_retry_used:
                     empty_retry_used = True
-                    hint = "上次 content 为空，请务必在 content 输出 Thought/Action 或 Finish"
+                    hint = "上次 content 为空且未返回 tool_calls，请在 content 中回复最终答案，或使用工具调用。"
                     messages = base_messages + [{"role": "user", "content": hint}]
                     trace_logger.log_event(
                         "empty_response_retry",
@@ -424,157 +430,103 @@ class CodeAgent(Agent):
                 )
                 break
 
-            if not response_text or not str(response_text).strip():
+            if not tool_calls and (not response_text or not str(response_text).strip()):
                 break
-
-            sanitized_text, stripped = self._strip_tool_call_tags(str(response_text))
-            if stripped:
-                trace_logger.log_event(
-                    "output_sanitized",
-                    {"reason": "strip_tool_call_tags"},
-                    step=step,
+            # 有工具调用：写入 assistant + 执行 tools
+            if tool_calls:
+                # ensure each tool_call has an id (OpenAI strict requirement)
+                for call in tool_calls:
+                    if not call.get("id"):
+                        call["id"] = f"call_{uuid.uuid4().hex}"
+                assistant_content = str(response_text or "")
+                self.history_manager.append_assistant(
+                    content=assistant_content,
+                    metadata={
+                        "step": step,
+                        "action_type": "tool_call",
+                        "tool_calls": tool_calls,
+                    },
                 )
-            thought, action = self._parse_thought_action(sanitized_text)
+                self._log_message_write(
+                    trace_logger,
+                    "assistant",
+                    assistant_content,
+                    {"action_type": "tool_call", "tool_calls": tool_calls},
+                    step,
+                )
 
-            if thought:
-                if self.console_verbose:
-                    self._console(f"\n🤔 Thought:\n{thought}\n")
-                elif self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("Thought: %s", thought)
+                for call in tool_calls:
+                    tool_name = call.get("name") or "unknown_tool"
+                    tool_call_id = call.get("id") or f"call_{uuid.uuid4().hex}"
+                    raw_args = call.get("arguments") or {}
+                    tool_input, parse_err = self._ensure_json_input(raw_args)
+                    if parse_err:
+                        error_result = {
+                            "status": "error",
+                            "error": {"code": "INVALID_PARAM", "message": f"Tool arguments parse error: {parse_err}"},
+                            "data": {},
+                        }
+                        observation = json.dumps(error_result, ensure_ascii=False)
+                        trace_logger.log_event(
+                            "error",
+                            {
+                                "stage": "tool_call_parse",
+                                "error_code": "INVALID_PARAM",
+                                "message": str(parse_err),
+                                "tool": tool_name,
+                                "tool_call_id": tool_call_id,
+                            },
+                            step=step,
+                        )
+                    else:
+                        trace_logger.log_event("tool_call", {"tool": tool_name, "args": tool_input, "tool_call_id": tool_call_id}, step=step)
+                        if self.console_verbose:
+                            self._console(f"\n🎬 Action: {tool_name}[{tool_input}]\n")
+                        elif self.logger.isEnabledFor(logging.DEBUG):
+                            self.logger.debug("Action: %s %s", tool_name, tool_input)
+                        try:
+                            observation = self._execute_tool(tool_name, tool_input)
+                            try:
+                                result_obj = json.loads(observation)
+                                trace_logger.log_event("tool_result", {"tool": tool_name, "result": result_obj}, step=step)
+                            except json.JSONDecodeError:
+                                trace_logger.log_event("tool_result", {"tool": tool_name, "result": {"text": observation}}, step=step)
+                        except Exception as e:
+                            error_result = {"status": "error", "error": {"code": "EXECUTION_ERROR", "message": str(e)}, "data": {}}
+                            observation = json.dumps(error_result, ensure_ascii=False)
+                            trace_logger.log_event("error", {"stage": "tool_execution", "error_code": "EXECUTION_ERROR", "message": str(e), "tool": tool_name, "traceback": tb.format_exc()}, step=step)
 
-            # 处理无 Action 的情况
-            if not action:
-                finish_payload = self._extract_finish_direct(str(response_text))
-                if finish_payload is not None:
-                    # Finish 路径：仅记录最终回答内容
-                    assistant_content = finish_payload
-                    self.history_manager.append_assistant(
-                        content=assistant_content,
-                        metadata={"step": step, "action_type": "finish"},
+                    self.history_manager.append_tool(
+                        tool_name=tool_name,
+                        raw_result=observation,
+                        metadata={"step": step, "tool_call_id": tool_call_id},
+                        project_root=self.project_root,
                     )
-                    self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "finish"}, step)
+                    self._log_message_write(
+                        trace_logger,
+                        "tool",
+                        observation,
+                        {"tool_name": tool_name, "tool_call_id": tool_call_id},
+                        step,
+                    )
+
                     if self.console_verbose:
-                        self._console("\n✅ Finish\n")
+                        display_obs = observation[:300] + "..." if len(observation) > 300 else observation
+                        self._console(f"\n👀 Observation: {display_obs}\n")
                     elif self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug("Finish")
-                    trace_logger.log_event(
-                        "parsed_action",
-                        {"thought": thought or "", "action": "Finish", "args": {"payload": finish_payload}},
-                        step=step,
-                    )
-                    trace_logger.log_event("finish", {"final": finish_payload}, step=step)
-                    return finish_payload
-                
-                # 无 Action：按普通对话记录原始回复并结束
-                assistant_content = str(response_text).strip()
-                self.history_manager.append_assistant(
-                    content=assistant_content,
-                    metadata={"step": step, "action_type": "no_action"},
-                )
-                self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "no_action"}, step)
-                return assistant_content
-
-            # 处理 Finish Action
-            if action.strip().startswith("Finish["):
-                final_answer = self._parse_bracket_payload(action)
-                assistant_content = final_answer
-                self.history_manager.append_assistant(
-                    content=assistant_content,
-                    metadata={"step": step, "action_type": "finish"},
-                )
-                self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "finish"}, step)
-                
-                if self.console_verbose:
-                    self._console("\n✅ Finish\n")
-                elif self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("Finish")
-                trace_logger.log_event(
-                    "parsed_action",
-                    {"thought": thought or "", "action": "Finish", "args": {"payload": final_answer}},
-                    step=step,
-                )
-                trace_logger.log_event("finish", {"final": final_answer}, step=step)
-                return final_answer
-
-            # 解析工具调用
-            tool_name, tool_raw_input = self._parse_tool_call(action)
-            if not tool_name:
-                assistant_content = f"Thought: {thought or ''}\nAction: {action}\n(Invalid action format)"
-                self.history_manager.append_assistant(content=assistant_content, metadata={"step": step, "action_type": "invalid_action"})
-                self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "invalid_action"}, step)
+                        display_obs = observation[:300] + "..." if len(observation) > 300 else observation
+                        self.logger.debug("Observation: %s", display_obs)
                 continue
 
-            tool_input, parse_err = self._ensure_json_input(tool_raw_input)
-            trace_logger.log_event("parsed_action", {"thought": thought or "", "action": action, "args": tool_input if parse_err is None else {"raw": tool_raw_input}}, step=step)
-            
-            if parse_err:
-                assistant_content = f"Thought: {thought or ''}\nAction: {tool_name}[{tool_raw_input}]\n(Parameter parse error: {parse_err})"
-                self.history_manager.append_assistant(content=assistant_content, metadata={"step": step, "action_type": "parse_error", "tool_name": tool_name})
-                self._log_message_write(trace_logger, "assistant", assistant_content, {"action_type": "parse_error"}, step)
-                continue
-
-            trace_logger.log_event("tool_call", {"tool": tool_name, "args": tool_input}, step=step)
-
-            if self.console_verbose:
-                self._console(f"\n🎬 Action: {tool_name}[{tool_input}]\n")
-            elif self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug("Action: %s %s", tool_name, tool_input)
-
-            # 写入 assistant 消息（Thought + Action）
-            tool_call_id = f"call_{uuid.uuid4().hex}"
-            assistant_content = f"Thought: {thought or ''}\nAction: {tool_name}[{json.dumps(tool_input, ensure_ascii=False)}]"
+            # 无工具调用：视为最终回答
+            final_text = str(response_text).strip()
             self.history_manager.append_assistant(
-                content=assistant_content,
-                metadata={
-                    "step": step,
-                    "action_type": "tool_call",
-                    "tool_name": tool_name,
-                    "tool_call_id": tool_call_id,
-                    "tool_args": tool_input,
-                },
+                content=final_text,
+                metadata={"step": step, "action_type": "final"},
             )
-            self._log_message_write(
-                trace_logger,
-                "assistant",
-                assistant_content,
-                {"action_type": "tool_call", "tool_name": tool_name, "tool_call_id": tool_call_id},
-                step,
-            )
-
-            # 执行工具
-            try:
-                observation = self._execute_tool(tool_name, tool_input)
-                try:
-                    result_obj = json.loads(observation)
-                    trace_logger.log_event("tool_result", {"tool": tool_name, "result": result_obj}, step=step)
-                except json.JSONDecodeError:
-                    trace_logger.log_event("tool_result", {"tool": tool_name, "result": {"text": observation}}, step=step)
-            except Exception as e:
-                error_result = {"status": "error", "error": {"code": "EXECUTION_ERROR", "message": str(e)}, "data": {}}
-                observation = json.dumps(error_result, ensure_ascii=False)
-                trace_logger.log_event("error", {"stage": "tool_execution", "error_code": "EXECUTION_ERROR", "message": str(e), "tool": tool_name, "traceback": tb.format_exc()}, step=step)
-
-            # 写入 tool 消息到 history（截断版）
-            self.history_manager.append_tool(
-                tool_name=tool_name, 
-                raw_result=observation, 
-                metadata={"step": step, "tool_call_id": tool_call_id},
-                project_root=self.project_root,
-            )
-            self._log_message_write(
-                trace_logger,
-                "tool",
-                observation,
-                {"tool_name": tool_name, "tool_call_id": tool_call_id},
-                step,
-            )
-
-            if self.console_verbose:
-                display_obs = observation[:300] + "..." if len(observation) > 300 else observation
-                self._console(f"\n👀 Observation: {display_obs}\n")
-            elif self.logger.isEnabledFor(logging.DEBUG):
-                display_obs = observation[:300] + "..." if len(observation) > 300 else observation
-                self.logger.debug("Observation: %s", display_obs)
+            self._log_message_write(trace_logger, "assistant", final_text, {"action_type": "final"}, step)
+            trace_logger.log_event("finish", {"final": final_text}, step=step)
+            return final_text
 
         return "抱歉，我无法在限定步数内完成这个任务。"
 
@@ -593,9 +545,45 @@ class CodeAgent(Agent):
     def _log_system_messages_if_needed(self, trace_logger) -> None:
         if self._system_messages_logged or not trace_logger:
             return
-        system_messages = self.context_builder.get_system_messages()
+        system_messages = self._get_system_messages_for_run()
         trace_logger.log_system_messages(system_messages)
         self._system_messages_logged = True
+
+    def _get_system_messages_for_run(self) -> List[dict]:
+        if self._system_messages_override:
+            return [dict(m) for m in self._system_messages_override]
+        return self.context_builder.get_system_messages()
+
+    def _build_messages(self, history_messages: list[dict]) -> list[dict]:
+        system_messages = self._get_system_messages_for_run()
+        return list(system_messages) + list(history_messages)
+
+    def save_session(self, path: str) -> None:
+        """保存会话快照（含 system messages）。"""
+        system_messages = self._get_system_messages_for_run()
+        history_messages = self.history_manager.serialize_messages()
+        tool_schema = self.tool_registry.get_openai_tools()
+        snapshot = build_session_snapshot(
+            system_messages=system_messages,
+            history_messages=history_messages,
+            tool_schema=tool_schema,
+            project_root=self.project_root,
+            cwd=".",
+            code_law_text=self.context_builder._cached_code_law,
+            skills_prompt=self._skills_prompt,
+            mcp_tools_prompt=self._mcp_tools_prompt,
+            read_cache=self.tool_registry.export_read_cache(),
+            tool_output_dir="tool-output",
+        )
+        save_session_snapshot(path, snapshot)
+
+    def load_session(self, path: str) -> None:
+        """从快照恢复会话（scheme B）。"""
+        snapshot = load_session_snapshot(path)
+        self._system_messages_override = snapshot.get("system_messages") or []
+        history_items = snapshot.get("history_messages") or []
+        self.history_manager.load_messages(history_items)
+        self.tool_registry.import_read_cache(snapshot.get("read_cache") or {})
 
     def _print_context_preview(
         self,
@@ -638,86 +626,11 @@ class CodeAgent(Agent):
         res = self.tool_registry.execute_tool(tool_name, tool_input)
         return str(res)
 
-    def _parse_thought_action(self, text: str) -> Tuple[Optional[str], Optional[str]]:
-        """
-        解析 LLM 输出中的 Thought 和 Action
-        
-        从 LLM 返回的文本中提取最后的 Thought 和 Action 内容。
-        支持多行格式，使用正则表达式匹配以 "Action:" 开头的行。
-        
-        Args:
-            text: LLM 返回的完整文本
-            
-        Returns:
-            Tuple[Optional[str], Optional[str]]: 
-                - thought: 最后一个 Thought 块的内容，如果没有则返回 None
-                - action_line: Action 行的内容，如果没有 Action 则返回 None
-                
-        示例:
-            输入:
-                "Thought: 分析问题\nAction: search_file\n\nThought: 深入思考\nAction: read_file"
-            输出:
-                ("深入思考", "read_file")
-        """
-        action_spans = list(re.finditer(r"^Action:\s*", text, flags=re.MULTILINE))
-        if not action_spans:
-            return self._extract_last_block(text, "Thought"), None
-        last_action = action_spans[-1]
-        action_content = text[last_action.end():].strip()
-        action_line = action_content if action_content else None
-        prefix = text[: last_action.start()]
-        thought = self._extract_last_block(prefix, "Thought")
-        return thought, action_line
-
-    def _extract_last_block(self, text: str, tag: str) -> Optional[str]:
-        spans = list(re.finditer(rf"^{re.escape(tag)}:\s*", text, flags=re.MULTILINE))
-        if not spans:
-            return None
-        last = spans[-1]
-        content = text[last.end():].strip()
-        return content if content else None
-
-    def _extract_finish_direct(self, text: str) -> Optional[str]:
-        matches = list(re.finditer(r"^Finish\[(.*)\]\s*$", text, flags=re.MULTILINE | re.DOTALL))
-        if not matches:
-            return None
-        payload = matches[-1].group(1).strip()
-        return payload if payload else ""
-
-    def _parse_tool_call(self, action: str) -> Tuple[Optional[str], str]:
-        m = re.match(r"^([A-Za-z0-9_\-:.]+)\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
-        if not m:
-            return None, ""
-        return m.group(1), m.group(2).strip()
-
-    @staticmethod
-    def _strip_tool_call_tags(text: str) -> Tuple[str, bool]:
-        """Strip XML-like <tool_call>...</tool_call> tags from model output."""
-        if text is None:
-            return "", False
-        original = str(text)
-        if "<tool_call" not in original:
-            return original, False
-        cleaned = re.sub(r"<tool_call>.*?</tool_call>", "", original, flags=re.DOTALL | re.IGNORECASE)
-        if "<tool_call" in cleaned:
-            lines = []
-            removed = cleaned != original
-            for line in cleaned.splitlines():
-                idx = line.find("<tool_call")
-                if idx != -1:
-                    line = line[:idx].rstrip()
-                    removed = True
-                lines.append(line)
-            cleaned = "\n".join(lines)
-        return cleaned.strip(), cleaned != original
-
-    def _parse_bracket_payload(self, action: str) -> str:
-        m = re.match(r"^[A-Za-z0-9_\-:.]+\[(.*)\]\s*$", action.strip(), flags=re.DOTALL)
-        return (m.group(1).strip() if m else "").strip()
-
     def _ensure_json_input(self, raw: str) -> Tuple[Any, Optional[str]]:
         if raw is None:
             return {}, None
+        if isinstance(raw, (dict, list)):
+            return raw, None
         s = str(raw).strip()
         if not s:
             return {}, None
@@ -730,9 +643,15 @@ class CodeAgent(Agent):
     def _extract_content(raw_response: Any) -> Optional[str]:
         try:
             if hasattr(raw_response, "choices"):
-                return raw_response.choices[0].message.content
+                content = raw_response.choices[0].message.content
+                if isinstance(content, list):
+                    return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                return content
             if isinstance(raw_response, dict) and raw_response.get("choices"):
-                return raw_response["choices"][0]["message"].get("content")
+                content = raw_response["choices"][0]["message"].get("content")
+                if isinstance(content, list):
+                    return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                return content
         except Exception:
             return str(raw_response)
 
@@ -759,11 +678,9 @@ class CodeAgent(Agent):
             return None
 
     @staticmethod
-    def _recover_empty_response(raw_response: Any) -> Tuple[Optional[str], Optional[dict]]:
+    def _extract_tool_calls(raw_response: Any) -> list[dict[str, Any]]:
         """
-        尝试从空响应中恢复：
-        - 支持 OpenAI function_call/tool_calls 返回但 content 为空的场景
-        - 返回 (recovered_text, meta)；若无法恢复则返回 (None, None)
+        从原始响应中提取 tool_calls，统一成 {id,name,arguments} 列表。
         """
         def _get_attr(obj, key: str):
             if obj is None:
@@ -775,72 +692,36 @@ class CodeAgent(Agent):
         try:
             choices = _get_attr(raw_response, "choices")
             if not choices:
-                return None, None
+                return []
             choice = choices[0]
             message = _get_attr(choice, "message")
             if not message:
-                return None, None
-
+                return []
             tool_calls = _get_attr(message, "tool_calls") or []
+            calls: list[dict[str, Any]] = []
             if tool_calls:
-                call = tool_calls[0]
-                fn = _get_attr(call, "function") or {}
-                name = _get_attr(fn, "name") or "unknown_tool"
-                arguments = _get_attr(fn, "arguments") or ""
-                args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-                return f"Action: {name}[{args_str}]", {"source": "tool_call", "tool": name}
+                for call in tool_calls:
+                    fn = _get_attr(call, "function") or {}
+                    name = _get_attr(fn, "name") or _get_attr(call, "name") or "unknown_tool"
+                    arguments = _get_attr(fn, "arguments") or _get_attr(call, "arguments") or {}
+                    call_id = _get_attr(call, "id")
+                    calls.append({
+                        "id": call_id,
+                        "name": name,
+                        "arguments": arguments,
+                    })
+                return calls
 
+            # 兼容旧 function_call
             function_call = _get_attr(message, "function_call")
             if function_call:
-                name = _get_attr(function_call, "name") or "unknown_function"
-                arguments = _get_attr(function_call, "arguments") or ""
-                args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-                return f"Action: {name}[{args_str}]", {"source": "function_call", "tool": name}
-
-            content = _get_attr(message, "content")
-            if content and str(content).strip():
-                return str(content), {"source": "content"}
+                name = _get_attr(function_call, "name") or "unknown_tool"
+                arguments = _get_attr(function_call, "arguments") or {}
+                return [{"id": None, "name": name, "arguments": arguments}]
         except Exception:
-            return None, None
+            return []
 
-        return None, None
-
-    @staticmethod
-    def _recover_from_reasoning(raw_response: Any) -> Tuple[Optional[str], Optional[dict]]:
-        """尝试从 reasoning_content 中恢复 Action/Finish。"""
-        def _get_attr(obj, key: str):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return obj.get(key)
-            return getattr(obj, key, None)
-
-        try:
-            choices = _get_attr(raw_response, "choices")
-            if not choices:
-                return None, None
-            choice = choices[0]
-            message = _get_attr(choice, "message")
-            if not message:
-                return None, None
-            reasoning = _get_attr(message, "reasoning_content") or _get_attr(message, "reasoning")
-            if not reasoning:
-                return None, None
-            reasoning_text = str(reasoning)
-
-            action_match = list(re.finditer(r"^Action:\s*(.+)$", reasoning_text, flags=re.MULTILINE))
-            if action_match:
-                action_line = action_match[-1].group(1).strip()
-                return f"Action: {action_line}", {"source": "reasoning_action"}
-
-            finish_match = re.search(r"Finish\[(.*)\]", reasoning_text, flags=re.DOTALL)
-            if finish_match:
-                return f"Finish[{finish_match.group(1).strip()}]", {"source": "reasoning_finish"}
-        except Exception:
-            return None, None
-
-        return None, None
-
+        return []
 
     @staticmethod
     def _extract_response_meta(raw_response: Any) -> dict:

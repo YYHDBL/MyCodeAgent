@@ -190,6 +190,21 @@ def _print_banner(code_law_exists: bool, ui: Optional['EnhancedUI'] = None) -> N
         console.print(Panel("⚠️  code_law.md missing. Type 'init' to generate it.", style="yellow", title="Setup Required"))
     console.print()
 
+def _default_session_path() -> str:
+    sessions_dir = os.path.join(PROJECT_ROOT, "memory", "sessions")
+    os.makedirs(sessions_dir, exist_ok=True)
+    return os.path.join(sessions_dir, "session-latest.json")
+
+def _maybe_save_session(agent: CodeAgent, path: str, flag: dict, reason: str) -> None:
+    if flag.get("saved"):
+        return
+    try:
+        agent.save_session(path)
+        console.print(f"[dim]Auto-saved session ({reason}): {path}[/dim]")
+        flag["saved"] = True
+    except Exception as exc:
+        console.print(f"[bold red]✗ Auto-save failed:[/bold red] {exc}")
+
 def _print_assistant_response(text: str) -> None:
     md = Markdown(text)
     console.print(Panel(md, title="[agent]Assistant[/agent]", border_style="blue", expand=False))
@@ -251,6 +266,8 @@ def main() -> None:
 
     code_law_exists = check_code_law_exists(PROJECT_ROOT)
     _print_banner(code_law_exists, enhanced_ui)
+    auto_save_path = _default_session_path()
+    auto_save_flag = {"saved": False}
 
     # Setup history for prompt_toolkit
     history_file = os.path.join(PROJECT_ROOT, ".chat_history")
@@ -272,12 +289,14 @@ def main() -> None:
                 ).strip()
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]Goodbye![/dim]")
+                _maybe_save_session(agent, auto_save_path, auto_save_flag, "keyboard interrupt")
                 break
 
             if not user_input:
                 continue
             if user_input.lower() in {"exit", "quit", "q"}:
                 console.print("\n[dim]Shutting down...[/dim]")
+                _maybe_save_session(agent, auto_save_path, auto_save_flag, "exit")
                 break
                 
             # Handle slash commands
@@ -286,10 +305,33 @@ def main() -> None:
                     enhanced_ui.show_banner()
                     enhanced_ui.show_detailed_token_summary()
                     continue
+                elif user_input.lower().startswith("/save"):
+                    parts = user_input.split(maxsplit=1)
+                    path = parts[1].strip() if len(parts) > 1 else _default_session_path()
+                    try:
+                        agent.save_session(path)
+                        console.print(f"[bold green]✓ Session saved:[/bold green] {path}")
+                    except Exception as exc:
+                        console.print(f"[bold red]✗ Save failed:[/bold red] {exc}")
+                    continue
+                elif user_input.lower().startswith("/load"):
+                    parts = user_input.split(maxsplit=1)
+                    path = parts[1].strip() if len(parts) > 1 else _default_session_path()
+                    if not os.path.exists(path):
+                        console.print(f"[bold red]✗ Session not found:[/bold red] {path}")
+                        continue
+                    try:
+                        agent.load_session(path)
+                        console.print(f"[bold green]✓ Session loaded:[/bold green] {path}")
+                    except Exception as exc:
+                        console.print(f"[bold red]✗ Load failed:[/bold red] {exc}")
+                    continue
                 elif user_input.lower() == "/help":
                     console.print(Panel(
                         "[bold]Available Commands:[/bold]\n"
                         "/model, /info - Show model and usage info\n"
+                        "/save [path] - Save session snapshot\n"
+                        "/load [path] - Load session snapshot\n"
                         "/help - Show this help\n"
                         "exit, quit, q - Exit the chat\n"
                         "init - Generate code_law.md",
@@ -368,6 +410,7 @@ def main() -> None:
                 console.print(Panel(json.dumps(agent.last_response_raw, ensure_ascii=False, indent=2), title="Raw Response", border_style="dim"))
                 
     finally:
+        _maybe_save_session(agent, auto_save_path, auto_save_flag, "finalize")
         agent.close()
 
 if __name__ == "__main__":

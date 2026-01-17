@@ -64,7 +64,8 @@ def test_trace_logger_enabled():
     
     # 2. model_output (step 1)
     logger.log_event('model_output', {
-        'raw': 'Thought: 用户想查看当前目录\nAction: LS[{"path": "."}]',
+        'raw': '',
+        'tool_calls': [{'id': 'call_1', 'name': 'LS', 'arguments': {'path': '.'}}],
         'usage': {
             'prompt_tokens': 1234,
             'completion_tokens': 56,
@@ -73,18 +74,11 @@ def test_trace_logger_enabled():
     }, step=1)
     print("✓ model_output (step 1)")
     
-    # 3. parsed_action
-    logger.log_event('parsed_action', {
-        'thought': '用户想查看当前目录',
-        'action': 'LS',
-        'args': {'path': '.'}
-    }, step=1)
-    print("✓ parsed_action")
-    
-    # 4. tool_call
+    # 3. tool_call
     logger.log_event('tool_call', {
         'tool': 'LS',
-        'args': {'path': '.'}
+        'args': {'path': '.'},
+        'tool_call_id': 'call_1'
     }, step=1)
     print("✓ tool_call")
     
@@ -109,7 +103,7 @@ def test_trace_logger_enabled():
     
     # 6. model_output (step 2)
     logger.log_event('model_output', {
-        'raw': 'Thought: 已经获取到目录列表\nAction: Finish[当前目录包含 core 目录和 README.md 文件]',
+        'raw': '当前目录包含 core 目录和 README.md 文件',
         'usage': {
             'prompt_tokens': 1567,
             'completion_tokens': 89,

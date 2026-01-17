@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from core.context_engine.trace_sanitizer import TraceSanitizer
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +71,10 @@ class TraceLogger:
         self._current_run = None
         self._timeline_started = False
         self._system_messages_logged = False
+        self._md_step_open = False
+        self._sanitizer = TraceSanitizer(
+            enable=os.environ.get("TRACE_SANITIZE", "true").lower() == "true"
+        )
         
         # 初始化文件
         if self.enabled:
@@ -111,13 +117,14 @@ class TraceLogger:
             return
         
         try:
+            safe_payload = self._sanitizer.sanitize(payload)
             # 构建事件对象
             event_obj = {
                 "ts": datetime.utcnow().isoformat() + "Z",
                 "session_id": self.session_id,
                 "step": step,
                 "event": event,
-                "payload": payload,
+                "payload": safe_payload,
             }
             
             # 写入文件
@@ -170,6 +177,7 @@ class TraceLogger:
                 self._file_handle.close()
                 self._file_handle = None
             if self._md_handle:
+                self._close_step_block()
                 self._md_handle.close()
                 self._md_handle = None
             
@@ -228,6 +236,11 @@ class TraceLogger:
             self._md_handle.write("\n## Timeline\n\n")
             self._timeline_started = True
 
+    def _close_step_block(self):
+        if self._md_handle and self._md_step_open:
+            self._md_handle.write("\n</details>\n")
+            self._md_step_open = False
+
     def _write_md_event(self, event_obj: Dict[str, Any]):
         if not self._md_handle:
             return
@@ -263,6 +276,7 @@ class TraceLogger:
             processed = payload.get("processed")
             self._current_run = run_id
             self._current_step = None
+            self._close_step_block()
             lines.append(f"\n## Run {run_id}\n")
             if ts:
                 lines.append(f"*Start: {ts}*\n\n")
@@ -284,6 +298,7 @@ class TraceLogger:
         if event == "run_end":
             run_id = payload.get("run_id")
             final = payload.get("final", "")
+            self._close_step_block()
             lines.append(f"\n### ✅ Run End (run={run_id})\n")
             if ts:
                 lines.append(f"*End: {ts}*\n\n")
@@ -299,8 +314,10 @@ class TraceLogger:
         self._ensure_timeline_header()
 
         if step and step != self._current_step:
+            self._close_step_block()
             self._current_step = step
-            lines.append(f"\n### Step {step}\n")
+            lines.append(f"\n<details>\n<summary>Step {step}</summary>\n\n")
+            self._md_step_open = True
 
         if event == "user_input":
             lines.append("#### 🧑 User Input\n")
@@ -412,14 +429,26 @@ class TraceLogger:
         elif event == "model_output":
             raw = payload.get("raw", "")
             usage = payload.get("usage")
-            lines.append("#### 🧠 Model Output (raw)\n")
+            tool_calls = payload.get("tool_calls") or []
+            lines.append("#### 🧠 Model Output\n")
             if usage:
                 lines.append(f"*Tokens: {usage.get('prompt_tokens', 0)} → {usage.get('completion_tokens', 0)} = {usage.get('total_tokens', 0)}*\n\n")
-            lines.append("```text\n")
-            lines.append(f"{raw}\n")
-            lines.append("```\n")
+            if tool_calls:
+                lines.append("Tool calls:\n")
+                try:
+                    calls_text = json.dumps(tool_calls, ensure_ascii=False)
+                except Exception:
+                    calls_text = str(tool_calls)
+                lines.append("```json\n")
+                lines.append(f"{self._truncate(calls_text, 800)}\n")
+                lines.append("```\n")
+            if raw:
+                lines.append("Content (truncated):\n")
+                lines.append("```text\n")
+                lines.append(f"{self._truncate(raw, 600)}\n")
+                lines.append("```\n")
             raw_response = payload.get("raw_response")
-            if raw_response is not None:
+            if raw_response is not None and os.environ.get("TRACE_MD_INCLUDE_RAW_RESPONSE", "false").lower() == "true":
                 try:
                     raw_text = json.dumps(raw_response, ensure_ascii=False, indent=2)
                 except Exception:

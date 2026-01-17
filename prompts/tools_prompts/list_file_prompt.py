@@ -44,14 +44,14 @@ Error Codes
 
 Examples
 1) List project root (first page)
-LS[{"path": ".", "limit": 50}]
+{"path": ".", "limit": 50}
 
 2) List src/ (default ignores)
-LS[{"path": "src", "offset": 0, "limit": 100}]
+{"path": "src", "offset": 0, "limit": 100}
 
 3) List logs/ but ignore .log files
-LS[{"path": "logs", "limit": 100, "ignore": ["*.log"]}]
+{"path": "logs", "limit": 100, "ignore": ["*.log"]}
 
 4) Include hidden directories
-LS[{"path": ".", "include_hidden": true, "limit": 100}]
+{"path": ".", "include_hidden": true, "limit": 100}
 """

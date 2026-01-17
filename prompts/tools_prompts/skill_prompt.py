@@ -22,11 +22,11 @@ Available Skills
 Examples
 1) Load a skill
 
-Skill[{"name": "code-review"}]
+{"name": "code-review"}
 
 2) Load with arguments
 
-Skill[{"name": "code-review", "args": "src/main.py"}]
+{"name": "code-review", "args": "src/main.py"}
 
 Response Structure
 - status: "success" | "partial" | "error"

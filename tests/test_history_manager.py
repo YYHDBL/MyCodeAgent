@@ -130,14 +130,14 @@ class TestHistoryManager(unittest.TestCase):
         self.assertIn("history_compression_plan", events)
         self.assertIn("history_compression_context", events)
 
-    def test_to_messages_compat_tool_format(self):
+    def test_to_messages_forces_strict_tool_format(self):
         config = Config(tool_message_format="compat")
         hm = HistoryManager(config=config)
         hm.append_user("q")
-        hm.append_tool("LS", json.dumps({"status": "success"}))
+        hm.append_tool("LS", json.dumps({"status": "success"}), metadata={"tool_call_id": "call_1"})
         messages = hm.to_messages()
-        self.assertEqual(messages[1]["role"], "user")
-        self.assertIn("Observation (LS)", messages[1]["content"])
+        self.assertEqual(messages[1]["role"], "tool")
+        self.assertEqual(messages[1]["tool_call_id"], "call_1")
 
     def test_to_messages_strict_tool_format_missing_call_id(self):
         config = Config(tool_message_format="strict")
@@ -151,12 +151,12 @@ class TestHistoryManager(unittest.TestCase):
         config = Config(tool_message_format="strict")
         hm = HistoryManager(config=config)
         hm.append_assistant(
-            "Action: LS",
+            "",
             metadata={
                 "action_type": "tool_call",
-                "tool_name": "LS",
-                "tool_call_id": "call_1",
-                "tool_args": {"path": "."},
+                "tool_calls": [
+                    {"id": "call_1", "name": "LS", "arguments": {"path": "."}}
+                ],
             },
         )
         messages = hm.to_messages()

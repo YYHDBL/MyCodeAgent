@@ -50,8 +50,8 @@
   ```
 
 - Glob 查询建议（pattern 永远相对 path）：
-  - `Glob[{"pattern": "*.py", "path": "core"}]`
-  - `Glob[{"pattern": "**/*.py", "path": "core"}]`
+  - `{"pattern": "*.py", "path": "core"}`
+  - `{"pattern": "**/*.py", "path": "core"}`
 
 ---
 

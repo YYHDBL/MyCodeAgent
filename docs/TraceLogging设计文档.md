@@ -66,7 +66,10 @@
 ### 5.2 model_output
 ```json
 {
-  "raw": "Thought: ...\nAction: ...",
+  "raw": "",
+  "tool_calls": [
+    {"id": "call_1", "name": "Glob", "arguments": {"pattern": "**/*.py", "path": "."}}
+  ],
   "usage": {
     "prompt_tokens": 1234,
     "completion_tokens": 456,
@@ -78,14 +81,8 @@
 - `usage` 直接取 LLM 返回值；没有就置为 `null`
 - 不做脱敏
 
-### 5.3 parsed_action
-```json
-{
-  "thought": "...",
-  "action": "Glob",
-  "args": {"pattern": "**/*.py", "path": "."}
-}
-```
+### 5.3 parsed_action（已弃用）
+Action 文本解析路径已移除，保留事件名仅用于历史兼容。
 
 ### 5.4 tool_call
 ```json

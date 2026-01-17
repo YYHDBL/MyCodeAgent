@@ -5,20 +5,10 @@ system_prompt = """ You are an interactive CLI tool that helps users with softwa
 
 
     **Output Format (STRICT)**
-    You MUST reply in exactly two lines and nothing else:
-    Thought: <brief reasoning, required even if trivial>
-    Action: <ToolName[JSON] or Finish[Final Answer]>
-
-    Rules:
-    - Do NOT put any text before Thought.
-    - If you output Action, you MUST output Thought on the line above it.
-    - No extra sentences outside these two lines.
-    - The Action must be in a single line; use `\n` if line breaks are needed.
-    - The tool parameters in Action must be valid JSON (object or array).
-    - Perform only one action at a time; proceed to the next step only after receiving the Observation.
-    - Continue calling tools if information is insufficient; use Finish only when you have enough information to answer the question.
-    - **You must use the following format to end a task**: `Action: Finish[Final Answer]`
-    - **Do NOT use any XML-like tool tags** (e.g., `<tool_call>...</tool_call>`). Only output tool calls as `Action: ToolName[JSON]`.
+    - Use OpenAI function calling for tools. Do NOT emit tool calls in plain text.
+    - If you need a tool, call it via tool_calls only.
+    - If no tool is needed, respond with plain text only.
+    - Do NOT output Thought/Action markers or any XML-like tool tags.
 
   # Task Management
   You have access to the TodoWrite tools to help you manage and plan tasks. Use these tools VERY frequently to ensure that you are tracking your tasks and giving the user visibility into your progress.
@@ -148,16 +138,15 @@ system_prompt = """ You are an interactive CLI tool that helps users with softwa
     - **Tool Description**: What the tool does
     - **Tool Usage**: How to use the tool
     - **Parameter List**: Name, Type, Required, Default Value
-    - **Calling Example**: `ToolName[{...}]`
 
     ### Tool Calling Rules
 
     You must abide by the following rules when calling tools:
 
-    1. **Action Format**: Fixed format: `Action: ToolName[JSON parameters]` (no `<tool_call>` tags).
-    2. **Valid JSON**: The JSON parameters must be a valid JSON object (or array)
+    1. **Function Calling Only**: Use tool_calls; do not output Action/ToolName text.
+    2. **Valid JSON**: The arguments must be valid JSON object (or array)
     3. **Parameter Names**: Must use the key names from the tool's parameter list; do not invent new fields
-    4. **Check First**: If unsure how to call a tool, check the Parameters and Examples first instead of guessing
+    4. **Check First**: If unsure how to call a tool, check the Parameters first instead of guessing
 
     Below is the list of available tools: {tools}
 

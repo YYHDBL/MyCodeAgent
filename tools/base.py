@@ -43,6 +43,14 @@ class ErrorCode(str, Enum):
     IS_DIRECTORY = "IS_DIRECTORY"     # 路径是目录而非文件
     BINARY_FILE = "BINARY_FILE"       # 文件是二进制格式
     CONFLICT = "CONFLICT"             # 文件在读取后被修改（乐观锁冲突）
+    CIRCUIT_OPEN = "CIRCUIT_OPEN"     # 工具熔断中（临时禁用）
+    ASK_USER_UNAVAILABLE = "ASK_USER_UNAVAILABLE"  # 子代理禁止交互
+    MCP_PARAM_ERROR = "MCP_PARAM_ERROR"            # MCP 参数错误
+    MCP_PARSE_ERROR = "MCP_PARSE_ERROR"            # MCP 解析错误
+    MCP_EXECUTION_ERROR = "MCP_EXECUTION_ERROR"    # MCP 执行错误
+    MCP_NETWORK_ERROR = "MCP_NETWORK_ERROR"        # MCP 网络错误
+    MCP_TIMEOUT = "MCP_TIMEOUT"                    # MCP 超时
+    MCP_NOT_FOUND = "MCP_NOT_FOUND"                # MCP 工具不存在
 
 
 # =============================================================================

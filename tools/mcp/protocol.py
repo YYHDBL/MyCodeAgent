@@ -9,6 +9,16 @@ from typing import Any
 from tools.base import ToolStatus, ErrorCode
 
 
+def _error_type_mapping(code: ErrorCode) -> str:
+    if code in (ErrorCode.MCP_PARAM_ERROR, ErrorCode.INVALID_PARAM):
+        return "param_error"
+    if code in (ErrorCode.MCP_PARSE_ERROR,):
+        return "parse_error"
+    if code in (ErrorCode.MCP_NETWORK_ERROR, ErrorCode.MCP_TIMEOUT):
+        return "network_error"
+    return "execution_error"
+
+
 def _extract_text_blocks(result: Any) -> list[str]:
     texts: list[str] = []
     contents = getattr(result, "content", None) or []
@@ -141,18 +151,22 @@ def to_protocol_error(
     params_input: dict[str, Any],
     tool_name: str,
     start_time: float,
+    error_code: ErrorCode = ErrorCode.MCP_EXECUTION_ERROR,
 ) -> str:
     if not message:
         message = "MCP execution error"
     time_ms = int((time.monotonic() - start_time) * 1000)
+    if not isinstance(error_code, ErrorCode):
+        error_code = ErrorCode.MCP_EXECUTION_ERROR
     return json.dumps(
         {
             "status": ToolStatus.ERROR.value,
             "data": {},
             "text": message,
             "error": {
-                "code": ErrorCode.EXECUTION_ERROR.value,
+                "code": error_code.value,
                 "message": message,
+                "type": _error_type_mapping(error_code),
             },
             "stats": {"time_ms": time_ms},
             "context": {
@@ -174,25 +188,12 @@ def to_protocol_invalid_param(
 ) -> str:
     if not message:
         message = "Invalid parameters"
-    time_ms = int((time.monotonic() - start_time) * 1000)
-    return json.dumps(
-        {
-            "status": ToolStatus.ERROR.value,
-            "data": {},
-            "text": message,
-            "error": {
-                "code": ErrorCode.INVALID_PARAM.value,
-                "message": message,
-            },
-            "stats": {"time_ms": time_ms},
-            "context": {
-                "cwd": ".",
-                "params_input": params_input,
-                "mcp_tool": tool_name,
-            },
-        },
-        ensure_ascii=False,
-        indent=2,
+    return to_protocol_error(
+        message=message,
+        params_input=params_input,
+        tool_name=tool_name,
+        start_time=start_time,
+        error_code=ErrorCode.MCP_PARAM_ERROR,
     )
 
 
@@ -213,4 +214,10 @@ def to_protocol_result(
 
     text_blocks = _extract_text_blocks(result)
     message = "\n".join(text_blocks) if text_blocks else "MCP tool returned error"
-    return to_protocol_error(message, params_input, tool_name, start_time)
+    return to_protocol_error(
+        message,
+        params_input,
+        tool_name,
+        start_time,
+        error_code=ErrorCode.MCP_EXECUTION_ERROR,
+    )

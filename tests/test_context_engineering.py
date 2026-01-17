@@ -128,8 +128,9 @@ class DummyFunction:
 
 
 class DummyToolCall:
-    def __init__(self, function):
+    def __init__(self, function, call_id="call_1"):
         self.function = function
+        self.id = call_id
 
 
 class DummyMessage:
@@ -150,47 +151,22 @@ class DummyRawResponse:
         self.choices = choices
 
 
-class TestCodeAgentRecovery:
-    """CodeAgent 空响应恢复测试"""
+class TestCodeAgentToolCalls:
+    """CodeAgent tool_calls 提取测试"""
 
-    def test_recover_from_tool_calls(self):
-        tool_call = DummyToolCall(DummyFunction(name="Read", arguments='{"path": "a.py"}'))
+    def test_extract_tool_calls(self):
+        tool_call = DummyToolCall(DummyFunction(name="Read", arguments='{"path": "a.py"}'), call_id="call_1")
         raw = DummyRawResponse([DummyChoice(DummyMessage(content=None, tool_calls=[tool_call]))])
-        recovered, meta = CodeAgent._recover_empty_response(raw)
+        calls = CodeAgent._extract_tool_calls(raw)
 
-        assert recovered == 'Action: Read[{"path": "a.py"}]'
-        assert meta["source"] == "tool_call"
+        assert calls == [{"id": "call_1", "name": "Read", "arguments": '{"path": "a.py"}'}]
 
-    def test_recover_from_function_call(self):
+    def test_extract_tool_calls_from_function_call(self):
         func_call = DummyFunction(name="Search", arguments='{"query": "test"}')
         raw = DummyRawResponse([DummyChoice(DummyMessage(content=None, function_call=func_call))])
-        recovered, meta = CodeAgent._recover_empty_response(raw)
+        calls = CodeAgent._extract_tool_calls(raw)
 
-        assert recovered == 'Action: Search[{"query": "test"}]'
-        assert meta["source"] == "function_call"
-
-    def test_recover_returns_none_when_unavailable(self):
-        raw = DummyRawResponse([DummyChoice(DummyMessage(content=None, tool_calls=[], function_call=None))])
-        recovered, meta = CodeAgent._recover_empty_response(raw)
-
-        assert recovered is None
-        assert meta is None
-
-    def test_recover_from_reasoning_action(self):
-        reasoning = 'Thought: x\nAction: Read[{"path": "core/a.py"}]'
-        raw = DummyRawResponse([DummyChoice(DummyMessage(content="", reasoning_content=reasoning))])
-        recovered, meta = CodeAgent._recover_from_reasoning(raw)
-
-        assert recovered == 'Action: Read[{"path": "core/a.py"}]'
-        assert meta["source"] == "reasoning_action"
-
-    def test_recover_from_reasoning_finish(self):
-        reasoning = 'Finish[done]'
-        raw = DummyRawResponse([DummyChoice(DummyMessage(content="", reasoning_content=reasoning))])
-        recovered, meta = CodeAgent._recover_from_reasoning(raw)
-
-        assert recovered == "Finish[done]"
-        assert meta["source"] == "reasoning_finish"
+        assert calls == [{"id": None, "name": "Search", "arguments": '{"query": "test"}'}]
 
     def test_append_tool_compresses_result(self):
         """tool 消息自动截断（小结果保持原样）"""
@@ -273,12 +249,12 @@ class TestLongHorizonCompression:
     def _append_round(hm: HistoryManager, idx: int):
         hm.append_user(f"Question {idx}")
         hm.append_assistant(
-            'Thought: list files\nAction: LS[{"path": "."}]',
+            "",
             metadata={
                 "action_type": "tool_call",
-                "tool_name": "LS",
-                "tool_call_id": f"call_{idx}",
-                "tool_args": {"path": "."},
+                "tool_calls": [
+                    {"id": f"call_{idx}", "name": "LS", "arguments": {"path": "."}}
+                ],
             },
         )
         tool_result = json.dumps({

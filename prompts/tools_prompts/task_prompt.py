@@ -37,11 +37,11 @@ Parameters (JSON object)
   Choose "main" or "light". The main agent decides based on task complexity.
 
 Usage notes
-1) Only one Task call is supported at a time (single Action).
+1) Only one Task call is supported at a time (single tool call).
 2) The subagent returns one final result; summarize it back to the user.
 3) Your prompt should be detailed and specify exactly what to return.
 4) Subagents must not call Task again.
 
 Example
-Task[{"description": "Explore auth flow", "prompt": "Find key files and summarize auth flow. Return file paths and purpose.", "subagent_type": "explore", "model": "light"}]
+{"description": "Explore auth flow", "prompt": "Find key files and summarize auth flow. Return file paths and purpose.", "subagent_type": "explore", "model": "light"}
 """

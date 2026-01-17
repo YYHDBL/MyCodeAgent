@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm import HelloAgentsLLM
-from core.config import Config
 from core.message import Message
 from tools.registry import ToolRegistry
 from core.context_engine.observation_truncator import truncate_observation
@@ -147,7 +146,6 @@ class SubagentRunner:
         system_prompt: str,
         project_root: Path,
         max_steps: int = 15,
-        tool_message_format: str = "strict",
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -156,8 +154,6 @@ class SubagentRunner:
         self.max_steps = max_steps
         self.messages: List[Dict[str, str]] = []
         self.tool_usage: Dict[str, int] = {}
-        format_mode = (tool_message_format or "strict").lower().strip()
-        self._strict_tools = format_mode in {"strict", "openai", "tool"}
         
     def run(self, task_prompt: str) -> Tuple[str, Dict[str, int]]:
         """
@@ -175,110 +171,125 @@ class SubagentRunner:
             {"role": "user", "content": task_prompt}
         ]
         
+        tools_schema = self._get_allowed_tools_schema()
+        tool_choice = "auto"
+
         # Simple ReAct loop
         for step in range(self.max_steps):
             # Get LLM response
             try:
-                response = self.llm.invoke(self.messages)
+                raw_response = self.llm.invoke_raw(self.messages, tools=tools_schema, tool_choice=tool_choice)
             except Exception as e:
                 logger.error("Subagent LLM error: %s", e)
                 return f"Error: LLM call failed - {str(e)}", self.tool_usage
-            
-            if not response:
+
+            response_text = self._extract_content(raw_response) or ""
+            tool_calls = self._extract_tool_calls(raw_response)
+
+            if not tool_calls and not response_text.strip():
                 return "Error: Empty response from subagent", self.tool_usage
-            
-            # Add assistant response to history (may be enriched with tool_calls)
-            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response}
+
+            # Add assistant response to history (with tool_calls if any)
+            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response_text}
+            if tool_calls:
+                for call in tool_calls:
+                    if not call.get("id"):
+                        call["id"] = f"call_{uuid.uuid4().hex}"
+                assistant_msg["tool_calls"] = []
+                for call in tool_calls:
+                    arguments = call.get("arguments") or {}
+                    args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
+                    assistant_msg["tool_calls"].append({
+                        "id": call.get("id"),
+                        "type": "function",
+                        "function": {"name": call.get("name"), "arguments": args_str},
+                    })
             self.messages.append(assistant_msg)
-            
-            # Parse for tool call or final answer
-            tool_call = self._parse_tool_call(response)
-            
-            if tool_call is None:
-                # No tool call found - this is the final answer
-                # Extract the meaningful content (skip thought/action parsing)
-                final_result = self._extract_final_answer(response)
+
+            if not tool_calls:
+                final_result = self._extract_final_answer(response_text)
                 return final_result, self.tool_usage
-            
-            # Execute tool
-            tool_name, tool_input = tool_call
 
-            tool_call_id = f"call_{uuid.uuid4().hex}"
-            if self._strict_tools:
-                assistant_msg["tool_calls"] = [{
-                    "id": tool_call_id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_name,
-                        "arguments": json.dumps(tool_input, ensure_ascii=False),
-                    },
-                }]
+            # Execute tools
+            for call in tool_calls:
+                tool_name = call.get("name") or "unknown_tool"
+                tool_call_id = call.get("id") or f"call_{uuid.uuid4().hex}"
+                tool_input, parse_err = self._ensure_json_input(call.get("arguments"))
+                if parse_err:
+                    observation = json.dumps({
+                        "status": "error",
+                        "error": {"code": "INVALID_PARAM", "message": f"Tool arguments parse error: {parse_err}"},
+                        "data": {},
+                    }, ensure_ascii=False)
+                else:
+                    observation = self._execute_tool(tool_name, tool_input)
 
-            observation = self._execute_tool(tool_name, tool_input)
-
-            # Add observation to history
-            if self._strict_tools:
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "content": observation,
                 })
-            else:
-                self.messages.append({
-                    "role": "user",
-                    "content": f"Observation ({tool_name}):\n{observation}"
-                })
         
         # Max steps reached
         return "Subagent reached maximum steps without completing.", self.tool_usage
     
-    def _parse_tool_call(self, response: str) -> Optional[Tuple[str, Dict[str, Any]]]:
-        """
-        Parse a tool call from the response.
-        
-        Looks for patterns like:
-        - ToolName[{...}]
-        - Action: ToolName[{...}]
-        """
-        import re
-        import json
-        
-        # Strip any XML-like tool_call tags the model may emit
-        if response and "<tool_call" in response:
-            response = re.sub(r"<tool_call>.*?</tool_call>", "", response, flags=re.DOTALL | re.IGNORECASE)
-            if "<tool_call" in response:
-                lines = []
-                for line in response.splitlines():
-                    idx = line.find("<tool_call")
-                    if idx != -1:
-                        line = line[:idx].rstrip()
-                    lines.append(line)
-                response = "\n".join(lines)
+    def _get_allowed_tools_schema(self) -> list[dict[str, Any]]:
+        tools = self.tool_registry.get_openai_tools()
+        return [t for t in tools if t.get("function", {}).get("name") in ALLOWED_TOOLS]
 
-        # Pattern: ToolName[{...}] or Action: ToolName[{...}]
-        pattern = r'(?:Action:\s*)?(\w+)\[(\{.*?\})\]'
-        match = re.search(pattern, response, re.DOTALL)
-        
-        if not match:
-            # Check for Finish marker
-            if "Finish[" in response or response.strip().startswith("Final Answer:"):
-                return None
-            # No explicit tool call - check if it looks like a final answer
-            if any(marker in response.lower() for marker in ["summary:", "result:", "findings:", "answer:"]):
-                return None
-            # Still no tool call and no final answer marker - might be done
-            if len(self.messages) > 3:  # Has some history
-                return None
-            return None
-        
-        tool_name = match.group(1)
+    @staticmethod
+    def _extract_content(raw_response: Any) -> Optional[str]:
         try:
-            tool_input = json.loads(match.group(2))
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse tool input: %s", match.group(2))
-            return None
-        
-        return tool_name, tool_input
+            if hasattr(raw_response, "choices"):
+                content = raw_response.choices[0].message.content
+                if isinstance(content, list):
+                    return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                return content
+            if isinstance(raw_response, dict) and raw_response.get("choices"):
+                content = raw_response["choices"][0]["message"].get("content")
+                if isinstance(content, list):
+                    return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                return content
+        except Exception:
+            return str(raw_response)
+
+    @staticmethod
+    def _extract_tool_calls(raw_response: Any) -> list[dict[str, Any]]:
+        def _get_attr(obj, key: str):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
+
+        try:
+            choices = _get_attr(raw_response, "choices")
+            if not choices:
+                return []
+            choice = choices[0]
+            message = _get_attr(choice, "message")
+            if not message:
+                return []
+            tool_calls = _get_attr(message, "tool_calls") or []
+            calls: list[dict[str, Any]] = []
+            if tool_calls:
+                for call in tool_calls:
+                    fn = _get_attr(call, "function") or {}
+                    name = _get_attr(fn, "name") or _get_attr(call, "name") or "unknown_tool"
+                    arguments = _get_attr(fn, "arguments") or _get_attr(call, "arguments") or {}
+                    call_id = _get_attr(call, "id")
+                    calls.append({"id": call_id, "name": name, "arguments": arguments})
+                return calls
+
+            function_call = _get_attr(message, "function_call")
+            if function_call:
+                name = _get_attr(function_call, "name") or "unknown_tool"
+                arguments = _get_attr(function_call, "arguments") or {}
+                return [{"id": None, "name": name, "arguments": arguments}]
+        except Exception:
+            return []
+
+        return []
     
     def _execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> str:
         """Execute a tool and return the observation."""
@@ -305,31 +316,21 @@ class SubagentRunner:
     
     def _extract_final_answer(self, response: str) -> str:
         """Extract the final answer from the response."""
-        # Remove common prefixes
-        result = response
-        
-        # Remove "Thought:" sections
-        if "Thought:" in result:
-            parts = result.split("Thought:")
-            # Take the last non-thought part
-            for part in reversed(parts):
-                clean = part.strip()
-                if clean and not clean.startswith("I need") and not clean.startswith("Let me"):
-                    result = clean
-                    break
-        
-        # Remove "Final Answer:" prefix
-        if "Final Answer:" in result:
-            result = result.split("Final Answer:", 1)[1].strip()
-        
-        # Remove "Finish[" wrapper if present
-        if "Finish[" in result:
-            import re
-            match = re.search(r'Finish\["(.*)"\]', result, re.DOTALL)
-            if match:
-                result = match.group(1)
-        
-        return result.strip()
+        return (response or "").strip()
+
+    @staticmethod
+    def _ensure_json_input(raw: Any) -> Tuple[Any, Optional[str]]:
+        if raw is None:
+            return {}, None
+        if isinstance(raw, (dict, list)):
+            return raw, None
+        s = str(raw).strip()
+        if not s:
+            return {}, None
+        try:
+            return json.loads(s), None
+        except Exception as e:
+            return None, str(e)
 
 
 # =============================================================================
@@ -373,7 +374,6 @@ class TaskTool(Tool):
         self._light_llm: Optional[HelloAgentsLLM] = None
         self._tool_registry = tool_registry
         self._subagent_max_steps = int(os.getenv("SUBAGENT_MAX_STEPS", "15"))
-        self._tool_message_format = Config.from_env().tool_message_format
     
     def get_parameters(self) -> List[ToolParameter]:
         return [
@@ -462,7 +462,6 @@ class TaskTool(Tool):
                 system_prompt=system_prompt,
                 project_root=self._project_root,
                 max_steps=self._subagent_max_steps,
-                tool_message_format=self._tool_message_format,
             )
             
             result, tool_usage = runner.run(prompt)

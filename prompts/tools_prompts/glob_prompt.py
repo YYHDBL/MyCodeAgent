@@ -55,13 +55,13 @@ Error Codes
 Examples
 1) List all Markdown files in the project
 
-Glob[{"pattern": "**/*.md", "path": "."}]
+{"pattern": "**/*.md", "path": "."}
 
 2) Only list top-level TypeScript files under src/
 
-Glob[{"pattern": "*.ts", "path": "src"}]
+{"pattern": "*.ts", "path": "src"}
 
 3) Include hidden files
 
-Glob[{"pattern": "**/*.json", "path": ".", "include_hidden": true}]
+{"pattern": "**/*.json", "path": ".", "include_hidden": true}
 """

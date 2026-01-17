@@ -33,8 +33,15 @@ from tools.base import ErrorCode
 def mock_llm():
     """Create a mock LLM."""
     llm = Mock()
-    llm.invoke = Mock(return_value="Final Answer: Test result")
+    llm.invoke_raw = Mock(return_value={"choices": [{"message": {"content": "Final Answer: Test result"}}]})
     return llm
+
+
+def make_raw_response(content: str = "", tool_calls: list | None = None):
+    message: dict = {"content": content}
+    if tool_calls is not None:
+        message["tool_calls"] = tool_calls
+    return {"choices": [{"message": message}]}
 
 
 @pytest.fixture
@@ -230,7 +237,7 @@ class TestTaskToolValidation:
     
     def test_invalid_model_defaults_to_light(self, task_tool, mock_llm):
         """Test that invalid model defaults to light."""
-        mock_llm.invoke.return_value = "Final Answer: Done"
+        mock_llm.invoke_raw.return_value = make_raw_response(content="Final Answer: Done")
         
         result = task_tool.run({
             "description": "Test task",
@@ -279,7 +286,7 @@ class TestSubagentRunner:
     
     def test_runner_basic_execution(self, mock_llm, mock_tool_registry, tmp_path):
         """Test basic subagent execution."""
-        mock_llm.invoke.return_value = "Final Answer: Test complete"
+        mock_llm.invoke_raw.return_value = make_raw_response(content="Final Answer: Test complete")
         
         runner = SubagentRunner(
             llm=mock_llm,
@@ -292,14 +299,18 @@ class TestSubagentRunner:
         result, tool_usage = runner.run("Test task")
         
         assert "Test complete" in result
-        assert mock_llm.invoke.called
+        assert mock_llm.invoke_raw.called
     
     def test_runner_tool_call_parsing(self, mock_llm, mock_tool_registry, tmp_path):
         """Test that runner parses tool calls correctly."""
         # First call returns a tool use, second returns final answer
-        mock_llm.invoke.side_effect = [
-            'Read[{"path": "test.txt"}]',
-            'Final Answer: Content was read successfully'
+        mock_llm.invoke_raw.side_effect = [
+            make_raw_response(tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "Read", "arguments": {"path": "test.txt"}},
+            }]),
+            make_raw_response(content="Final Answer: Content was read successfully"),
         ]
         
         runner = SubagentRunner(
@@ -317,9 +328,13 @@ class TestSubagentRunner:
     
     def test_runner_denied_tool_blocked(self, mock_llm, mock_tool_registry, tmp_path):
         """Test that runner blocks denied tools."""
-        mock_llm.invoke.side_effect = [
-            'Task[{"description": "nested", "prompt": "test"}]',
-            'Final Answer: Blocked'
+        mock_llm.invoke_raw.side_effect = [
+            make_raw_response(tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "Task", "arguments": {"description": "nested", "prompt": "test"}},
+            }]),
+            make_raw_response(content="Final Answer: Blocked"),
         ]
         
         runner = SubagentRunner(
@@ -338,7 +353,11 @@ class TestSubagentRunner:
     def test_runner_max_steps(self, mock_llm, mock_tool_registry, tmp_path):
         """Test that runner respects max_steps limit."""
         # Always return a tool call, never finish
-        mock_llm.invoke.return_value = 'Read[{"path": "test.txt"}]'
+        mock_llm.invoke_raw.return_value = make_raw_response(tool_calls=[{
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "Read", "arguments": {"path": "test.txt"}},
+        }])
         
         runner = SubagentRunner(
             llm=mock_llm,
@@ -364,7 +383,7 @@ class TestTaskToolExecution:
     
     def test_successful_execution(self, task_tool, mock_llm):
         """Test successful task execution."""
-        mock_llm.invoke.return_value = "Final Answer: Task completed successfully"
+        mock_llm.invoke_raw.return_value = make_raw_response(content="Final Answer: Task completed successfully")
         
         result = task_tool.run({
             "description": "Test task",
@@ -381,7 +400,7 @@ class TestTaskToolExecution:
     
     def test_subagent_type_case_insensitive(self, task_tool, mock_llm):
         """Test that subagent_type is case-insensitive."""
-        mock_llm.invoke.return_value = "Final Answer: Done"
+        mock_llm.invoke_raw.return_value = make_raw_response(content="Final Answer: Done")
         
         result = task_tool.run({
             "description": "Test",
@@ -395,9 +414,13 @@ class TestTaskToolExecution:
     
     def test_tool_summary_included(self, task_tool, mock_llm):
         """Test that tool summary is included in response."""
-        mock_llm.invoke.side_effect = [
-            'Grep[{"pattern": "test"}]',
-            'Final Answer: Found test'
+        mock_llm.invoke_raw.side_effect = [
+            make_raw_response(tool_calls=[{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "Grep", "arguments": {"pattern": "test"}},
+            }]),
+            make_raw_response(content="Final Answer: Found test"),
         ]
         
         result = task_tool.run({
@@ -423,7 +446,7 @@ class TestTaskToolExecution:
                 return ("Final Answer: ok", {})
 
         monkeypatch.setattr(task_module, "SubagentRunner", DummyRunner)
-        mock_llm.invoke.return_value = "Final Answer: ok"
+        mock_llm.invoke_raw.return_value = make_raw_response(content="Final Answer: ok")
 
         result = task_tool.run({
             "description": "Short desc",
@@ -477,7 +500,7 @@ class TestErrorHandling:
     
     def test_llm_error_handled(self, task_tool, mock_llm):
         """Test that LLM errors are handled gracefully."""
-        mock_llm.invoke.side_effect = Exception("LLM API Error")
+        mock_llm.invoke_raw.side_effect = Exception("LLM API Error")
         
         result = task_tool.run({
             "description": "Test task",

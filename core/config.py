@@ -27,7 +27,7 @@ class Config(BaseModel):
     compression_threshold: float = 0.8  # 触发压缩的阈值比例
     min_retain_rounds: int = 10  # 最少保留的轮次数
     summary_timeout: int = 120  # Summary 生成超时（秒）
-    # 工具消息序列化策略：strict(标准tool_call) / compat(Observation文本)
+    # 工具消息序列化策略（已弃用，当前固定为 function calling 严格模式）
     tool_message_format: str = "strict"
     
     @classmethod

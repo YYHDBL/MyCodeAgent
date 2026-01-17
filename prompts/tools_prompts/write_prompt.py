@@ -74,7 +74,7 @@ The framework automatically handles conflict prevention:
 ### Update existing file (must Read first)
 Step 1: Read the file
 ```
-Read[{"path": "README.md"}]
+{"path": "README.md"}
 ```
 
 Step 2: Write with your changes (mtime/size auto-injected)

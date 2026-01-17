@@ -326,7 +326,13 @@ class HelloAgentsLLM:
             else:
                 return "gpt-3.5-turbo"
 
-    def think(self, messages: list[dict[str, str]], temperature: Optional[float] = None) -> Iterator[str]:
+    def think(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        tools: Optional[list[dict]] = None,
+        tool_choice: Optional[object] = None,
+    ) -> Iterator[str]:
         """
         调用大语言模型进行思考，并返回流式响应。
         这是主要的调用方法，默认使用流式响应以获得更好的用户体验。
@@ -340,13 +346,18 @@ class HelloAgentsLLM:
         """
         logger.info("正在调用 %s 模型...", self.model)
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature if temperature is not None else self.temperature,
-                max_tokens=self.max_tokens,
-                stream=True,
-            )
+            request_kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature if temperature is not None else self.temperature,
+                "max_tokens": self.max_tokens,
+                "stream": True,
+            }
+            if tools:
+                request_kwargs["tools"] = tools
+                if tool_choice is not None:
+                    request_kwargs["tool_choice"] = tool_choice
+            response = self._client.chat.completions.create(**request_kwargs)
 
             # 处理流式响应
             logger.debug("大语言模型响应成功（streaming）")
@@ -366,13 +377,16 @@ class HelloAgentsLLM:
         """
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=kwargs.get('temperature', self.temperature),
-                    max_tokens=kwargs.get('max_tokens', self.max_tokens),
-                    **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": kwargs.get("temperature", self.temperature),
+                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                }
+                extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
+                if extra_kwargs:
+                    request_kwargs.update(extra_kwargs)
+                response = self._client.chat.completions.create(**request_kwargs)
                 return response.choices[0].message.content
             except Exception as e:
                 if attempt >= self.max_retries:
@@ -394,13 +408,16 @@ class HelloAgentsLLM:
         """
         for attempt in range(self.max_retries + 1):
             try:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=kwargs.get('temperature', self.temperature),
-                    max_tokens=kwargs.get('max_tokens', self.max_tokens),
-                    **{k: v for k, v in kwargs.items() if k not in ['temperature', 'max_tokens']}
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": kwargs.get("temperature", self.temperature),
+                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
+                }
+                extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
+                if extra_kwargs:
+                    request_kwargs.update(extra_kwargs)
+                response = self._client.chat.completions.create(**request_kwargs)
                 return response
             except Exception as e:
                 if attempt >= self.max_retries:
