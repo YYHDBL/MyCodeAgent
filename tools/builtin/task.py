@@ -22,6 +22,9 @@ from tools.registry import ToolRegistry
 from core.context_engine.observation_truncator import truncate_observation
 from prompts.tools_prompts.task_prompt import task_prompt
 from ..base import Tool, ToolParameter, ErrorCode
+from core.env import load_env
+
+load_env()
 
 # Import subagent prompts
 from prompts.agents_prompts.subagent_general_prompt import SUBAGENT_GENERAL_PROMPT
@@ -145,7 +148,7 @@ class SubagentRunner:
         tool_registry: ToolRegistry,
         system_prompt: str,
         project_root: Path,
-        max_steps: int = 15,
+        max_steps: int = 50,
     ):
         self.llm = llm
         self.tool_registry = tool_registry
@@ -373,7 +376,7 @@ class TaskTool(Tool):
         self._main_llm = main_llm
         self._light_llm: Optional[HelloAgentsLLM] = None
         self._tool_registry = tool_registry
-        self._subagent_max_steps = int(os.getenv("SUBAGENT_MAX_STEPS", "15"))
+        self._subagent_max_steps = int(os.getenv("SUBAGENT_MAX_STEPS", "50"))
     
     def get_parameters(self) -> List[ToolParameter]:
         return [

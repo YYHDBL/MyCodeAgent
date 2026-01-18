@@ -12,6 +12,9 @@ from core.message import Message
 from core.config import Config
 from core.context_engine.context_builder import ContextBuilder
 from core.context_engine.trace_logger import create_trace_logger
+from core.env import load_env
+
+load_env()
 from core.context_engine.history_manager import HistoryManager
 from core.context_engine.input_preprocessor import preprocess_input
 from core.context_engine.summary_compressor import create_summary_generator

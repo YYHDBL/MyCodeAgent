@@ -17,8 +17,8 @@
 同时输出两份：
 - **JSONL**：每一步一个 JSON 对象（便于流式追加与后处理）  
   路径：`memory/traces/trace-s-YYYYMMDD-HHMMSS-xxxx.jsonl`
-- **Markdown（审计可读）**：面向人类审查的可视化摘要  
-  路径：`memory/traces/trace-s-YYYYMMDD-HHMMSS-xxxx.md`
+- **HTML（审计可读）**：面向人类审查的可视化摘要  
+  路径：`memory/traces/trace-s-YYYYMMDD-HHMMSS-xxxx.html`
 同一会话只写一个文件。
 
 ---
@@ -104,7 +104,7 @@ Action 文本解析已取消，不再写入该事件。
 }
 ```
 说明：直接记录工具返回的完整 JSON（遵循通用工具响应协议）
-Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以避免大段内容干扰审计。
+HTML 视图中会对 `result.data` 进行截断（默认 300 字符），以避免大段内容干扰审计。
 
 ### 5.6 error
 ```json
@@ -160,7 +160,7 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 - `TRACE_ENABLED=true|false`（默认 true）
 - `TRACE_DIR=memory/traces`（默认该路径）
 - `TRACE_SANITIZE=true|false`（默认 true）
-- `TRACE_MD_INCLUDE_RAW_RESPONSE=true|false`（默认 false）
+- `TRACE_HTML_INCLUDE_RAW_RESPONSE=true|false`（默认 false）
 
 ---
 
@@ -172,7 +172,7 @@ Markdown 视图中会对 `result.data` 进行截断（默认 300 字符），以
 
 ## 9. MVP 范围
 已实现：
-- JSONL 记录 + `trace.md`
+- JSONL 记录 + `trace.html`
 - 标准事件与 token 统计
 - 会话级 summary
 - 脱敏规则（默认开启）

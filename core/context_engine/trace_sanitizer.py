@@ -32,7 +32,7 @@ class TraceSanitizer:
 
     PATTERNS = [
         (re.compile(r"sk-[a-zA-Z0-9]{20,}"), "sk-***"),
-        (re.compile(r"Bearer\\s+[a-zA-Z0-9._\\-+/=]{20,}"), "Bearer ***"),
+        (re.compile(r"Bearer\\s+[a-zA-Z0-9._+/=-]{20,}"), "Bearer ***"),
     ]
 
     def __init__(self, enable: bool = True):

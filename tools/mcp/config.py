@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+from core.env import load_env
+
+load_env()
 
 DEFAULT_CONFIG_FILES = (
     "mcp_servers.json",

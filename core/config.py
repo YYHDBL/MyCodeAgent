@@ -4,6 +4,10 @@ import os
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
+from core.env import load_env
+
+load_env()
+
 class Config(BaseModel):
     """HelloAgents配置类"""
     

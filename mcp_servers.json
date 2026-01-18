@@ -7,6 +7,10 @@
     "context7": {
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp", "--api-key", "${CTX7_API_KEY}"]
+    },
+    "tavily-mcp": {
+      "command": "npx",
+      "args": ["-y", "tavily-mcp@0.1.4"]
     }
   }
 }

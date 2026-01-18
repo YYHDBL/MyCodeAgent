@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyCodeAgent - 新人开发者指南</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            color: #e0e0e0;
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 80px 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            margin-bottom: 40px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        h1 {
+            font-size: 3.5em;
+            background: linear-gradient(90deg, #00d4ff, #7c3aed, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 20px;
+            font-weight: 800;
+        }
+
+        .subtitle {
+            font-size: 1.3em;
+            color: #a0a0a0;
+            margin-bottom: 30px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 8px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 25px;
+            font-size: 0.9em;
+            margin: 5px;
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        section {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            padding: 40px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: transform 0.3s ease;
+        }
+
+        section:hover {
+            transform: translateY(-5px);
+        }
+
+        h2 {
+            font-size: 2em;
+            margin-bottom: 30px;
+            color: #00d4ff;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 40px;
+            background: linear-gradient(135deg, #00d4ff, #7c3aed);
+            border-radius: 2px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            background: rgba(255, 255, 255, 0.12);
+            transform: translateY(-3px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h3 {
+            color: #f472b6;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .card ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .card li {
+            padding: 8px 0;
+            padding-left: 25px;
+            position: relative;
+            color: #b0b0b0;
+        }
+
+        .card li::before {
+            content: '▸';
+            position: absolute;
+            left: 0;
+            color: #00d4ff;
+            font-weight: bold;
+        }
+
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .feature-item {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.2), rgba(118, 75, 162, 0.2));
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+        }
+
+        .feature-item h4 {
+            color: #00d4ff;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .feature-item p {
+            color: #a0a0a0;
+            font-size: 0.9em;
+        }
+
+        .architecture-diagram {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+            overflow-x: auto;
+        }
+
+        .flow-step {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 15px 25px;
+            border-radius: 10px;
+            display: inline-block;
+            margin: 10px;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .flow-arrow {
+            display: inline-block;
+            color: #00d4ff;
+            font-size: 1.5em;
+            margin: 0 10px;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .comparison-table th {
+            background: rgba(102, 126, 234, 0.3);
+            color: #00d4ff;
+            font-weight: bold;
+        }
+
+        .comparison-table tr:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .highlight {
+            color: #00d4ff;
+            font-weight: bold;
+        }
+
+        .warning {
+            background: rgba(239, 68, 68, 0.2);
+            border-left: 4px solid #ef4444;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .success {
+            background: rgba(34, 197, 94, 0.2);
+            border-left: 4px solid #22c55e;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .info {
+            background: rgba(59, 130, 246, 0.2);
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+
+        .code-block {
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .command {
+            color: #22c55e;
+        }
+
+        .quick-start {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .step-card {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(59, 130, 246, 0.1));
+            border-radius: 15px;
+            padding: 25px;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            position: relative;
+        }
+
+        .step-number {
+            position: absolute;
+            top: -15px;
+            left: -15px;
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #22c55e, #3b82f6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.2em;
+            box-shadow: 0 4px 15px rgba(34, 197, 94, 0.4);
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px;
+            color: #808080;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            margin-top: 40px;
+        }
+
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2.5em;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            section {
+                padding: 25px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 MyCodeAgent</h1>
+            <p class="subtitle">面向学习与实验的 ReAct 代码代理项目</p>
+            <div>
+                <span class="badge">ReAct 工作流</span>
+                <span class="badge">上下文工程</span>
+                <span class="badge">Skills 系统</span>
+                <span class="badge">Task 子代理</span>
+            </div>
+        </header>
+
+        <!-- 项目概览 -->
+        <section>
+            <h2>📋 项目概览</h2>
+            <p style="color: #b0b0b0; margin-bottom: 20px;">
+                MyCodeAgent 是一个基于 ReAct（Reasoning + Acting）模式的代码代理项目，主要用于实践和研究 AI 代码助手的核心技术。项目采用模块化设计，支持多供应商 LLM，提供完整的工具调用系统和上下文管理能力。
+            </p>
+            
+            <div class="grid">
+                <div class="card">
+                    <h3>🎯 项目目标</h3>
+                    <ul>
+                        <li>实践 ReAct 工作流与工具调用</li>
+                        <li>探索上下文工程（截断、压缩、归档）</li>
+                        <li>实现 Skills / Task 子代理能力</li>
+                        <li>搭建可扩展的本地实验框架</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>🏗️ 技术栈</h3>
+                    <ul>
+                        <li><strong>语言：</strong>Python 3.x</li>
+                        <li><strong>LLM：</strong>支持多供应商（OpenAI, Zhipu 等）</li>
+                        <li><strong>工具：</strong>ripgrep, os.walk, pathlib</li>
+                        <li><strong>测试：</strong>pytest</li>
+                        <li><strong>UI：</strong>rich, prompt_toolkit</li>
+                        <li><strong>协议：</strong>MCP (Model Context Protocol)</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>📁 项目结构</h3>
+                    <ul>
+                        <li><strong>core/</strong> - 核心基础设施</li>
+                        <li><strong>agents/</strong> - Agent 实现</li>
+                        <li><strong>tools/</strong> - 工具系统</li>
+                        <li><strong>skills/</strong> - 技能定义</li>
+                        <li><strong>docs/</strong> - 设计文档</li>
+                        <li><strong>tests/</strong> - 测试套件</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- 核心能力 -->
+        <section>
+            <h2>⚡ 核心能力</h2>
+            
+            <div class="feature-list">
+                <div class="feature-item">
+                    <h4>🔄 ReAct 推理循环</h4>
+                    <p>实现标准的 Thought → Action → Observation 循环，支持多步推理和工具链式调用</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🛠️ 12+ 内置工具</h4>
+                    <p>文件系统操作、代码搜索、任务管理、命令执行等完整工具链</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>📊 统一工具协议</h4>
+                    <p>所有工具遵循 Universal Tool Response Protocol，确保响应格式一致</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🧠 上下文工程</h4>
+                    <p>智能历史压缩、工具输出截断、@file 强制读取、mtime 变化检测</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🎯 Skills 系统</h4>
+                    <p>支持从 SKILL.md 文件加载标准化技能，支持参数扩展</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🤖 Task 子代理</h4>
+                    <p>四种类型子代理（general/explore/plan/summary），支持工具权限隔离</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🔌 MCP 集成</h4>
+                    <p>支持从 mcp_servers.json 加载远程服务器，自动协议转换</p>
+                </div>
+                
+                <div class="feature-item">
+                    <h4>🎨 Enhanced UI</h4>
+                    <p>工具调用树可视化、Token 统计、进度显示、调试模式</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 架构与流程 -->
+        <section>
+            <h2>🏗️ 架构与流程</h2>
+            
+            <h3 style="color: #f472b6; margin: 20px 0;">ReAct 工作流程</h3>
+            <div class="architecture-diagram">
+                <div class="flow-step">Thought</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">Action</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">Observation</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">循环</div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-step">Finish</div>
+            </div>
+            
+            <h3 style="color: #f472b6; margin: 30px 0 20px 0;">上下文分层架构</h3>
+            <div class="grid">
+                <div class="card">
+                    <h3>L1 - 系统静态层</h3>
+                    <ul>
+                        <li>System Prompt（固定）</li>
+                        <li>工具提示词（固定）</li>
+                        <li>稳定不变，保证前缀一致性</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>L2 - 项目规则层</h3>
+                    <ul>
+                        <li>CODE_LAW.md 内容</li>
+                        <li>有则注入，无则为空</li>
+                        <li>不进入 history</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>L3 - 会话历史层</h3>
+                    <ul>
+                        <li>user / assistant / tool 消息</li>
+                        <li>system summary（压缩摘要）</li>
+                        <li>支持历史压缩和截断</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3 style="color: #f472b6; margin: 30px 0 20px 0;">上下文拼接顺序</h3>
+            <div class="code-block">
+                <div>1. L1（System + Tools）</div>
+                <div>2. L2（CODE_LAW.md）</div>
+                <div>3. L3（history）</div>
+                <div>4. 当前 user 输入（本轮）</div>
+                <div>5. Todo recap（若有）</div>
+            </div>
+        </section>
+
+        <!-- 快速开始 -->
+        <section>
+            <h2>🚀 快速开始</h2>
+            
+            <div class="quick-start">
+                <div class="step-card">
+                    <div class="step-number">1</div>
+                    <h4 style="color: #00d4ff; margin-bottom: 15px;">安装依赖</h4>
+                    <div class="code-block">
+                        <span class="command">pip install -r requirements.txt</span>
+                    </div>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">2</div>
+                    <h4 style="color: #00d4ff; margin-bottom: 15px;">运行交互式 CLI</h4>
+                    <div class="code-block">
+                        <span class="command">python scripts/chat_test_agent.py</span>
+                    </div>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">3</div>
+                    <h4 style="color: #00d4ff; margin-bottom: 15px;">使用自定义模型</h4>
+                    <div class="code-block">
+                        <span class="command">python scripts/chat_test_agent.py \</span><br>
+                        <span class="command">  --provider zhipu \</span><br>
+                        <span class="command">  --model GLM-4.7 \</span><br>
+                        <span class="command">  --api-key YOUR_API_KEY</span>
+                    </div>
+                </div>
+                
+                <div class="step-card">
+                    <div class="step-number">4</div>
+                    <h4 style="color: #00d4ff; margin-bottom: 15px;">运行测试</h4>
+                    <div class="code-block">
+                        <span class="command">python -m pytest tests/ -v</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 与市场同类产品对比 -->
+        <section>
+            <h2>📊 与市场同类产品对比</h2>
+            <p style="color: #b0b0b0; margin-bottom: 20px;">
+                MyCodeAgent 是一个面向学习和实验的开源项目，与商业产品相比有其独特的定位和优势。
+            </p>
+            
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>特性</th>
+                        <th>MyCodeAgent</th>
+                        <th>Cursor</th>
+                        <th>GitHub Copilot</th>
+                        <th>AutoGPT</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>定位</strong></td>
+                        <td>学习与实验框架</td>
+                        <td>商业 IDE</td>
+                        <td>IDE 插件</td>
+                        <td>自动化任务执行</td>
+                    </tr>
+                    <tr>
+                        <td><strong>开源性</strong></td>
+                        <td class="highlight">✓ 完全开源</td>
+                        <td>✗ 闭源</td>
+                        <td>✗ 闭源</td>
+                        <td>✓ 开源</td>
+                    </tr>
+                    <tr>
+                        <td><strong>ReAct 模式</strong></td>
+                        <td class="highlight">✓ 原生支持</td>
+                        <td>✓ 支持</td>
+                        <td>✓ 支持</td>
+                        <td>✓ 支持</td>
+                    </tr>
+                    <tr>
+                        <td><strong>上下文工程</strong></td>
+                        <td class="highlight">✓ 完整实现</td>
+                        <td>✓ 有限</td>
+                        <td>✓ 有限</td>
+                        <td>✓ 基础</td>
+                    </tr>
+                    <tr>
+                        <td><strong>工具系统</strong></td>
+                        <td class="highlight">✓ 12+ 内置 + MCP</td>
+                        <td>✓ 丰富</td>
+                        <td>✓ 丰富</td>
+                        <td>✓ 可扩展</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Skills 系统</strong></td>
+                        <td class="highlight">✓ MVP 实现</td>
+                        <td>✗ 无</td>
+                        <td>✗ 无</td>
+                        <td>✗ 无</td>
+                    </tr>
+                    <tr>
+                        <td><strong>子代理</strong></td>
+                        <td class="highlight">✓ 4 种类型</td>
+                        <td>✓ 有</td>
+                        <td>✓ 有</td>
+                        <td>✓ 有</td>
+                    </tr>
+                    <tr>
+                        <td><strong>多供应商 LLM</strong></td>
+                        <td class="highlight">✓ 支持</td>
+                        <td>✓ 支持</td>
+                        <td>✓ 有限</td>
+                        <td>✓ 支持</td>
+                    </tr>
+                    <tr>
+                        <td><strong>学习价值</strong></td>
+                        <td class="highlight">⭐⭐⭐⭐⭐</td>
+                        <td>⭐⭐</td>
+                        <td>⭐⭐</td>
+                        <td>⭐⭐⭐</td>
+                    </tr>
+                    <tr>
+                        <td><strong>生产就绪</strong></td>
+                        <td>⭐⭐</td>
+                        <td class="highlight">⭐⭐⭐⭐⭐</td>
+                        <td class="highlight">⭐⭐⭐⭐⭐</td>
+                        <td>⭐⭐⭐</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div class="info" style="margin-top: 30px;">
+                <strong>💡 核心差异：</strong>MyCodeAgent 专注于技术探索和教育，提供完整的源代码和详细文档，适合学习和研究 ReAct 模式、上下文工程等核心技术。商业产品（Cursor、Copilot）更注重用户体验和生产效率，但内部实现细节不公开。
+            </div>
+        </section>
+
+        <!-- 注意事项 -->
+        <section>
+            <h2>⚠️ 注意事项</h2>
+            
+            <div class="grid">
+                <div class="card">
+                    <h3>🔒 沙箱隔离</h3>
+                    <ul>
+                        <li>所有工具强制注入 <code>project_root</code></li>
+                        <li>防止路径逃逸攻击</li>
+                        <li>确保操作在项目范围内</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>⚡ 熔断保护</h3>
+                    <ul>
+                        <li>Glob/Grep 工具有访问数限制</li>
+                        <li>执行时间双重限制</li>
+                        <li>防止无限循环和资源耗尽</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>📝 确定性结果</h3>
+                    <ul>
+                        <li>文件遍历按字母排序</li>
+                        <li>保证输出稳定可重现</li>
+                        <li>便于调试和测试</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>🔐 安全最佳实践</h3>
+                    <ul>
+                        <li>TraceSanitizer 自动过滤敏感信息</li>
+                        <li>不提交密钥和凭证</li>
+                        <li>Read 返回 mtime 检测文件修改</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>🧪 测试规范</h3>
+                    <ul>
+                        <li>使用 pytest 框架</li>
+                        <li>测试命名：<code>test_&lt;functionality&gt;_&lt;scenario&gt;</code></li>
+                        <li>覆盖工具协议、Agent 循环、上下文管理</li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>📚 代码风格</h3>
+                    <ul>
+                        <li>遵循 CODE_LAW.md 规范</li>
+                        <li>工具响应遵循统一协议</li>
+                        <li>Skills 使用 SKILL.md 格式</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="warning">
+                <strong>⚠️ 重要提醒：</strong>项目当前处于实验阶段，不建议直接用于生产环境。如需生产级 AI 代码助手，建议使用 Cursor、GitHub Copilot 等成熟商业产品。
+            </div>
+            
+            <div class="success">
+                <strong>✅ 适用场景：</strong>学习 ReAct 模式、研究上下文工程、实验新的 Agent 能力、作为教学示例、二次开发基础。
+            </div>
+        </section>
+
+        <!-- 相关文档 -->
+        <section>
+            <h2>📚 相关文档</h2>
+            
+            <div class="grid">
+                <div class="card">
+                    <h3>核心文档</h3>
+                    <ul>
+                        <li><a href="docs/项目概览.md" style="color: #00d4ff;">项目概览</a></li>
+                        <li><a href="docs/通用工具响应协议.md" style="color: #00d4ff;">通用工具响应协议</a></li>
+                        <li><a href="docs/上下文工程设计文档.md" style="color: #00d4ff;">上下文工程设计文档</a></li>
+                        <li><a href="CODE_LAW.md" style="color: #00d4ff;">代码规范指南</a></li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>工具文档</h3>
+                    <ul>
+                        <li><a href="docs/LSTool设计文档.md" style="color: #00d4ff;">LS Tool</a></li>
+                        <li><a href="docs/ReadTool设计文档.md" style="color: #00d4ff;">Read Tool</a></li>
+                        <li><a href="docs/EditTool设计文档.md" style="color: #00d4ff;">Edit Tool</a></li>
+                        <li><a href="docs/WriteTool设计文档.md" style="color: #00d4ff;">Write Tool</a></li>
+                    </ul>
+                </div>
+                
+                <div class="card">
+                    <h3>扩展功能</h3>
+                    <ul>
+                        <li><a href="docs/skillTool设计文档.md" style="color: #00d4ff;">Skill Tool</a></li>
+                        <li><a href="docs/task(subagent)设计文档.md" style="color: #00d4ff;">Task Subagent</a></li>
+                        <li><a href="docs/工具输出截断设计文档.md" style="color: #00d4ff;">工具输出截断</a></li>
+                        <li><a href="docs/TraceLogging设计文档.md" style="color: #00d4ff;">Trace Logging</a></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <p>🚀 MyCodeAgent - 面向学习与实验的 ReAct 代码代理项目</p>
+            <p style="margin-top: 10px; font-size: 0.9em;">
+                本网页内容基于项目文档生成，确保与文档内容完全一致
+            </p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -11,6 +11,9 @@ from typing import Optional, Any, Callable, TypedDict
 
 from .base import Tool, ToolStatus, ErrorCode, ToolParameter
 from .circuit_breaker import CircuitBreaker
+from core.env import load_env
+
+load_env()
 
 # 设置日志
 logger = logging.getLogger(__name__)

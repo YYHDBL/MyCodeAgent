@@ -12,6 +12,10 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from core.env import load_env
+
+load_env()
+
 try:
     from rich.console import Console
     from rich.markdown import Markdown
@@ -218,13 +222,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Chat with CodeAgent")
     parser.add_argument("--name", default="code", help="agent name")
     parser.add_argument("--system", default=None, help="system prompt")
-    parser.add_argument("--provider", default="zhipu", help="llm provider")
-    parser.add_argument("--model", default="GLM-4.7", help="model name")
-    parser.add_argument("--api-key", default=None, help="api key")
-    parser.add_argument("--base-url", default="https://open.bigmodel.cn/api/coding/paas/v4", help="base url")
-    parser.add_argument("--temperature", type=float, default=0.7, help="temperature")
+    parser.add_argument("--provider", default=None, help="llm provider (override LLM_PROVIDER)")
+    parser.add_argument("--model", default=None, help="model name (override LLM_MODEL_ID)")
+    parser.add_argument("--api-key", default=None, help="api key (override LLM_API_KEY)")
+    parser.add_argument("--base-url", default=None, help="base url (override LLM_BASE_URL)")
+    parser.add_argument("--temperature", type=float, default=None, help="temperature (override TEMPERATURE)")
     parser.add_argument("--show-raw", action="store_true", help="print raw response structure")
     args = parser.parse_args()
+
+    # Initialize config first (used for temperature fallback)
+    config = Config.from_env()
 
     # Initialize LLM
     try:
@@ -233,7 +240,7 @@ def main() -> None:
             api_key=args.api_key,
             base_url=args.base_url,
             provider=args.provider,
-            temperature=args.temperature,
+            temperature=args.temperature if args.temperature is not None else config.temperature,
         )
     except Exception as e:
         console.print(f"[error]Failed to initialize LLM: {e}[/error]")
@@ -242,14 +249,13 @@ def main() -> None:
     tool_registry = ToolRegistry()
    
     # Ensure config has show_react_steps=True for our RichConsoleCodeAgent to receive events
-    config = Config.from_env()
     config.show_react_steps = True
 
     # Initialize Enhanced UI
     enhanced_ui = EnhancedUI(
         console=console,
-        model=args.model,
-        provider=args.provider,
+        model=llm.model,
+        provider=llm.provider,
         project_root=PROJECT_ROOT,
         version="v1.0"
     )

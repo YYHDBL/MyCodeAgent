@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Optional
 from core.skills.skill_loader import SkillLoader
 from prompts.tools_prompts.skill_prompt import skill_prompt
 from ..base import Tool, ToolParameter, ErrorCode
+from core.env import load_env
+
+load_env()
 
 
 class SkillTool(Tool):

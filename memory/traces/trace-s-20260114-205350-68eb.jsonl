@@ -1,3 +1,0 @@
-{"ts": "2026-01-14T12:53:50.382678Z", "session_id": "s-20260114-205350-68eb", "step": 0, "event": "user_input", "payload": {"text": "测试错误处理"}}
-{"ts": "2026-01-14T12:53:50.382716Z", "session_id": "s-20260114-205350-68eb", "step": 1, "event": "error", "payload": {"stage": "tool_execution", "error_code": "INVALID_PARAM", "message": "Parameter \"path\" is required", "tool": "Read", "args": {}, "traceback": "Traceback (most recent call last):\n  ..."}}
-{"ts": "2026-01-14T12:53:50.382742Z", "session_id": "s-20260114-205350-68eb", "step": 0, "event": "session_summary", "payload": {"steps": 1, "tools_used": 0, "total_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}}

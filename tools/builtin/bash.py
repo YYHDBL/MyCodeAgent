@@ -13,6 +13,9 @@ from typing import Any, Dict, List, Optional, Set
 
 from prompts.tools_prompts.bash_prompt import bash_prompt
 from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
+from core.env import load_env
+
+load_env()
 
 
 class BashTool(Tool):

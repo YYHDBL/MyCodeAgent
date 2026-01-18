@@ -8,6 +8,7 @@
 - 线程安全的文件写入
 """
 
+import html
 import json
 import logging
 import os
@@ -18,6 +19,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.context_engine.trace_sanitizer import TraceSanitizer
+from core.env import load_env
+
+load_env()
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +69,13 @@ class TraceLogger:
         # 文件路径
         self._filepath: Optional[Path] = None
         self._file_handle = None
-        self._md_filepath: Optional[Path] = None
-        self._md_handle = None
+        self._html_filepath: Optional[Path] = None
+        self._html_handle = None
         self._current_step = None
         self._current_run = None
         self._timeline_started = False
         self._system_messages_logged = False
-        self._md_step_open = False
+        self._html_step_open = False
         self._sanitizer = TraceSanitizer(
             enable=os.environ.get("TRACE_SANITIZE", "true").lower() == "true"
         )
@@ -94,11 +98,11 @@ class TraceLogger:
             # 打开文件（追加模式）
             self._file_handle = open(self._filepath, "a", encoding="utf-8")
 
-            # Markdown 人类可读审计文件
-            md_filename = f"trace-{self.session_id}.md"
-            self._md_filepath = self.trace_dir / md_filename
-            self._md_handle = open(self._md_filepath, "a", encoding="utf-8")
-            self._write_md_header()
+            # HTML 人类可读审计文件
+            html_filename = f"trace-{self.session_id}.html"
+            self._html_filepath = self.trace_dir / html_filename
+            self._html_handle = open(self._html_filepath, "a", encoding="utf-8")
+            self._write_html_header()
             
         except Exception as e:
             logger.warning("TraceLogger init failed: %s", e)
@@ -176,10 +180,11 @@ class TraceLogger:
             if self._file_handle:
                 self._file_handle.close()
                 self._file_handle = None
-            if self._md_handle:
+            if self._html_handle:
                 self._close_step_block()
-                self._md_handle.close()
-                self._md_handle = None
+                self._write_html_footer()
+                self._html_handle.close()
+                self._html_handle = None
             
             logger.info("Trace saved to %s", self._filepath)
             
@@ -193,8 +198,8 @@ class TraceLogger:
                 line = json.dumps(event_obj, ensure_ascii=False)
                 self._file_handle.write(line + "\n")
                 self._file_handle.flush()
-            if self._md_handle:
-                self._write_md_event(event_obj)
+            if self._html_handle:
+                self._write_html_event(event_obj)
     
     def _update_stats(self, event: str, payload: Dict[str, Any], step: int):
         """更新统计数据"""
@@ -213,13 +218,40 @@ class TraceLogger:
             self._total_usage["completion_tokens"] += usage.get("completion_tokens", 0)
             self._total_usage["total_tokens"] += usage.get("total_tokens", 0)
 
-    def _write_md_header(self):
-        if not self._md_handle:
+    def _write_html_header(self):
+        if not self._html_handle:
             return
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-        self._md_handle.write(f"# Trace Session: {self.session_id}\n")
-        self._md_handle.write(f"Started: {now}\n\n")
-        self._md_handle.flush()
+        title = f"Trace Session: {self.session_id}"
+        self._html_handle.write("""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+""")
+        self._html_handle.write(f"  <title>{html.escape(title)}</title>\n")
+        self._html_handle.write("""  <style>
+    :root { color-scheme: light; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color: #111; }
+    header { margin-bottom: 20px; }
+    h1 { font-size: 20px; margin: 0 0 6px; }
+    h2 { font-size: 16px; margin: 18px 0 8px; }
+    h3 { font-size: 14px; margin: 12px 0 6px; }
+    .meta { color: #555; font-size: 12px; }
+    .block { border: 1px solid #e4e4e7; border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: #fafafa; }
+    .timeline { margin-top: 18px; }
+    details { border: 1px solid #e4e4e7; border-radius: 8px; padding: 8px 12px; margin: 10px 0; background: #fff; }
+    summary { cursor: pointer; font-weight: 600; }
+    pre { background: #0f172a; color: #f8fafc; padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .tag { display: inline-block; padding: 2px 6px; border-radius: 999px; font-size: 11px; background: #e2e8f0; color: #334155; }
+  </style>
+</head>
+<body>
+""")
+        self._html_handle.write(f"<header><h1>{html.escape(title)}</h1><div class=\"meta\">Started: {html.escape(now)}</div></header>\n")
+        self._html_handle.write("<main>\n")
+        self._html_handle.flush()
 
     def _truncate(self, text: str, limit: int = 300) -> str:
         if text is None:
@@ -229,20 +261,31 @@ class TraceLogger:
             return s
         return s[:limit] + "...(truncated)"
 
+    def _write_html_footer(self):
+        if not self._html_handle:
+            return
+        if self._timeline_started:
+            self._html_handle.write("</section>\n")
+        self._html_handle.write("</main>\n</body>\n</html>\n")
+        self._html_handle.flush()
+
     def _ensure_timeline_header(self):
-        if not self._md_handle:
+        if not self._html_handle:
             return
         if not self._timeline_started:
-            self._md_handle.write("\n## Timeline\n\n")
+            self._html_handle.write("<section class=\"timeline\"><h2>Timeline</h2>\n")
             self._timeline_started = True
 
     def _close_step_block(self):
-        if self._md_handle and self._md_step_open:
-            self._md_handle.write("\n</details>\n")
-            self._md_step_open = False
+        if self._html_handle and self._html_step_open:
+            self._html_handle.write("</details>\n")
+            self._html_step_open = False
 
-    def _write_md_event(self, event_obj: Dict[str, Any]):
-        if not self._md_handle:
+    def _escape_html(self, text: str) -> str:
+        return html.escape(text or "")
+
+    def _write_html_event(self, event_obj: Dict[str, Any]):
+        if not self._html_handle:
             return
         event = event_obj.get("event")
         step = event_obj.get("step", 0)
@@ -253,21 +296,22 @@ class TraceLogger:
 
         if event == "system_messages":
             messages = payload.get("messages", []) or []
-            lines.append("## System Messages (logged once)\n")
+            lines.append("<section class=\"block\"><h2>System Messages (logged once)</h2>")
             if not messages:
-                lines.append("_No system messages_\n")
+                lines.append("<div class=\"meta\">No system messages</div>")
             else:
                 for idx, msg in enumerate(messages, 1):
                     role = msg.get("role", "system")
                     content = msg.get("content", "")
-                    lines.append(f"### System Message {idx}\n")
-                    lines.append(f"Role: `{role}`\n\n")
-                    lines.append("```text\n")
-                    lines.append(f"{content}\n")
-                    lines.append("```\n")
+                    lines.append(f"<h3>System Message {idx}</h3>")
+                    lines.append(f"<div class=\"meta\">Role: {self._escape_html(role)}</div>")
+                    lines.append("<pre><code>")
+                    lines.append(self._escape_html(content))
+                    lines.append("</code></pre>")
+            lines.append("</section>")
             if lines:
-                self._md_handle.write("".join(lines))
-                self._md_handle.flush()
+                self._html_handle.write("".join(lines) + "\n")
+                self._html_handle.flush()
             return
 
         if event == "run_start":
@@ -277,38 +321,41 @@ class TraceLogger:
             self._current_run = run_id
             self._current_step = None
             self._close_step_block()
-            lines.append(f"\n## Run {run_id}\n")
+            lines.append(f"<section class=\"block\"><h2>Run {self._escape_html(str(run_id))}</h2>")
             if ts:
-                lines.append(f"*Start: {ts}*\n\n")
+                lines.append(f"<div class=\"meta\">Start: {self._escape_html(ts)}</div>")
             if user_text:
-                lines.append("### 🧑 User Input\n")
-                lines.append("```text\n")
-                lines.append(f"{user_text}\n")
-                lines.append("```\n")
+                lines.append("<h3>🧑 User Input</h3>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(user_text))
+                lines.append("</code></pre>")
             if processed and processed != user_text:
-                lines.append("\n*Processed (with @file expansion):*\n")
-                lines.append("```text\n")
-                lines.append(f"{processed}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Processed (with @file expansion):</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(processed))
+                lines.append("</code></pre>")
+            lines.append("</section>")
             if lines:
-                self._md_handle.write("".join(lines))
-                self._md_handle.flush()
+                self._html_handle.write("".join(lines) + "\n")
+                self._html_handle.flush()
             return
 
         if event == "run_end":
             run_id = payload.get("run_id")
             final = payload.get("final", "")
             self._close_step_block()
-            lines.append(f"\n### ✅ Run End (run={run_id})\n")
+            lines.append("<section class=\"block\">")
+            lines.append(f"<h3>✅ Run End (run={self._escape_html(str(run_id))})</h3>")
             if ts:
-                lines.append(f"*End: {ts}*\n\n")
+                lines.append(f"<div class=\"meta\">End: {self._escape_html(ts)}</div>")
             if final:
-                lines.append("```text\n")
-                lines.append(f"{final}\n")
-                lines.append("```\n")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(final))
+                lines.append("</code></pre>")
+            lines.append("</section>")
             if lines:
-                self._md_handle.write("".join(lines))
-                self._md_handle.flush()
+                self._html_handle.write("".join(lines) + "\n")
+                self._html_handle.flush()
             return
 
         self._ensure_timeline_header()
@@ -316,91 +363,101 @@ class TraceLogger:
         if step and step != self._current_step:
             self._close_step_block()
             self._current_step = step
-            lines.append(f"\n<details>\n<summary>Step {step}</summary>\n\n")
-            self._md_step_open = True
+            lines.append(f"<details><summary>Step {step}</summary>")
+            self._html_step_open = True
 
         if event == "user_input":
-            lines.append("#### 🧑 User Input\n")
-            lines.append(f"{payload.get('text', '')}\n")
+            lines.append("<div class=\"block\"><h3>🧑 User Input</h3>")
+            lines.append(f"<pre><code>{self._escape_html(payload.get('text', ''))}</code></pre>")
             processed = payload.get('processed')
             if processed and processed != payload.get('text'):
-                lines.append("\n*Processed (with @file expansion):*\n")
-                lines.append(f"```\n{processed}\n```\n")
+                lines.append("<div class=\"meta\">Processed (with @file expansion):</div>")
+                lines.append(f"<pre><code>{self._escape_html(processed)}</code></pre>")
+            lines.append("</div>")
 
         elif event == "history_compression_triggered":
-            lines.append("#### 📦 History Compression Triggered\n")
-            lines.append(f"- Estimated tokens: {payload.get('estimated_tokens', 0)}\n")
-            lines.append(f"- Threshold: {payload.get('threshold', 0)}\n")
-            lines.append(f"- Current messages: {payload.get('message_count', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>📦 History Compression Triggered</h3>")
+            lines.append(f"<div class=\"meta\">Estimated tokens: {payload.get('estimated_tokens', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Threshold: {payload.get('threshold', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Current messages: {payload.get('message_count', 0)}</div>")
+            lines.append("</div>")
 
         elif event == "history_compression_plan":
-            lines.append("#### 🧭 History Compression Plan\n")
-            lines.append(f"- Rounds: {payload.get('rounds_count', 0)}\n")
-            lines.append(f"- Min retain rounds: {payload.get('min_retain_rounds', 0)}\n")
-            lines.append(f"- Retain start round: {payload.get('retain_start_round')}\n")
-            lines.append(f"- Retain start idx: {payload.get('retain_start_idx')}\n")
-            lines.append(f"- Messages before: {payload.get('messages_before')}\n\n")
+            lines.append("<div class=\"block\"><h3>🧭 History Compression Plan</h3>")
+            lines.append(f"<div class=\"meta\">Rounds: {payload.get('rounds_count', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Min retain rounds: {payload.get('min_retain_rounds', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Retain start round: {payload.get('retain_start_round')}</div>")
+            lines.append(f"<div class=\"meta\">Retain start idx: {payload.get('retain_start_idx')}</div>")
+            lines.append(f"<div class=\"meta\">Messages before: {payload.get('messages_before')}</div>")
+            lines.append("</div>")
 
         elif event == "history_compression_messages":
-            lines.append("#### 📄 History Compression Messages\n")
-            lines.append(f"- Messages to compress: {payload.get('messages_to_compress', 0)}\n")
-            lines.append(f"- Existing summaries: {payload.get('existing_summaries', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>📄 History Compression Messages</h3>")
+            lines.append(f"<div class=\"meta\">Messages to compress: {payload.get('messages_to_compress', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Existing summaries: {payload.get('existing_summaries', 0)}</div>")
+            lines.append("</div>")
 
         elif event == "history_compression_summary":
-            lines.append("#### 📝 History Compression Summary\n")
-            lines.append(f"- Summary generated: {payload.get('summary_generated', False)}\n")
-            lines.append(f"- Summary length: {payload.get('summary_len', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>📝 History Compression Summary</h3>")
+            lines.append(f"<div class=\"meta\">Summary generated: {payload.get('summary_generated', False)}</div>")
+            lines.append(f"<div class=\"meta\">Summary length: {payload.get('summary_len', 0)}</div>")
             summary_text = payload.get("summary_text", "")
             if summary_text:
-                lines.append("Summary (full):\n")
-                lines.append("```text\n")
-                lines.append(f"{summary_text}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Summary (full):</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(summary_text))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "history_compression_rebuilt":
-            lines.append("#### 🧱 History Compression Rebuilt\n")
-            lines.append(f"- Messages after: {payload.get('messages_after', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>🧱 History Compression Rebuilt</h3>")
+            lines.append(f"<div class=\"meta\">Messages after: {payload.get('messages_after', 0)}</div>")
+            lines.append("</div>")
 
         elif event == "history_compression_context":
-            lines.append("#### 🧩 History Compression Context (post)\n")
-            lines.append(f"- Message count: {payload.get('message_count', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>🧩 History Compression Context (post)</h3>")
+            lines.append(f"<div class=\"meta\">Message count: {payload.get('message_count', 0)}</div>")
             messages = payload.get("messages", []) or []
             for idx, msg in enumerate(messages, 1):
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
-                lines.append(f"##### Message {idx} ({role})\n")
-                lines.append("```text\n")
-                lines.append(f"{content}\n")
-                lines.append("```\n")
+                lines.append(f"<h3>Message {idx} ({self._escape_html(role)})</h3>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(content))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "history_compression_final_context":
-            lines.append("#### 🧩 Final Context After Compression (system + history)\n")
-            lines.append(f"- Message count: {payload.get('message_count', 0)}\n\n")
+            lines.append("<div class=\"block\"><h3>🧩 Final Context After Compression (system + history)</h3>")
+            lines.append(f"<div class=\"meta\">Message count: {payload.get('message_count', 0)}</div>")
             messages = payload.get("messages", []) or []
             for idx, msg in enumerate(messages, 1):
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
-                lines.append(f"##### Message {idx} ({role})\n")
-                lines.append("```text\n")
-                lines.append(f"{content}\n")
-                lines.append("```\n")
+                lines.append(f"<h3>Message {idx} ({self._escape_html(role)})</h3>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(content))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "history_compression_skipped":
-            lines.append("#### ⏭️ History Compression Skipped\n")
+            lines.append("<div class=\"block\"><h3>⏭️ History Compression Skipped</h3>")
             reason = payload.get("reason", "unknown")
-            lines.append(f"- Reason: {reason}\n")
-            lines.append(f"- Rounds: {payload.get('rounds_count', 0)}\n")
-            lines.append(f"- Min retain rounds: {payload.get('min_retain_rounds', 0)}\n\n")
+            lines.append(f"<div class=\"meta\">Reason: {self._escape_html(str(reason))}</div>")
+            lines.append(f"<div class=\"meta\">Rounds: {payload.get('rounds_count', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Min retain rounds: {payload.get('min_retain_rounds', 0)}</div>")
+            lines.append("</div>")
 
         elif event == "history_compression_completed":
-            lines.append("#### ✅ History Compression Completed\n")
-            lines.append(f"- Rounds before: {payload.get('rounds_before', 0)}\n")
-            lines.append(f"- Rounds after: {payload.get('rounds_after', 0)}\n")
-            lines.append(f"- Messages compressed: {payload.get('messages_compressed', 0)}\n")
+            lines.append("<div class=\"block\"><h3>✅ History Compression Completed</h3>")
+            lines.append(f"<div class=\"meta\">Rounds before: {payload.get('rounds_before', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Rounds after: {payload.get('rounds_after', 0)}</div>")
+            lines.append(f"<div class=\"meta\">Messages compressed: {payload.get('messages_compressed', 0)}</div>")
             if payload.get('summary_generated'):
-                lines.append(f"- Summary generated: Yes\n\n")
+                lines.append("<div class=\"meta\">Summary generated: Yes</div>")
             else:
-                lines.append(f"- Summary generated: No (fallback to truncation)\n\n")
+                lines.append("<div class=\"meta\">Summary generated: No (fallback to truncation)</div>")
+            lines.append("</div>")
 
         elif event == "message_written":
             role = payload.get('role', 'unknown')
@@ -408,79 +465,85 @@ class TraceLogger:
             metadata = payload.get('metadata', {})
             
             if role == "user":
-                lines.append("#### 💬 Message Written: User\n")
-                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+                lines.append("<div class=\"block\"><h3>💬 Message Written: User</h3>")
+                lines.append(f"<pre><code>{self._escape_html(self._truncate(content, 500))}</code></pre></div>")
             elif role == "assistant":
-                lines.append("#### 🤖 Message Written: Assistant\n")
+                lines.append("<div class=\"block\"><h3>🤖 Message Written: Assistant</h3>")
                 action_type = metadata.get('action_type', 'unknown')
-                lines.append(f"Type: `{action_type}`\n\n")
-                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+                lines.append(f"<div class=\"meta\">Type: {self._escape_html(str(action_type))}</div>")
+                lines.append(f"<pre><code>{self._escape_html(self._truncate(content, 500))}</code></pre></div>")
             elif role == "tool":
                 tool_name = metadata.get('tool_name', 'unknown')
-                lines.append(f"#### 🔧 Message Written: Tool ({tool_name})\n")
-                lines.append(f"```json\n{self._truncate(content, 300)}\n```\n")
+                lines.append(f"<div class=\"block\"><h3>🔧 Message Written: Tool ({self._escape_html(str(tool_name))})</h3>")
+                lines.append(f"<pre><code>{self._escape_html(self._truncate(content, 300))}</code></pre></div>")
             elif role == "system":
-                lines.append("#### 🧩 Message Written: System\n")
-                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+                lines.append("<div class=\"block\"><h3>🧩 Message Written: System</h3>")
+                lines.append(f"<pre><code>{self._escape_html(self._truncate(content, 500))}</code></pre></div>")
             elif role == "summary":
-                lines.append("#### 📝 Message Written: Summary\n")
-                lines.append(f"```\n{self._truncate(content, 500)}\n```\n")
+                lines.append("<div class=\"block\"><h3>📝 Message Written: Summary</h3>")
+                lines.append(f"<pre><code>{self._escape_html(self._truncate(content, 500))}</code></pre></div>")
 
         elif event == "model_output":
             raw = payload.get("raw", "")
             usage = payload.get("usage")
             tool_calls = payload.get("tool_calls") or []
-            lines.append("#### 🧠 Model Output\n")
+            lines.append("<div class=\"block\"><h3>🧠 Model Output</h3>")
             if usage:
-                lines.append(f"*Tokens: {usage.get('prompt_tokens', 0)} → {usage.get('completion_tokens', 0)} = {usage.get('total_tokens', 0)}*\n\n")
+                lines.append(f"<div class=\"meta\">Tokens: {usage.get('prompt_tokens', 0)} → {usage.get('completion_tokens', 0)} = {usage.get('total_tokens', 0)}</div>")
             if tool_calls:
-                lines.append("Tool calls:\n")
+                lines.append("<div class=\"meta\">Tool calls:</div>")
                 try:
                     calls_text = json.dumps(tool_calls, ensure_ascii=False)
                 except Exception:
                     calls_text = str(tool_calls)
-                lines.append("```json\n")
-                lines.append(f"{self._truncate(calls_text, 800)}\n")
-                lines.append("```\n")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(self._truncate(calls_text, 800)))
+                lines.append("</code></pre>")
             if raw:
-                lines.append("Content (truncated):\n")
-                lines.append("```text\n")
-                lines.append(f"{self._truncate(raw, 600)}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Content (truncated):</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(self._truncate(raw, 600)))
+                lines.append("</code></pre>")
             raw_response = payload.get("raw_response")
-            if raw_response is not None and os.environ.get("TRACE_MD_INCLUDE_RAW_RESPONSE", "false").lower() == "true":
+            include_raw = os.environ.get("TRACE_HTML_INCLUDE_RAW_RESPONSE")
+            if include_raw is None:
+                include_raw = os.environ.get("TRACE_MD_INCLUDE_RAW_RESPONSE", "false")
+            if raw_response is not None and str(include_raw).lower() == "true":
                 try:
                     raw_text = json.dumps(raw_response, ensure_ascii=False, indent=2)
                 except Exception:
                     raw_text = str(raw_response)
-                lines.append("Raw response (JSON):\n")
-                lines.append("```json\n")
-                lines.append(f"{raw_text}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Raw response (JSON):</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(raw_text))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "parsed_action":
             thought = payload.get("thought", "")
             action = payload.get("action", "")
             args = payload.get("args")
+            lines.append("<div class=\"block\"><h3>🧠 Parsed Action</h3>")
             if thought:
-                lines.append("#### 💭 Thought\n")
-                lines.append("```text\n")
-                lines.append(f"{thought}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Thought:</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(thought))
+                lines.append("</code></pre>")
             if action:
-                lines.append("#### ⚡ Action\n")
-                lines.append("```text\n")
-                lines.append(f"{action}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Action:</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(action))
+                lines.append("</code></pre>")
             if args is not None:
                 try:
                     args_text = json.dumps(args, ensure_ascii=False)
                 except Exception:
                     args_text = str(args)
-                lines.append("#### 📋 Args\n")
-                lines.append("```json\n")
-                lines.append(f"{args_text}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Args:</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(args_text))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "tool_call":
             tool = payload.get("tool", "")
@@ -489,10 +552,10 @@ class TraceLogger:
                 args_text = json.dumps(args, ensure_ascii=False)
             except Exception:
                 args_text = str(args)
-            lines.append("#### 🛠️ Tool Call\n")
-            lines.append("```text\n")
-            lines.append(f"{tool} {args_text}\n")
-            lines.append("```\n")
+            lines.append("<div class=\"block\"><h3>🛠️ Tool Call</h3>")
+            lines.append("<pre><code>")
+            lines.append(self._escape_html(f"{tool} {args_text}"))
+            lines.append("</code></pre></div>")
 
         elif event == "tool_result":
             tool = payload.get("tool", "")
@@ -500,56 +563,57 @@ class TraceLogger:
             status = result.get("status")
             text = result.get("text", "")
             data = result.get("data", None)
-            lines.append("#### 👁️ Observation\n")
-            lines.append(f"Tool: {tool}\n\n")
+            lines.append("<div class=\"block\"><h3>👁️ Observation</h3>")
+            lines.append(f"<div class=\"meta\">Tool: {self._escape_html(tool)}</div>")
             if status:
-                lines.append(f"Status: {status}\n\n")
+                lines.append(f"<div class=\"meta\">Status: {self._escape_html(str(status))}</div>")
             if text:
-                lines.append("Text:\n")
-                lines.append("```text\n")
-                lines.append(f"{text}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Text:</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(text))
+                lines.append("</code></pre>")
             if data is not None:
                 try:
                     data_text = json.dumps(data, ensure_ascii=False)
                 except Exception:
                     data_text = str(data)
                 data_text = self._truncate(data_text, 300)
-                lines.append("Data (truncated):\n")
-                lines.append("```json\n")
-                lines.append(f"{data_text}\n")
-                lines.append("```\n")
+                lines.append("<div class=\"meta\">Data (truncated):</div>")
+                lines.append("<pre><code>")
+                lines.append(self._escape_html(data_text))
+                lines.append("</code></pre>")
+            lines.append("</div>")
 
         elif event == "error":
-            lines.append("#### ❌ Error\n")
+            lines.append("<div class=\"block\"><h3>❌ Error</h3>")
             try:
                 err_text = json.dumps(payload, ensure_ascii=False)
             except Exception:
                 err_text = str(payload)
-            lines.append("```json\n")
-            lines.append(f"{err_text}\n")
-            lines.append("```\n")
+            lines.append("<pre><code>")
+            lines.append(self._escape_html(err_text))
+            lines.append("</code></pre></div>")
 
         elif event == "finish":
-            lines.append("#### ✅ Finish\n")
+            lines.append("<div class=\"block\"><h3>✅ Finish</h3>")
             final = payload.get("final", "")
-            lines.append("```text\n")
-            lines.append(f"{final}\n")
-            lines.append("```\n")
+            lines.append("<pre><code>")
+            lines.append(self._escape_html(final))
+            lines.append("</code></pre></div>")
 
         elif event == "session_summary":
-            lines.append("#### 📊 Session Summary\n")
+            lines.append("<div class=\"block\"><h3>📊 Session Summary</h3>")
             try:
                 summary_text = json.dumps(payload, ensure_ascii=False, indent=2)
             except Exception:
                 summary_text = str(payload)
-            lines.append("```json\n")
-            lines.append(f"{summary_text}\n")
-            lines.append("```\n")
+            lines.append("<pre><code>")
+            lines.append(self._escape_html(summary_text))
+            lines.append("</code></pre></div>")
 
         if lines:
-            self._md_handle.write("".join(lines))
-            self._md_handle.flush()
+            self._html_handle.write("".join(lines) + "\n")
+            self._html_handle.flush()
     
     def __enter__(self):
         """支持 with 语句"""

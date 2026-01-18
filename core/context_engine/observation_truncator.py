@@ -26,6 +26,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from core.env import load_env
+
+load_env()
+
 logger = logging.getLogger(__name__)
 
 
