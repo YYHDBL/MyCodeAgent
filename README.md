@@ -210,7 +210,9 @@ $ARGUMENTS
 ```
 生成网页
 [text](demo/agent-introduction.html)
-[demo](/docs/assest/demo.png)
+
+![demo](/docs/assest/demo.png)
+
 视频演示：
 [MyCodeAgent 视频演示](https://www.bilibili.com/video/BV1vhkMBpEzq)
 
