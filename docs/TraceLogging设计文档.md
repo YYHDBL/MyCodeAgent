@@ -33,6 +33,8 @@
 - `error`
 - `finish`
 - `session_summary`（会话结束统计）
+- `context_build`（上下文构建完成）
+- `message_written`（消息写入 history）
 
 ---
 

@@ -31,7 +31,7 @@
 - **上下文工程**：分层注入、历史压缩、@file 强制读取
 - **工具输出截断与落盘**：超限结果写入 `tool-output/`
 - **轻量熔断**：连续失败工具自动临时禁用
-- **Trace 追踪**：JSONL + Markdown 双轨日志 + 脱敏
+- **Trace 追踪**：JSONL + HTML 双轨日志 + 脱敏
 - **会话持久化**：支持 `/save` 与 `/load`
 - **MCP 扩展**：通过 `mcp_servers.json` 接入外部工具
 - **Enhanced CLI UI**：工具调用树、token 统计、进度显示
@@ -162,7 +162,8 @@ $ARGUMENTS
 
 - `TOOL_OUTPUT_MAX_LINES`（默认 2000）
 - `TOOL_OUTPUT_MAX_BYTES`（默认 51200）
-- `TOOL_OUTPUT_TRUNCATE_DIRECTION`（head|tail）
+- `TOOL_OUTPUT_TRUNCATE_DIRECTION`（head|tail|head_tail）
+- `TOOL_OUTPUT_HEAD_TAIL_LINES`（默认 40，仅当 head_tail 生效）
 - `TOOL_OUTPUT_DIR`（默认 tool-output）
 - `TOOL_OUTPUT_RETENTION_DAYS`（默认 7）
 
@@ -173,7 +174,7 @@ $ARGUMENTS
 
 ### Subagent
 
-- `SUBAGENT_MAX_STEPS`（默认 15）
+- `SUBAGENT_MAX_STEPS`（默认 50）
 - `LIGHT_LLM_MODEL_ID / LIGHT_LLM_API_KEY / LIGHT_LLM_BASE_URL`
 
 ### Trace
@@ -181,7 +182,7 @@ $ARGUMENTS
 - `TRACE_ENABLED`（默认 true）
 - `TRACE_DIR`（默认 memory/traces）
 - `TRACE_SANITIZE`（默认 true）
-- `TRACE_MD_INCLUDE_RAW_RESPONSE`（默认 false）
+- `TRACE_HTML_INCLUDE_RAW_RESPONSE`（默认 false）
 
 ---
 
@@ -236,9 +237,7 @@ Skills 能力
 
 ## 参考资源（References）
 
-> 预留区域：相关论文、博客、框架与工具资料链接  
-> 示例：
->
+
 > - 感谢 [Datawhale](https://github.com/datawhalechina) 提供的优秀开源教程 [HelloAgent](https://github.com/jjyaoao/HelloAgents.git)
 > - 感谢 [shareAI-lab](https://github.com/shareAI-lab) 的[Kode-Cli](https://github.com/shareAI-lab/Kode-cli.git)项目
 > - 感谢 [MiniMax-AI](https://github.com/MiniMax-AI)的[Mini-Agent](https://github.com/MiniMax-AI/Mini-Agent)项目

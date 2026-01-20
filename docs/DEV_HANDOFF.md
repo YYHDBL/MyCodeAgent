@@ -24,7 +24,7 @@
 
 ## 当前进度摘要
 1. **Agent 运行链路打通**
-   - `CodeAgent` 内置 ReAct 循环，能展示 Thought / Action / Observation。
+   - `CodeAgent` 内置 ReAct 循环，默认展示 Action / Observation（不展示 Thought）。
    - `chat_test_agent.py` 可打印 `--show-raw` 原始模型响应。
 
 2. **工具体系完善**
