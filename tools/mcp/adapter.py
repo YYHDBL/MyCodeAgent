@@ -5,6 +5,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import logging
+import re
+
 from tools.base import Tool, ToolParameter, ErrorCode
 from tools.mcp.protocol import to_protocol_result, to_protocol_error, to_protocol_invalid_param
 
@@ -137,6 +140,22 @@ class MCPToolAdapter(Tool):
 
 def register_mcp_tools(tool_registry, mcp_client, namespace: str | None = None) -> list[dict[str, object | None]]:
     """Discover tools from MCP server and register them to ToolRegistry."""
+    logger = logging.getLogger(__name__)
+    safe_name_pattern = re.compile(r"[^a-zA-Z0-9_-]")
+
+    def sanitize_tool_name(name: str) -> str:
+        sanitized = safe_name_pattern.sub("_", name)
+        sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+        return sanitized or "tool"
+
+    def ensure_unique(base_name: str) -> str:
+        candidate = base_name
+        counter = 2
+        while tool_registry.get_tool(candidate) or tool_registry.get_function(candidate):
+            candidate = f"{base_name}_{counter}"
+            counter += 1
+        return candidate
+
     tools = mcp_client.list_tools_sync()
     registered: list[dict[str, object | None]] = []
     for tool in tools.tools:
@@ -147,7 +166,11 @@ def register_mcp_tools(tool_registry, mcp_client, namespace: str | None = None) 
             schema = schema.model_dump()
         if not remote_name:
             continue
-        public_name = f"{namespace}:{remote_name}" if namespace else remote_name
+        raw_public_name = f"{namespace}:{remote_name}" if namespace else remote_name
+        public_name = sanitize_tool_name(raw_public_name)
+        public_name = ensure_unique(public_name)
+        if public_name != raw_public_name:
+            logger.info("Sanitized MCP tool name '%s' -> '%s'", raw_public_name, public_name)
         adapter = MCPToolAdapter(mcp_client, public_name, remote_name, description, schema)
         tool_registry.register_tool(adapter)
         registered.append({"name": public_name, "description": description, "schema": schema})

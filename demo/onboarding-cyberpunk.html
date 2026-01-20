@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyCodeAgent - 神经网络接入</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --neon-green: #00FF00;
+            --neon-pink: #FF00FF;
+            --neon-cyan: #00FFFF;
+            --neon-blue: #0080FF;
+            --bg-dark: #0D0D0D;
+            --bg-darker: #080808;
+            --text-primary: #E0E0E0;
+            --text-secondary: #A0A0A0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Rajdhani', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+
+        /* Scanlines Effect */
+        body::before {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.15),
+                rgba(0, 0, 0, 0.15) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            z-index: 1000;
+        }
+
+        /* CRT Flicker Animation */
+        @keyframes flicker {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+                opacity: 1;
+            }
+            20%, 24%, 55% {
+                opacity: 0.95;
+            }
+        }
+
+        body::after {
+            content: "";
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 255, 0, 0.02);
+            animation: flicker 0.15s infinite;
+            pointer-events: none;
+            z-index: 1001;
+        }
+
+        .mono {
+            font-family: 'Share Tech Mono', monospace;
+        }
+
+        /* Neon Glow Effects */
+        .neon-green {
+            color: var(--neon-green);
+            text-shadow: 0 0 5px var(--neon-green), 0 0 10px var(--neon-green), 0 0 20px var(--neon-green);
+        }
+
+        .neon-pink {
+            color: var(--neon-pink);
+            text-shadow: 0 0 5px var(--neon-pink), 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);
+        }
+
+        .neon-cyan {
+            color: var(--neon-cyan);
+            text-shadow: 0 0 5px var(--neon-cyan), 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan);
+        }
+
+        .neon-blue {
+            color: var(--neon-blue);
+            text-shadow: 0 0 5px var(--neon-blue), 0 0 10px var(--neon-blue), 0 0 20px var(--neon-blue);
+        }
+
+        .glow-box {
+            border: 1px solid var(--neon-cyan);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3), inset 0 0 10px rgba(0, 255, 255, 0.1);
+            background: rgba(13, 13, 13, 0.95);
+            backdrop-filter: blur(10px);
+        }
+
+        /* Glitch Animation */
+        @keyframes glitch {
+            0%, 100% {
+                transform: translate(0);
+            }
+            20% {
+                transform: translate(-2px, 2px);
+            }
+            40% {
+                transform: translate(-2px, -2px);
+            }
+            60% {
+                transform: translate(2px, 2px);
+            }
+            80% {
+                transform: translate(2px, -2px);
+            }
+        }
+
+        .glitch:hover {
+            animation: glitch 0.3s infinite;
+        }
+
+        /* Navigation */
+        .nav-link {
+            color: var(--text-secondary);
+            transition: all 0.3s ease;
+            position: relative;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 0.75rem;
+        }
+
+        .nav-link:hover {
+            color: var(--neon-cyan);
+            text-shadow: 0 0 10px var(--neon-cyan);
+        }
+
+        .nav-link::after {
+            content: '>';
+            position: absolute;
+            right: -20px;
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+
+        .nav-link:hover::after {
+            opacity: 1;
+            right: -15px;
+        }
+
+        /* Section Styling */
+        .section {
+            padding: 6rem 2rem;
+            position: relative;
+        }
+
+        .section:nth-child(even) {
+            background: var(--bg-darker);
+        }
+
+        .cyber-border {
+            position: relative;
+            border: 1px solid rgba(0, 255, 255, 0.2);
+        }
+
+        .cyber-border::before,
+        .cyber-border::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--neon-cyan);
+            transition: all 0.3s ease;
+        }
+
+        .cyber-border::before {
+            top: -1px;
+            left: -1px;
+            border-right: none;
+            border-bottom: none;
+        }
+
+        .cyber-border::after {
+            bottom: -1px;
+            right: -1px;
+            border-left: none;
+            border-top: none;
+        }
+
+        .cyber-border:hover::before,
+        .cyber-border:hover::after {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Comparison Table */
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem;
+            text-align: left;
+            border: 1px solid rgba(0, 255, 255, 0.2);
+        }
+
+        .comparison-table th {
+            background: rgba(0, 255, 255, 0.1);
+            color: var(--neon-cyan);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            position: relative;
+        }
+
+        .comparison-table tr:hover td {
+            background: rgba(0, 255, 255, 0.05);
+        }
+
+        .comparison-table .framework-name {
+            color: var(--neon-green);
+            font-weight: 700;
+        }
+
+        .comparison-table .mycodeagent {
+            background: rgba(0, 255, 0, 0.15) !important;
+        }
+
+        /* Terminal Code Block */
+        .terminal {
+            background: #0a0a0a;
+            border: 1px solid #00FF00;
+            border-radius: 4px;
+            padding: 1.5rem;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.875rem;
+            position: relative;
+            overflow-x: auto;
+        }
+
+        .terminal::before {
+            content: '>';
+            color: #00FF00;
+            margin-right: 0.5rem;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .terminal code {
+            color: #00FF00;
+        }
+
+        /* Feature Grid */
+        .feature-card {
+            background: linear-gradient(135deg, rgba(13, 13, 13, 0.95) 0%, rgba(8, 8, 8, 0.98) 100%);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            padding: 2rem;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 3px;
+            background: linear-gradient(90deg, var(--neon-green), var(--neon-cyan), var(--neon-pink));
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0, 255, 255, 0.2);
+        }
+
+        /* Workflow Step */
+        .workflow-line {
+            position: relative;
+        }
+
+        .workflow-line::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 40px;
+            bottom: 0;
+            width: 2px;
+            background: linear-gradient(180deg, var(--neon-cyan), transparent);
+        }
+
+        .step-number {
+            width: 42px;
+            height: 42px;
+            border: 2px solid var(--neon-cyan);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--neon-cyan);
+            font-family: 'Share Tech Mono', monospace;
+            position: relative;
+            z-index: 1;
+            background: var(--bg-dark);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--neon-cyan);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--neon-green);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            .comparison-table {
+                font-size: 0.75rem;
+            }
+            .comparison-table th,
+            .comparison-table td {
+                padding: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="fixed top-0 left-0 right-0 z-50 glow-box">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-green-400 to-cyan-400 rounded flex items-center justify-center">
+                        <span class="text-black font-bold text-xl">M</span>
+                    </div>
+                    <div>
+                        <div class="text-white font-bold text-lg tracking-wider">MYCODEAGENT</div>
+                        <div class="text-xs text-green-400 mono">v2.0.0</div>
+                    </div>
+                </div>
+                <div class="nav-links flex items-center gap-6 mono hidden md:flex">
+                    <a href="#overview" class="nav-link">Overview</a>
+                    <a href="#features" class="nav-link">Features</a>
+                    <a href="#comparison" class="nav-link">VS Others</a>
+                    <a href="#architecture" class="nav-link">Architecture</a>
+                    <a href="#quickstart" class="nav-link">Start</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="section min-h-screen flex items-center justify-center pt-20">
+        <div class="max-w-5xl mx-auto text-center px-4">
+            <div class="mb-8">
+                <span class="mono text-cyan-400 text-sm tracking-[0.5em]">[ SYSTEM READY ]</span>
+            </div>
+            <h1 class="text-5xl md:text-7xl font-bold mb-6 neon-cyan glitch">
+                MYCODEAGENT
+            </h1>
+            <p class="text-xl md:text-2xl text-gray-300 mb-4 max-w-3xl mx-auto">
+                <span class="neon-green">代码代理框架</span> · 
+                <span class="neon-pink">工具协议</span> · 
+                <span class="neon-cyan">上下文工程</span>
+            </p>
+            <p class="text-lg text-gray-400 mb-8 mono">
+                :: 可追溯 :: 可验证 :: 可扩展 ::
+            </p>
+            <div class="flex justify-center gap-4 flex-wrap">
+                <a href="#quickstart" class="glow-box px-8 py-4 text-cyan-400 font-semibold hover:text-white transition-colors duration-300">
+                    [ 启动终端 ]
+                </a>
+                <a href="https://github.com" class="glow-box px-8 py-4 text-pink-500 font-semibold hover:text-white transition-colors duration-300">
+                    [ 源码仓库 ]
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Overview Section -->
+    <section id="overview" class="section">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-green-400 text-sm tracking-[0.3em]">>> SYSTEM OVERVIEW</span>
+            </div>
+            
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="feature-card cyber-border">
+                    <div class="text-4xl mb-4 neon-green">📚</div>
+                    <h3 class="text-xl font-semibold mb-3 text-white">学习导向</h3>
+                    <p class="text-gray-400 text-sm">
+                        Function calling + 工具协议真实落地，适合学习 Agent 开发实践
+                    </p>
+                </div>
+                
+                <div class="feature-card cyber-border">
+                    <div class="text-4xl mb-4 neon-pink">🔬</div>
+                    <h3 class="text-xl font-semibold mb-3 text-white">实验平台</h3>
+                    <p class="text-gray-400 text-sm">
+                        研究上下文工程（截断、压缩、持久化），快速搭建本地试验场
+                    </p>
+                </div>
+                
+                <div class="feature-card cyber-border">
+                    <div class="text-4xl mb-4 neon-cyan">⚙️</div>
+                    <h3 class="text-xl font-semibold mb-3 text-white">工具协议</h3>
+                    <p class="text-gray-400 text-sm">
+                        统一工具响应协议，所有工具遵循 status/data/text/stats/context 规范
+                    </p>
+                </div>
+                
+                <div class="feature-card cyber-border">
+                    <div class="text-4xl mb-4 neon-blue">🔍</div>
+                    <h3 class="text-xl font-semibold mb-3 text-white">可观测性</h3>
+                    <p class="text-gray-400 text-sm">
+                        Trace 追踪、JSONL + Markdown 双轨日志、完整执行记录
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="section">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-green-400 text-sm tracking-[0.3em]">>> CORE CAPABILITIES</span>
+            </div>
+            
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="feature-card cyber-border p-8">
+                    <h3 class="text-2xl font-semibold mb-4 flex items-center gap-3">
+                        <span class="text-3xl neon-green">🛠️</span>
+                        Function Calling
+                    </h3>
+                    <p class="text-gray-400 mb-6">
+                        不依赖 Action 文本解析，直接使用 OpenAI function calling 规范
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">LS</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Glob</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Grep</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Read</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Write</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Edit</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">MultiEdit</span>
+                        <span class="mono text-xs text-cyan-400 border border-cyan-400/30 px-3 py-1">Bash</span>
+                    </div>
+                </div>
+
+                <div class="feature-card cyber-border p-8">
+                    <h3 class="text-2xl font-semibold mb-4 flex items-center gap-3">
+                        <span class="text-3xl neon-pink">📋</span>
+                        统一协议
+                    </h3>
+                    <p class="text-gray-400 mb-6">
+                        所有工具严格遵循 Universal Tool Response Protocol
+                    </p>
+                    <div class="terminal">
+                        <code>{
+  "status": "success",
+  "data": { ... },
+  "text": "人类可读摘要",
+  "stats": { "time_ms": 123 },
+  "context": { "cwd": "." }
+}</code>
+                    </div>
+                </div>
+
+                <div class="feature-card cyber-border p-8">
+                    <h3 class="text-2xl font-semibold mb-4 flex items-center gap-3">
+                        <span class="text-3xl neon-cyan">🧠</span>
+                        上下文工程
+                    </h3>
+                    <ul class="space-y-3 text-gray-400">
+                        <li class="flex items-start gap-3">
+                            <span class="text-green-400">►</span>
+                            <span>L1: 系统提示词 + 工具描述</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="text-green-400">►</span>
+                            <span>L2: CODE_LAW.md 项目规则</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="text-green-400">►</span>
+                            <span>L3: 会话历史 + 压缩摘要</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <span class="text-green-400">►</span>
+                            <span>工具输出自动截断与落盘</span>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="feature-card cyber-border p-8">
+                    <h3 class="text-2xl font-semibold mb-4 flex items-center gap-3">
+                        <span class="text-3xl neon-blue">🤖</span>
+                        子代理机制
+                    </h3>
+                    <p class="text-gray-400 mb-6">
+                        支持四种子代理类型，独立运行、选择模型、隔离工具权限
+                    </p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="glow-box p-3 text-center">
+                            <div class="text-cyan-400 font-semibold mono">general</div>
+                            <div class="text-xs text-gray-500">通用执行</div>
+                        </div>
+                        <div class="glow-box p-3 text-center">
+                            <div class="text-cyan-400 font-semibold mono">explore</div>
+                            <div class="text-xs text-gray-500">代码扫描</div>
+                        </div>
+                        <div class="glow-box p-3 text-center">
+                            <div class="text-cyan-400 font-semibold mono">plan</div>
+                            <div class="text-xs text-gray-500">实现步骤</div>
+                        </div>
+                        <div class="glow-box p-3 text-center">
+                            <div class="text-cyan-400 font-semibold mono">summary</div>
+                            <div class="text-xs text-gray-500">内容压缩</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section id="comparison" class="section">
+        <div class="max-w-7xl mx-auto overflow-x-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-pink-500 text-sm tracking-[0.3em]">>> FRAMEWORK COMPARISON</span>
+            </div>
+            
+            <div class="glow-box cyber-border p-6">
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Framework</th>
+                            <th>Key Features</th>
+                            <th>Strengths</th>
+                            <th>Weaknesses</th>
+                            <th>Best For</th>
+                            <th>Learning Curve</th>
+                            <th>Community</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="mycodeagent">
+                            <td class="framework-name">MyCodeAgent</td>
+                            <td>Function calling, 统一协议, 上下文工程, 子代理</td>
+                            <td>架构清晰, 学习友好, 工具专注</td>
+                            <td>生态小, 集成少, 生产就绪度低</td>
+                            <td>学习/实验/自定义开发</td>
+                            <td>中等</td>
+                            <td>小型项目</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">LangChain</td>
+                            <td>模块化组件, 广泛集成, 内存管理, 向量存储</td>
+                            <td>最成熟生态, 优秀文档, 大社区, 生产就绪</td>
+                            <td>新手复杂, 性能开销, 学习曲线陡峭</td>
+                            <td>生产应用, RAG系统, 复杂工作流</td>
+                            <td>高</td>
+                            <td>90k+ stars</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">AutoGPT</td>
+                            <td>自主目标导向, 长期记忆, 网页浏览, 文件操作</td>
+                            <td>开创自主代理, 适合研究, 任务分解强</td>
+                            <td>可能陷入循环, 高Token成本, 生产就绪度低</td>
+                            <td>研究项目, 自主任务, 实验</td>
+                            <td>中等</td>
+                            <td>150k+ stars</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">CrewAI</td>
+                            <td>角色团队, 协作工作流, 任务委托</td>
+                            <td>多代理协作优秀, 角色清晰, 文档好</td>
+                            <td>相对新, 生态小, 集成有限</td>
+                            <td>团队工作流, 业务流程, 协作任务</td>
+                            <td>中等</td>
+                            <td>30k+ stars</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">MetaGPT</td>
+                            <td>软件公司模拟, SOP驱动, 多角色, 代码生成</td>
+                            <td>软件开发强, 结构化工作流, 代码质量好</td>
+                            <td>设置复杂, 资源密集, 范围窄</td>
+                            <td>软件开发, 代码生成, 项目规划</td>
+                            <td>高</td>
+                            <td>40k+ stars</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">AutoGen</td>
+                            <td>会话代理, 多代理对话, 人在环中</td>
+                            <td>研究基础强, 会话AI好, 模式灵活</td>
+                            <td>新手复杂, 工具生态少, 学术导向</td>
+                            <td>研究, 会话系统, 人机协作</td>
+                            <td>高</td>
+                            <td>20k+ stars</td>
+                        </tr>
+                        <tr>
+                            <td class="framework-name">LangGraph</td>
+                            <td>有状态多代理, 图执行, LangChain扩展, 循环工作流</td>
+                            <td>复杂工作流优秀, 状态管理, 可视调试</td>
+                            <td>较新框架, 需LangChain知识, 学习曲线陡</td>
+                            <td>复杂有状态工作流, 多步骤, 生产管道</td>
+                            <td>高</td>
+                            <td>增长中</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section id="architecture" class="section">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-green-400 text-sm tracking-[0.3em]">>> SYSTEM ARCHITECTURE</span>
+            </div>
+            
+            <div class="grid lg:grid-cols-2 gap-12">
+                <div class="glow-box cyber-border p-8">
+                    <h3 class="text-2xl font-semibold mb-6 neon-cyan mono">REACT LOOP</h3>
+                    <div class="space-y-6 workflow-line">
+                        <div class="flex items-start gap-6 relative z-10">
+                            <div class="step-number neon-green">1</div>
+                            <div>
+                                <div class="font-semibold text-white text-lg">THOUGHT</div>
+                                <p class="text-gray-400 text-sm mono">>> 分析任务, 规划下一步操作</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-6 relative z-10">
+                            <div class="step-number neon-pink">2</div>
+                            <div>
+                                <div class="font-semibold text-white text-lg">ACTION</div>
+                                <p class="text-gray-400 text-sm mono">>> 选择并调用工具, 传入参数</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-6 relative z-10">
+                            <div class="step-number neon-cyan">3</div>
+                            <div>
+                                <div class="font-semibold text-white text-lg">OBSERVATION</div>
+                                <p class="text-gray-400 text-sm mono">>> 获取工具返回结果 (已截断)</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-6 relative z-10">
+                            <div class="step-number neon-blue">4</div>
+                            <div>
+                                <div class="font-semibold text-white text-lg">DECISION</div>
+                                <p class="text-gray-400 text-sm mono">>> 判断继续循环或完成任务</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="space-y-4">
+                    <div class="feature-card cyber-border p-6">
+                        <div class="font-semibold text-cyan-400 text-lg mb-2 mono">core/agent.py</div>
+                        <p class="text-gray-400 text-sm">Agent 抽象基类, 定义基本接口和生命周期</p>
+                    </div>
+                    <div class="feature-card cyber-border p-6">
+                        <div class="font-semibold text-cyan-400 text-lg mb-2 mono">core/llm.py</div>
+                        <p class="text-gray-400 text-sm">HelloAgentsLLM 封装, 统一 LLM provider 接口</p>
+                    </div>
+                    <div class="feature-card cyber-border p-6">
+                        <div class="font-semibold text-cyan-400 text-lg mb-2 mono">core/context_engine/</div>
+                        <p class="text-gray-400 text-sm">上下文管理模块: 历史、压缩、截断、追踪</p>
+                    </div>
+                    <div class="feature-card cyber-border p-6">
+                        <div class="font-semibold text-cyan-400 text-lg mb-2 mono">tools/registry.py</div>
+                        <p class="text-gray-400 text-sm">中心化工具注册表, 乐观锁自动注入</p>
+                    </div>
+                    <div class="feature-card cyber-border p-6">
+                        <div class="font-semibold text-cyan-400 text-lg mb-2 mono">agents/codeAgent.py</div>
+                        <p class="text-gray-400 text-sm">主代理实现, 整合 ReAct 循环和工具调用</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start Section -->
+    <section id="quickstart" class="section">
+        <div class="max-w-4xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-pink-500 text-sm tracking-[0.3em]">>> QUICK START</span>
+            </div>
+            
+            <div class="space-y-6">
+                <div class="feature-card cyber-border p-6">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-10 h-10 bg-green-500 text-black rounded-full flex items-center justify-center font-bold">1</div>
+                        <h3 class="text-xl font-semibold text-white mono">INSTALL DEPENDENCIES</h3>
+                    </div>
+                    <div class="terminal">
+                        <code>pip install -r requirements.txt</code>
+                    </div>
+                </div>
+
+                <div class="feature-card cyber-border p-6">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-10 h-10 bg-green-500 text-black rounded-full flex items-center justify-center font-bold">2</div>
+                        <h3 class="text-xl font-semibold text-white mono">RUN AGENT</h3>
+                    </div>
+                    <div class="terminal">
+                        <code># 默认配置
+python scripts/chat_test_agent.py
+
+# 指定模型
+python scripts/chat_test_agent.py \
+  --provider zhipu \
+  --model GLM-4.7 \
+  --api-key YOUR_KEY \
+  --base-url https://open.bigmodel.cn/api/coding/paas/v4
+
+# 调试模式
+python scripts/chat_test_agent.py --show-raw</code>
+                    </div>
+                </div>
+
+                <div class="feature-card cyber-border p-6">
+                    <div class="flex items-center gap-4 mb-4">
+                        <div class="w-10 h-10 bg-green-500 text-black rounded-full flex items-center justify-center font-bold">3</div>
+                        <h3 class="text-xl font-semibold text-white mono">RUN TESTS</h3>
+                    </div>
+                    <div class="terminal">
+                        <code># 运行所有测试
+python -m pytest tests/ -v
+
+# 运行特定测试
+python -m pytest tests/test_read_tool.py -v
+
+# 运行评估
+python eval/run_eval.py --suite base</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Notes Section -->
+    <section class="section">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <span class="mono text-green-400 text-sm tracking-[0.3em]">>> IMPORTANT NOTES</span>
+            </div>
+            
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="feature-card cyber-border p-6">
+                    <h3 class="text-xl font-semibold mb-4 neon-pink">⚠️ TOOLS</h3>
+                    <ul class="space-y-2 text-gray-400 text-sm">
+                        <li>► 继承 tools/base.py:Tool</li>
+                        <li>► 遵循 Universal Tool Response Protocol</li>
+                        <li>► 使用仓库绝对导入</li>
+                        <li>► 工具提示词在 prompts/tools_prompts/*.py</li>
+                        <li>► 更新行为时同步更新提示词</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card cyber-border p-6">
+                    <h3 class="text-xl font-semibold mb-4 neon-cyan">🔒 SECURITY</h3>
+                    <ul class="space-y-2 text-gray-400 text-sm">
+                        <li>► 敏感信息存储在 .env 或环境变量</li>
+                        <li>► 永远不要提交 API Keys</li>
+                        <li>► 密钥泄露立即轮换</li>
+                        <li>► 子代理有工具权限隔离</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card cyber-border p-6">
+                    <h3 class="text-xl font-semibold mb-4 neon-green">📝 STYLE</h3>
+                    <ul class="space-y-2 text-gray-400 text-sm">
+                        <li>► Python 3, 4空格缩进</li>
+                        <li>► 函数/变量: snake_case</li>
+                        <li>► 类名: PascalCase</li>
+                        <li>► 测试命名: test_<functionality>_<scenario></li>
+                    </ul>
+                </div>
+
+                <div class="feature-card cyber-border p-6">
+                    <h3 class="text-xl font-semibold mb-4 neon-blue">⚙️ ENV VARS</h3>
+                    <ul class="space-y-2 text-gray-400 text-sm">
+                        <li>► CONTEXT_WINDOW (10000)</li>
+                        <li>► COMPRESSION_THRESHOLD (0.8)</li>
+                        <li>► MIN_RETAIN_ROUNDS (10)</li>
+                        <li>► TOOL_OUTPUT_MAX_LINES (2000)</li>
+                        <li>► SUBAGENT_MAX_STEPS (15)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="glow-box cyber-border p-6 mt-8 border-pink-500" style="border-color: var(--neon-pink);">
+                <h4 class="font-semibold text-pink-500 mb-4 mono">⚠️ COMMON TRAPS</h4>
+                <ul class="space-y-2 text-gray-400 text-sm">
+                    <li>► 不要假设库已可用, 先检查 requirements.txt</li>
+                    <li>► 编辑现有代码前, 先 Read 文件了解上下文</li>
+                    <li>► 子代理不能递归调用 Task 工具</li>
+                    <li>► 工具输出截断时, 使用分页参数获取完整内容</li>
+                    <li>► 使用 Write 前, 确保已经 Read 过目标文件</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 px-4 border-t border-cyan-500/20">
+        <div class="max-w-6xl mx-auto text-center">
+            <div class="flex justify-center items-center gap-3 mb-4">
+                <div class="w-10 h-10 bg-gradient-to-br from-green-400 to-cyan-400 rounded flex items-center justify-center">
+                    <span class="text-black font-bold text-xl">M</span>
+                </div>
+                <div>
+                    <div class="text-white font-bold text-xl tracking-wider">MYCODEAGENT</div>
+                    <div class="text-xs text-green-400 mono">代码代理框架</div>
+                </div>
+            </div>
+            <p class="text-gray-500 mb-2 mono text-sm">
+                [ MIT LICENSE ] :: 可追溯 :: 可验证 :: 可扩展 ::
+            </p>
+            <p class="text-gray-600 text-xs mono">
+                :: 2025 MYCODEAGENT PROJECT :: ALL SYSTEMS OPERATIONAL ::
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        // Smooth scrolling
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Active nav on scroll
+        const sections = document.querySelectorAll('section[id]');
+        const navLinks = document.querySelectorAll('.nav-link');
+
+        window.addEventListener('scroll', () => {
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                if (window.scrollY >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            navLinks.forEach(link => {
+                link.style.color = '';
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.style.color = '#00FFFF';
+                    link.style.textShadow = '0 0 10px #00FFFF';
+                }
+            });
+        });
+
+        // Typing effect for hero
+        const heroText = document.querySelector('h1');
+        if (heroText) {
+            const text = heroText.textContent;
+            heroText.textContent = '';
+            let i = 0;
+            const typeInterval = setInterval(() => {
+                if (i < text.length) {
+                    heroText.textContent += text.charAt(i);
+                    i++;
+                } else {
+                    clearInterval(typeInterval);
+                }
+            }, 50);
+        }
+    </script>
+</body>
+</html>

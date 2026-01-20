@@ -1,4 +1,5 @@
 .env
+.env.*
 .venv/
 venv/
 __pycache__/
@@ -9,6 +10,9 @@ __pycache__/
 .uv_cache/
 .uv_tools/
 .npm_cache/
+tool-output/
+tmp/
+.claude/
 skills/
 .chat_history
 AGENTS.md

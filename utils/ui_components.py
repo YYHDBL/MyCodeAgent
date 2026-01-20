@@ -87,20 +87,15 @@ class ModelBanner:
         version: str = "v1.0"
     ) -> Panel:
         """Create a stylized banner with model info"""
-        
-        # Create ASCII art style banner
-        art = Text()
-        art.append(" * ▐▛███▜▌ *   ", style="bold cyan")
-        art.append(f"MyCodeAgent {version}\n", style="bold white")
-        art.append("* ▝▜█████▛▘ *  ", style="bold cyan")
-        
-        # Model and provider info
-        model_display = f"{model}"
-        provider_display = f"{provider.upper()}"
-        art.append(f"{provider_display} · {model_display}\n", style="bold yellow")
-        
-        art.append(" *  ▘▘ ▝▝  *   ", style="bold cyan")
-        
+
+        logo_lines = [
+            "      /\\_/\\",
+            "     ( o.o )  [MyCat]",
+            "      > ^ <",
+        ]
+
+        logo = Text("\n".join(logo_lines), style="bold bright_blue")
+
         # Project directory (shortened if too long)
         home = Path.home()
         try:
@@ -108,10 +103,18 @@ class ModelBanner:
             dir_display = f"~/{rel_path}"
         except ValueError:
             dir_display = project_root
-            
-        art.append(dir_display, style="bold green")
-        
-        return Panel(art, border_style="cyan", padding=(0, 1))
+
+        info = Table.grid(padding=(0, 1))
+        info.add_row(Text("MyCodeAgent", style="bold white"), Text(version, style="dim"))
+        info.add_row(Text(provider.upper(), style="bold cyan"), Text(model, style="bright_white"))
+        info.add_row(Text("Workspace", style="dim"), Text(dir_display, style="bold green"))
+
+        layout = Table.grid(expand=True)
+        layout.add_column(ratio=1)
+        layout.add_column(ratio=2)
+        layout.add_row(logo, info)
+
+        return Panel(layout, border_style="bright_blue", padding=(1, 2))
 
 
 class ToolCallTree:

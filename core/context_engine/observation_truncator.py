@@ -45,7 +45,15 @@ def _get_max_bytes() -> int:
 
 def _get_truncate_direction() -> str:
     direction = os.getenv("TOOL_OUTPUT_TRUNCATE_DIRECTION", "head").lower().strip()
-    return direction if direction in {"head", "tail"} else "head"
+    return direction if direction in {"head", "tail", "head_tail"} else "head"
+
+def _get_head_tail_lines() -> int:
+    value = os.getenv("TOOL_OUTPUT_HEAD_TAIL_LINES", "40")
+    try:
+        count = int(value)
+    except ValueError:
+        return 40
+    return max(count, 1)
 
 def _get_output_dir() -> str:
     return os.getenv("TOOL_OUTPUT_DIR", "tool-output")
@@ -147,6 +155,7 @@ class ObservationTruncator:
         max_lines = _get_max_lines()
         max_bytes = _get_max_bytes()
         direction = _get_truncate_direction()
+        head_tail_lines = _get_head_tail_lines()
         
         # 1. 保存完整输出
         output_path = self._save_full_output(tool_name, raw_result)
@@ -155,9 +164,10 @@ class ObservationTruncator:
         # 2. 截断内容（基于可读文本）
         preview_text, kept_size = self._truncate_content(
             preview_source,
-            max_lines, 
-            max_bytes, 
-            direction
+            max_lines,
+            max_bytes,
+            direction,
+            head_tail_lines,
         )
         
         # 3. 构建截断后的响应（统一结构）
@@ -180,13 +190,14 @@ class ObservationTruncator:
             "data": {
                 "truncated": True,
                 "truncation": {
-            "direction": direction,
-            "max_lines": max_lines,
-            "max_bytes": max_bytes,
-            "original_lines": original_size["lines"],
-            "original_bytes": original_size["bytes"],
-            "kept_lines": kept_size["lines"],
-            "kept_bytes": kept_size["bytes"],
+                    "direction": direction,
+                    "max_lines": max_lines,
+                    "max_bytes": max_bytes,
+                    "head_tail_lines": head_tail_lines if direction == "head_tail" else None,
+                    "original_lines": original_size["lines"],
+                    "original_bytes": original_size["bytes"],
+                    "kept_lines": kept_size["lines"],
+                    "kept_bytes": kept_size["bytes"],
                 },
                 "preview": preview_text,
             },
@@ -217,6 +228,7 @@ class ObservationTruncator:
         max_lines: int,
         max_bytes: int,
         direction: str,
+        head_tail_lines: int,
     ) -> Tuple[str, Dict[str, int]]:
         """
         按行数和字节数截断内容
@@ -227,7 +239,16 @@ class ObservationTruncator:
         lines = content.split("\n")
         
         # 按行数截断
-        if direction == "tail":
+        if direction == "head_tail":
+            if len(lines) > head_tail_lines * 2:
+                kept_lines = (
+                    lines[:head_tail_lines]
+                    + ["... (truncated) ..."]
+                    + lines[-head_tail_lines:]
+                )
+            else:
+                kept_lines = lines
+        elif direction == "tail":
             kept_lines = lines[-max_lines:] if len(lines) > max_lines else lines
         else:  # head
             kept_lines = lines[:max_lines] if len(lines) > max_lines else lines

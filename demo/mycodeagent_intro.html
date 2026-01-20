@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyCodeAgent - 我是你的代码助手</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #000000;
+            --bg-secondary: #0A0E27;
+            --bg-card: #0D1117;
+            --text-primary: #F0F6FC;
+            --text-secondary: #8B949E;
+            --text-muted: #6E7681;
+            --accent-blue: #0080FF;
+            --accent-cyan: #00FFFF;
+            --accent-purple: #A855F7;
+            --accent-green: #3FB950;
+            --border-color: #21262D;
+            --glow-blue: rgba(0, 128, 255, 0.4);
+            --glow-cyan: rgba(0, 255, 255, 0.3);
+        }
+
+        body {
+            font-family: 'IBM Plex Sans', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Aurora Background */
+        .aurora-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            overflow: hidden;
+        }
+
+        .aurora-bg::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(ellipse at 20% 20%, var(--glow-blue) 0%, transparent 50%),
+                        radial-gradient(ellipse at 80% 20%, var(--glow-cyan) 0%, transparent 50%),
+                        radial-gradient(ellipse at 50% 80%, rgba(168, 85, 247, 0.2) 0%, transparent 50%);
+            animation: aurora 20s ease-in-out infinite;
+        }
+
+        @keyframes aurora {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            25% { transform: translate(2%, 2%) rotate(1deg); }
+            50% { transform: translate(-1%, 3%) rotate(-1deg); }
+            75% { transform: translate(3%, -2%) rotate(2deg); }
+        }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 1rem 2rem;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border-color);
+            z-index: 100;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.3s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--accent-cyan);
+        }
+
+        /* Hero Section */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 2rem;
+            position: relative;
+        }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(0, 128, 255, 0.1);
+            border: 1px solid var(--accent-blue);
+            border-radius: 100px;
+            font-size: 0.85rem;
+            color: var(--accent-cyan);
+            margin-bottom: 2rem;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 8vw, 5rem);
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            line-height: 1.1;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-subtitle {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin-bottom: 3rem;
+        }
+
+        .cta-group {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 0.875rem 2rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            color: #000;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 40px var(--glow-blue);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        /* Section Styles */
+        section {
+            padding: 6rem 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 4rem;
+        }
+
+        .section-header h2 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        /* Features Grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 60px rgba(0, 128, 255, 0.15);
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, rgba(0, 128, 255, 0.2), rgba(0, 255, 255, 0.1));
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .feature-icon svg {
+            width: 24px;
+            height: 24px;
+            color: var(--accent-cyan);
+        }
+
+        .feature-card h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Architecture Section */
+        .arch-section {
+            background: linear-gradient(180deg, var(--bg-secondary), var(--bg-primary));
+        }
+
+        .arch-diagram {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-top: 3rem;
+        }
+
+        .arch-layer {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1.5rem;
+            position: relative;
+        }
+
+        .arch-layer::before {
+            content: attr(data-layer);
+            position: absolute;
+            top: -12px;
+            left: 1rem;
+            background: var(--accent-blue);
+            color: #000;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+        }
+
+        .arch-layer h4 {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent-cyan);
+        }
+
+        .arch-layer ul {
+            list-style: none;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .arch-layer li {
+            padding: 0.25rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .arch-layer li::before {
+            content: '→';
+            color: var(--accent-blue);
+        }
+
+        /* Tools Section */
+        .tools-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: center;
+        }
+
+        .tool-tag {
+            background: rgba(0, 128, 255, 0.1);
+            border: 1px solid var(--border-color);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+        }
+
+        .tool-tag:hover {
+            border-color: var(--accent-cyan);
+            background: rgba(0, 255, 255, 0.1);
+        }
+
+        /* Comparison Section */
+        .comparison-table {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        .comparison-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem 1.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .comparison-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        .comparison-table th:first-child {
+            border-radius: 12px 0 0 0;
+        }
+
+        .comparison-table th:last-child {
+            border-radius: 0 12px 0 0;
+        }
+
+        .comparison-table tr:last-child td:first-child {
+            border-radius: 0 0 0 12px;
+        }
+
+        .comparison-table tr:last-child td:last-child {
+            border-radius: 0 0 12px 0;
+        }
+
+        .comparison-table tr:hover {
+            background: rgba(0, 128, 255, 0.05);
+        }
+
+        .comparison-table .highlight {
+            background: rgba(63, 185, 80, 0.1);
+        }
+
+        .comparison-table .check {
+            color: var(--accent-green);
+        }
+
+        /* Code Block */
+        .code-block {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            background: var(--bg-secondary);
+            padding: 0.75rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .code-header span {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+
+        .code-content {
+            padding: 1.5rem;
+            overflow-x: auto;
+        }
+
+        .code-content pre {
+            margin: 0;
+            color: var(--text-secondary);
+        }
+
+        .code-content .comment { color: #6E7681; }
+        .code-content .keyword { color: #FF7B72; }
+        .code-content .string { color: #A5D6FF; }
+        .code-content .function { color: #D2A8FF; }
+        .code-content .number { color: #79C0FF; }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border-color);
+            padding: 3rem 2rem;
+            text-align: center;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .footer-links {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+
+        .footer-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        .footer-links a:hover {
+            color: var(--accent-cyan);
+        }
+
+        footer p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .cta-group {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .btn {
+                width: 100%;
+                max-width: 280px;
+            }
+        }
+
+        /* Animation */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.6s ease-out forwards;
+        }
+
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+        .delay-4 { animation-delay: 0.4s; }
+    </style>
+</head>
+<body>
+    <div class="aurora-bg"></div>
+
+    <!-- Navigation -->
+    <nav>
+        <div class="logo mono">MyCodeAgent</div>
+        <div class="nav-links mono">
+            <a href="#about">关于我</a>
+            <a href="#features">核心能力</a>
+            <a href="#architecture">架构设计</a>
+            <a href="#comparison">竞品对比</a>
+            <a href="#start">快速开始</a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero" id="about">
+        <div class="hero-badge mono animate-in">
+            <span>●</span> 学习与实验型代码代理框架
+        </div>
+        <h1 class="animate-in delay-1">
+            你好，我是 <span>MyCodeAgent</span>
+        </h1>
+        <p class="hero-subtitle animate-in delay-2">
+            一个聚焦 <strong>工具协议</strong>、<strong>上下文工程</strong>、<strong>子代理机制</strong> 与 <strong>可观测性</strong> 的代码助手。
+            让"Agent能做什么"与"Agent为什么能做"都可追溯、可验证、可扩展。
+        </p>
+        <div class="cta-group animate-in delay-3">
+            <a href="#start" class="btn btn-primary">立即开始</a>
+            <a href="https://github.com/NihilBF/MyCodeAgent" class="btn btn-secondary" target="_blank">GitHub 仓库</a>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features">
+        <div class="section-header">
+            <h2>我的核心能力</h2>
+            <p>基于 ReAct 范式，为学习 Agent 系统而生的实验框架</p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                </div>
+                <h3>统一工具协议</h3>
+                <p>所有工具遵循标准响应格式：<code class="mono">status/data/text/stats/context/error</code>，让每次调用都可追溯、可解析、可测试。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                    </svg>
+                </div>
+                <h3>Message List 上下文工程</h3>
+                <p>分层注入 L1(系统) / L2(规则) / L3(历史)，支持历史压缩、工具输出截断、会话持久化。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                    </svg>
+                </div>
+                <h3>Skills / Task 子代理</h3>
+                <p>内置技能系统与可委托子代理，支持通用/探索/规划/摘要四种模式，实现复杂任务的分而治之。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                </div>
+                <h3>Trace 可观测性</h3>
+                <p>JSONL + Markdown 双轨日志记录，自动脱敏敏感信息，完整追踪每次决策过程。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                </div>
+                <h3>MCP 扩展支持</h3>
+                <p>通过 Model Context Protocol 接入外部工具生态，无限扩展能力边界。</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                    </svg>
+                </div>
+                <h3>轻量熔断机制</h3>
+                <p>连续失败的工具自动临时禁用，避免无效调用浪费 Token，提升稳定性。</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tools Section -->
+    <section id="tools">
+        <div class="section-header">
+            <h2>内置工具箱</h2>
+            <p>开箱即用的 13+ 代码操作工具</p>
+        </div>
+        <div class="tools-list mono">
+            <span class="tool-tag">LS</span>
+            <span class="tool-tag">Glob</span>
+            <span class="tool-tag">Grep</span>
+            <span class="tool-tag">Read</span>
+            <span class="tool-tag">Write</span>
+            <span class="tool-tag">Edit</span>
+            <span class="tool-tag">MultiEdit</span>
+            <span class="tool-tag">Bash</span>
+            <span class="tool-tag">TodoWrite</span>
+            <span class="tool-tag">Skill</span>
+            <span class="tool-tag">Task</span>
+            <span class="tool-tag">AskUser</span>
+        </div>
+    </section>
+
+    <!-- Architecture Section -->
+    <section class="arch-section" id="architecture">
+        <div class="section-header">
+            <h2>我的架构设计</h2>
+            <p>清晰的分层结构，每一层都有明确的职责</p>
+        </div>
+        <div class="arch-diagram mono">
+            <div class="arch-layer" data-layer="L1">
+                <h4>系统静态层</h4>
+                <ul>
+                    <li>System Prompt</li>
+                    <li>工具提示词</li>
+                    <li>Skills 说明</li>
+                </ul>
+            </div>
+            <div class="arch-layer" data-layer="L2">
+                <h4>项目规则层</h4>
+                <ul>
+                    <li>CODE_LAW.md</li>
+                    <li>项目特定规范</li>
+                </ul>
+            </div>
+            <div class="arch-layer" data-layer="L3">
+                <h4>会话历史层</h4>
+                <ul>
+                    <li>User 消息</li>
+                    <li>Assistant 消息</li>
+                    <li>Tool 调用结果</li>
+                    <li>Summary 压缩摘要</li>
+                </ul>
+            </div>
+            <div class="arch-layer" data-layer="Core">
+                <h4>核心引擎</h4>
+                <ul>
+                    <li>ReAct 循环</li>
+                    <li>HistoryManager</li>
+                    <li>ObservationTruncator</li>
+                    <li>TraceLogger</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <!-- Comparison Section -->
+    <section id="comparison">
+        <div class="section-header">
+            <h2>我与其他框架</h2>
+            <p>为什么选择我？面向学习而生的差异化定位</p>
+        </div>
+        <div class="comparison-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>特性</th>
+                        <th>MyCodeAgent</th>
+                        <th>LangChain</th>
+                        <th>Cursor/Devin</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>定位</td>
+                        <td class="highlight">学习与实验</td>
+                        <td>生产级框架</td>
+                        <td>商业产品</td>
+                    </tr>
+                    <tr>
+                        <td>代码可读性</td>
+                        <td><span class="check">✓</span> 极简清晰</td>
+                        <td>复杂封装</td>
+                        <td>闭源</td>
+                    </tr>
+                    <tr>
+                        <td>工具协议标准化</td>
+                        <td><span class="check">✓</span> 统一响应格式</td>
+                        <td>部分支持</td>
+                        <td>自定义</td>
+                    </tr>
+                    <tr>
+                        <td>上下文工程</td>
+                        <td><span class="check">✓</span> Message List模式</td>
+                        <td>多种方案</td>
+                        <td>黑盒</td>
+                    </tr>
+                    <tr>
+                        <td>Trace 日志</td>
+                        <td><span class="check">✓</span> 双轨+脱敏</td>
+                        <td>基础支持</td>
+                        <td>无</td>
+                    </tr>
+                    <tr>
+                        <td>MCP 支持</td>
+                        <td><span class="check">✓</span> 原生支持</td>
+                        <td>需适配</td>
+                        <td>部分</td>
+                    </tr>
+                    <tr>
+                        <td>可扩展性</td>
+                        <td><span class="check">✓</span> 插件式工具</td>
+                        <td><span class="check">✓</span> 丰富生态</td>
+                        <td>受限</td>
+                    </tr>
+                    <tr>
+                        <td>本地运行</td>
+                        <td><span class="check">✓</span> 完全本地</td>
+                        <td><span class="check">✓</span></td>
+                        <td>云端+本地</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- Quick Start Section -->
+    <section id="start">
+        <div class="section-header">
+            <h2>快速开始</h2>
+            <p>三步即可启动你的代码助手</p>
+        </div>
+        <div class="code-block mono">
+            <div class="code-header">
+                <span>Terminal</span>
+                <button class="copy-btn" onclick="copyCode()">复制</button>
+            </div>
+            <div class="code-content">
+                <pre><span class="comment"># 1. 安装依赖</span>
+pip install -r requirements.txt
+
+<span class="comment"># 2. 启动交互式 CLI</span>
+python scripts/chat_test_agent.py
+
+<span class="comment"># 3. 或指定自定义模型</span>
+python scripts/chat_test_agent.py \
+  --provider zhipu \
+  --model <span class="string">GLM-4.7</span> \
+  --api-key YOUR_KEY \
+  --base-url https://open.bigmodel.cn/api/coding/paas/v4</pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-links mono">
+                <a href="https://github.com/NihilBF/MyCodeAgent" target="_blank">GitHub</a>
+                <a href="#" target="_blank">文档</a>
+                <a href="#" target="_blank">示例</a>
+                <a href="#" target="_blank">贡献指南</a>
+            </div>
+            <p class="mono">MIT License · Made with curiosity by Nihil</p>
+            <p style="margin-top: 1rem; font-size: 0.85rem;">
+                致谢：感谢 <a href="https://github.com/datawhalechina" style="color: var(--accent-blue);" target="_blank">Datawhale HelloAgent</a>、
+                <a href="https://github.com/shareAI-lab/Kode-cli" style="color: var(--accent-blue);" target="_blank">Kode-Cli</a>、
+                <a href="https://github.com/MiniMax-AI/Mini-Agent" style="color: var(--accent-blue);" target="_blank">Mini-Agent</a>、
+                <a href="https://github.com/anomalyco/opencode" style="color: var(--accent-blue);" target="_blank">OpenCode</a>
+            </p>
+        </div>
+    </footer>
+
+    <script>
+        function copyCode() {
+            const code = `pip install -r requirements.txt
+
+python scripts/chat_test_agent.py
+
+python scripts/chat_test_agent.py \
+  --provider zhipu \
+  --model GLM-4.7 \
+  --api-key YOUR_KEY \
+  --base-url https://open.bigmodel.cn/api/coding/paas/v4`;
+
+            navigator.clipboard.writeText(code).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                btn.textContent = '已复制!';
+                setTimeout(() => {
+                    btn.textContent = '复制';
+                }, 2000);
+            });
+        }
+
+        // Smooth scroll
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Animate on scroll
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('animate-in');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.feature-card, .arch-layer').forEach(el => {
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>

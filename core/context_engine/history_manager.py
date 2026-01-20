@@ -15,6 +15,7 @@
 - A6: 压缩触发条件：estimated_total >= 0.8 * context_window 且消息数 >= 3
 """
 
+import json
 import logging
 from typing import List, Optional, Callable, Tuple, Dict, Any
 from datetime import datetime
@@ -56,6 +57,8 @@ class HistoryManager:
         
         # 上一次 API 调用的 token 使用量（精确值）
         self._last_usage_tokens: int = 0
+        # 会话累计 token 使用量
+        self._total_usage_tokens: int = 0
     
     # =========================================================================
     # 公开接口
@@ -192,6 +195,7 @@ class HistoryManager:
         """清空历史记录"""
         self._messages.clear()
         self._last_usage_tokens = 0
+        self._total_usage_tokens = 0
     
     def update_last_usage(self, total_tokens: int):
         """
@@ -200,7 +204,39 @@ class HistoryManager:
         Args:
             total_tokens: API 返回的 usage.total_tokens
         """
+        if total_tokens is None:
+            return
         self._last_usage_tokens = total_tokens
+        self._total_usage_tokens += total_tokens
+
+    def get_total_usage_tokens(self) -> int:
+        """获取会话累计 token 使用量"""
+        return self._total_usage_tokens
+
+    def estimate_total_tokens(self, pending_input: str) -> int:
+        """估算会话累计 token（累计 usage + 当前输入估算）"""
+        input_estimate = len(pending_input) // 3
+        return self._total_usage_tokens + input_estimate
+
+    def estimate_context_tokens(self, pending_input: str) -> int:
+        """估算当前上下文 token（历史消息 + 当前输入）"""
+        total_chars = len(pending_input or "")
+        for msg in self._messages:
+            content = msg.content or ""
+            total_chars += len(str(content))
+            meta = msg.metadata or {}
+            if msg.role == "assistant":
+                tool_calls = meta.get("tool_calls")
+                if tool_calls:
+                    try:
+                        total_chars += len(json.dumps(tool_calls, ensure_ascii=False))
+                    except Exception:
+                        total_chars += len(str(tool_calls))
+            elif msg.role == "tool":
+                tool_name = meta.get("tool_name")
+                if tool_name:
+                    total_chars += len(str(tool_name))
+        return total_chars // 3
     
     # =========================================================================
     # 压缩触发检测
@@ -224,9 +260,8 @@ class HistoryManager:
         if len(self._messages) < 3:
             return False
         
-        # 计算预估 token 数
-        input_estimate = len(pending_input) // 3
-        estimated_total = self._last_usage_tokens + input_estimate
+        # 计算预估 token 数（基于当前上下文）
+        estimated_total = self.estimate_context_tokens(pending_input)
         
         # 计算阈值
         threshold = int(self._config.context_window * self._config.compression_threshold)

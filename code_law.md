@@ -3,54 +3,106 @@
 ## Project Structure & Module Organization
 
 ```
-MyCodeAgent/
-├── agents/          # Agent implementations
-├── core/            # Core ReAct loop and tool protocols
-├── docs/            # Design documentation
-├── eval/            # Evaluation scripts
-├── memory/          # Memory and context management
-├── prompts/         # System prompts and templates
-├── scripts/         # Entry points (chat_test_agent.py)
-├── skills/          # Skill definitions (SKILL.md per skill)
-├── tests/           # Test suite
-├── tools/           # Built-in tools (LS, Glob, Grep, etc.)
-├── utils/           # Utility functions
-└── tool-output/     # Truncated tool outputs cache
+agents/          - Main agent implementations (e.g., CodeAgent)
+core/            - Core runtime, context engineering, LLM integration
+  ├── context_engine/  - History management, compression, trace logging
+  └── skills/         - Skill loading mechanism
+tools/           - Tool system and registry
+  ├── builtin/       - Built-in tools (LS, Glob, Grep, Read, Write, Edit, etc.)
+  └── mcp/           - MCP server loader
+prompts/         - System and tool prompts
+tests/           - Test suite (pytest-based)
+scripts/         - CLI entry points
+skills/          - Skill definitions (SKILL.md per skill)
+docs/            - Design documentation
+memory/          - Trace/session output (local)
+tool-output/     - Long output persistence
 ```
 
 ## Build, Test, and Development Commands
 
-- **Install dependencies**: `pip install -r requirements.txt`
-- **Run interactive CLI**: `python scripts/chat_test_agent.py`
-- **Run with custom model**: `python scripts/chat_test_agent.py --provider <provider> --model <model> --api-key <key> --base-url <url>`
-- **Run tests**: `python -m pytest tests/ -v`
-- **Debug raw responses**: `python scripts/chat_test_agent.py --show-raw`
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run interactive CLI
+python scripts/chat_test_agent.py
+
+# Run with specific provider/model
+python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
+
+# Enable raw output for debugging
+python scripts/chat_test_agent.py --show-raw
+
+# Run tests
+python -m pytest tests/ -v
+```
 
 ## Coding Style & Naming Conventions
 
 - **Language**: Python 3.x
-- **Dependencies**: openai>=1.0.0, pydantic>=1.10.0, mcp>=1.0.0, anyio>=3.0.0, rich>=13.0.0
-- **Key patterns**:
-  - Tool responses follow Universal Tool Response Protocol (status/data/text/stats/context)
-  - Skills use `skills/<skill-name>/SKILL.md` format with frontmatter (name, description)
-  - Environment variables for configuration (CONTEXT_WINDOW, TOOL_OUTPUT_MAX_LINES, etc.)
+- **Indentation**: 4 spaces (PEP 8)
+- **Naming**: 
+  - Classes: `PascalCase` (e.g., `CodeAgent`, `ListFilesTool`)
+  - Functions/variables: `snake_case` (e.g., `run_agent`, `project_root`)
+  - Constants: `UPPER_SNAKE_CASE` (e.g., `CONTEXT_WINDOW`)
+- **Docstrings**: Use triple quotes for class/function documentation
+- **Type hints**: Required for function parameters and returns
 
 ## Testing Guidelines
 
 - **Framework**: pytest
-- **Test location**: `tests/` directory
-- **Run tests**: `python -m pytest tests/ -v`
-- **Coverage**: Test tool protocols, agent loops, and context management
-- **Naming**: Use descriptive test names following `test_<functionality>_<scenario>` pattern
+- **Fixtures**: Shared fixtures in `tests/conftest.py`
+- **Test naming**: `test_<module>_<feature>.py` (e.g., `test_read_tool.py`)
+- **Test functions**: `def test_<scenario>(...)`
+- **Temp projects**: Use `temp_project` fixture for sandboxed testing
+- **Run specific tests**: `python -m pytest tests/test_read_tool.py -v`
 
-## Skills & Subagent Guidelines
+## Commit & Pull Request Guidelines
 
-- **Skills**: Place in `skills/<name>/SKILL.md` with frontmatter; use `$ARGUMENTS` placeholder for dynamic content
-- **Task subagents**: Use `general` for execution, `explore` for codebase scanning, `plan` for implementation steps, `summary` for compression
-- **MCP tools**: Register in `mcp_servers.json` at project root
+- **Commit messages**: Use conventional commits
+  - `feat:` - New features
+  - `docs:` - Documentation updates
+  - `fix:` - Bug fixes
+  - Example: `feat: function calling + mvp enhancements`
+- **Pull requests**: Include clear descriptions, link related issues, add tests for new features
 
-## Architecture Notes
+## MCP Tools Integration
 
-- **ReAct pattern**: Thought → Action → Observation loop
-- **Context engineering**: Layered injection, history compression, @file references force Read
-- **Tool isolation**: Subagents have restricted toolsets (read-only/limited)
+Configure external MCP tools in `mcp_servers.json`:
+```json
+{
+  "mcpServers": {
+    "tool-name": {
+      "command": "npx",
+      "args": ["-y", "some-mcp-server"]
+    }
+  }
+}
+```
+
+## Skills Directory Convention
+
+```
+skills/<skill-name>/SKILL.md
+```
+
+SKILL.md format:
+```markdown
+---
+name: skill-name
+description: Skill description
+---
+# Skill Title
+
+Instructions here...
+$ARGUMENTS
+```
+
+## Environment Variables
+
+Key variables (see README.md for full list):
+- `CONTEXT_WINDOW` - Default 10000
+- `TOOL_OUTPUT_MAX_LINES` - Default 2000
+- `TRACE_ENABLED` - Default true
+- `SUBAGENT_MAX_STEPS` - Default 15

@@ -44,14 +44,14 @@ from utils.ui_components import EnhancedUI, ToolCallTree
 
 # Geeky Theme
 custom_theme = Theme({
-    "info": "dim cyan",
-    "warning": "magenta",
-    "error": "bold red",
-    "user": "bold green",
-    "agent": "bold blue",
-    "banner": "bold cyan",
-    "thinking": "italic yellow",
-    "action": "bold cyan",
+    "info": "bright_cyan",
+    "warning": "bright_yellow",
+    "error": "bold bright_red",
+    "user": "bold bright_green",
+    "agent": "bold bright_blue",
+    "banner": "bold bright_blue",
+    "thinking": "italic bright_magenta",
+    "action": "bold bright_cyan",
     "observation": "dim",
 })
 
@@ -110,6 +110,11 @@ class RichConsoleCodeAgent(CodeAgent):
              if content:
                  md = Markdown(content)
                  console.print(Panel(md, title="[thinking]Thinking[/thinking]", border_style="yellow", title_align="left"))
+        elif "🧠 Reasoning:" in message:
+             content = message.split("🧠 Reasoning:", 1)[-1].strip()
+             if content:
+                 md = Markdown(content)
+                 console.print(Panel(md, title="[thinking]Reasoning[/thinking]", border_style="magenta", title_align="left"))
         elif "🎬 Action:" in message:
              # Action is usually followed by content, let's parse it
              content = message.split("🎬 Action:", 1)[-1].strip()
@@ -178,15 +183,12 @@ def _print_banner(code_law_exists: bool, ui: Optional['EnhancedUI'] = None) -> N
         ui.show_banner()
     else:
         banner_text = r"""
-   ______          __      ___                     __ 
-  / ____/___  ____/ /___  /   |____ ____  ____  / /_
- / /   / __ \/ __  / _ \/ /| / __ `/ _ \/ __ \/ __/
-/ /___/ /_/ / /_/ /  __/ ___ / /_/ /  __/ / / / /_  
-\____/\____/\__,_/\___/_/  |_\__, /\___/_/ /_/\__/  
-                            /____/                  
+      /\_/\
+     ( o.o )  [MyCat]
+      > ^ <
         """
         console.print(Text(banner_text, style="banner"))
-        console.print("[dim]Powered by Nihil CodeAgent v1.0[/dim]")
+        console.print("[dim]Developer-first Coding Agent[/dim]")
     
     console.print("[dim]Type 'exit' to quit, '/model' to see model info[/dim]")
     

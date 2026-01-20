@@ -223,57 +223,7 @@ class CodeAgent(Agent):
             step=0,
         )
         
-        # 2. 检查是否需要压缩（A6 规则）
-        if self.history_manager.should_compress(processed_input):
-            estimated_tokens = self.history_manager._last_usage_tokens + len(processed_input) // 3
-            threshold = int(self.config.context_window * self.config.compression_threshold)
-            trace_logger.log_event("history_compression_triggered", {
-                "estimated_tokens": estimated_tokens,
-                "threshold": threshold,
-                "message_count": self.history_manager.get_message_count(),
-            }, step=0)
-            
-            if self.console_verbose:
-                self._console("\n📦 触发历史压缩...")
-            elif self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug("触发历史压缩")
-            
-            rounds_before = self.history_manager.get_rounds_count()
-            messages_before = self.history_manager.get_message_count()
-            
-            compress_info = self.history_manager.compact(
-                on_event=lambda ev, payload: trace_logger.log_event(ev, payload, step=0),
-                return_info=True,
-            )
-            compressed = bool(compress_info.get("compressed"))
-            
-            if compressed:
-                rounds_after = self.history_manager.get_rounds_count()
-                messages_after = self.history_manager.get_message_count()
-                
-                trace_logger.log_event("history_compression_completed", {
-                    "rounds_before": rounds_before,
-                    "rounds_after": rounds_after,
-                    "messages_compressed": messages_before - messages_after,
-                    "summary_generated": compress_info.get("summary_generated", False),
-                    "details": compress_info,
-                }, step=0)
-
-                # 记录压缩后的最终上下文（system + history）
-                compressed_history = self.history_manager.to_messages()
-                final_context = self.context_builder.build_messages(compressed_history)
-                trace_logger.log_event(
-                    "history_compression_final_context",
-                    {"message_count": len(final_context), "messages": final_context},
-                    step=0,
-                )
-                
-                if self.console_verbose:
-                    self._console(f"✅ 压缩完成，当前轮次数: {rounds_after}")
-                    self._print_context_preview(final_context)
-                elif self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("压缩完成，当前轮次数: %d", rounds_after)
-                    self._print_context_preview(final_context)
+        # 2. 压缩检测改为每次 ReAct 之前（循环内）
 
         # 3. 将用户消息写入 history（轮次开始时写入）
         self.history_manager.append_user(processed_input)
@@ -288,6 +238,7 @@ class CodeAgent(Agent):
         response_text = ""
         try:
             response_text = self._react_loop(
+                pending_input=processed_input,
                 show_raw=show_raw,
                 trace_logger=trace_logger,
             )
@@ -323,6 +274,7 @@ class CodeAgent(Agent):
 
     def _react_loop(
         self,
+        pending_input: str,
         show_raw: bool,
         trace_logger,
     ) -> str:
@@ -346,6 +298,59 @@ class CodeAgent(Agent):
                 self._console(f"… Step {step}/{self.max_steps}")
             elif self.logger.isEnabledFor(logging.DEBUG):
                 self.logger.debug("Step %d/%d", step, self.max_steps)
+
+            # 每次 ReAct 前检查是否需要压缩
+            if self.history_manager.should_compress(pending_input):
+                estimated_tokens = self.history_manager.estimate_context_tokens(pending_input)
+                threshold = int(self.config.context_window * self.config.compression_threshold)
+                trace_logger.log_event("history_compression_triggered", {
+                    "estimated_tokens": estimated_tokens,
+                    "threshold": threshold,
+                    "total_usage_tokens": self.history_manager.get_total_usage_tokens(),
+                    "message_count": self.history_manager.get_message_count(),
+                }, step=step)
+
+                if self.console_verbose:
+                    self._console("\n📦 触发历史压缩...")
+                elif self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("触发历史压缩")
+
+                rounds_before = self.history_manager.get_rounds_count()
+                messages_before = self.history_manager.get_message_count()
+
+                compress_info = self.history_manager.compact(
+                    on_event=lambda ev, payload: trace_logger.log_event(ev, payload, step=step),
+                    return_info=True,
+                )
+                compressed = bool(compress_info.get("compressed"))
+
+                if compressed:
+                    rounds_after = self.history_manager.get_rounds_count()
+                    messages_after = self.history_manager.get_message_count()
+
+                    trace_logger.log_event("history_compression_completed", {
+                        "rounds_before": rounds_before,
+                        "rounds_after": rounds_after,
+                        "messages_compressed": messages_before - messages_after,
+                        "summary_generated": compress_info.get("summary_generated", False),
+                        "details": compress_info,
+                    }, step=step)
+
+                    # 记录压缩后的最终上下文（system + history）
+                    compressed_history = self.history_manager.to_messages()
+                    final_context = self.context_builder.build_messages(compressed_history)
+                    trace_logger.log_event(
+                        "history_compression_final_context",
+                        {"message_count": len(final_context), "messages": final_context},
+                        step=step,
+                    )
+
+                    if self.console_verbose:
+                        self._console(f"✅ 压缩完成，当前轮次数: {rounds_after}")
+                        self._print_context_preview(final_context)
+                    elif self.logger.isEnabledFor(logging.DEBUG):
+                        self.logger.debug("压缩完成，当前轮次数: %d", rounds_after)
+                        self._print_context_preview(final_context)
 
             # 构建 messages 列表
             history_messages = self.history_manager.to_messages()
@@ -374,6 +379,7 @@ class CodeAgent(Agent):
                     )
 
                 response_text = self._extract_content(raw_response) or ""
+                reasoning_content = self._extract_reasoning_content(raw_response)
                 usage = self._extract_usage(raw_response)
                 if usage and usage.get("total_tokens") is not None:
                     self.history_manager.update_last_usage(usage["total_tokens"])
@@ -392,6 +398,12 @@ class CodeAgent(Agent):
                     },
                     step=step,
                 )
+
+                if self.console_verbose and reasoning_content:
+                    display_reasoning = reasoning_content
+                    if len(display_reasoning) > 1200:
+                        display_reasoning = display_reasoning[:1200] + "...(truncated)"
+                    self._console(f"\n🧠 Reasoning: {display_reasoning}\n")
 
                 if tool_calls or (response_text and str(response_text).strip()):
                     break
@@ -657,6 +669,39 @@ class CodeAgent(Agent):
                 return content
         except Exception:
             return str(raw_response)
+
+    @staticmethod
+    def _extract_reasoning_content(raw_response: Any) -> Optional[str]:
+        def _get_attr(obj, key: str):
+            if obj is None:
+                return None
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
+
+        try:
+            choices = _get_attr(raw_response, "choices")
+            if not choices:
+                return None
+            choice = choices[0]
+            message = _get_attr(choice, "message")
+            if not message:
+                return None
+
+            reasoning = _get_attr(message, "reasoning_content") or _get_attr(message, "reasoning")
+            if reasoning:
+                return reasoning
+
+            model_extra = None
+            if isinstance(message, dict):
+                model_extra = message.get("model_extra") or message.get("additional_kwargs")
+            else:
+                model_extra = getattr(message, "model_extra", None) or getattr(message, "additional_kwargs", None)
+            if isinstance(model_extra, dict):
+                return model_extra.get("reasoning_content") or model_extra.get("reasoning")
+        except Exception:
+            return None
+        return None
 
     @staticmethod
     def _extract_usage(raw_response: Any) -> Optional[dict]:
