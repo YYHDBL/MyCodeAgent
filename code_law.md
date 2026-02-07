@@ -102,7 +102,7 @@ $ARGUMENTS
 ## Environment Variables
 
 Key variables (see README.md for full list):
-- `CONTEXT_WINDOW` - Default 10000
+- `CONTEXT_WINDOW` - Default 128000
 - `TOOL_OUTPUT_MAX_LINES` - Default 2000
 - `TRACE_ENABLED` - Default true
 - `SUBAGENT_MAX_STEPS` - Default 15

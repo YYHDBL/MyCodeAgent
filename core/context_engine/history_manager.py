@@ -83,13 +83,19 @@ class HistoryManager:
         self._messages.append(msg)
         return msg
     
-    def append_assistant(self, content: str, metadata: Optional[dict] = None) -> Message:
+    def append_assistant(
+        self,
+        content: str,
+        metadata: Optional[dict] = None,
+        reasoning_content: Optional[str] = None,
+    ) -> Message:
         """
         添加助手消息（Thought/Action 或最终回复）
         
         Args:
             content: 助手输出内容
             metadata: 可选的元数据（如 step、action_type 等）
+            reasoning_content: 可选的推理内容（Kimi API 的 reasoning_content）
         
         Returns:
             创建的 Message 对象
@@ -99,6 +105,9 @@ class HistoryManager:
             role="assistant",
             metadata=metadata or {},
         )
+        # 如果有 reasoning_content，存入 metadata 中
+        if reasoning_content:
+            msg.metadata["reasoning_content"] = reasoning_content
         self._messages.append(msg)
         return msg
     
@@ -474,6 +483,11 @@ class HistoryManager:
                     "role": "assistant",
                     "content": msg.content,
                 }
+                # 如果有 reasoning_content，添加到消息中（Kimi API 要求）
+                reasoning_content = (msg.metadata or {}).get("reasoning_content")
+                if reasoning_content:
+                    assistant_msg["reasoning_content"] = reasoning_content
+                
                 if strict_mode and (msg.metadata or {}).get("action_type") == "tool_call":
                     tool_calls = (msg.metadata or {}).get("tool_calls")
                     if tool_calls:

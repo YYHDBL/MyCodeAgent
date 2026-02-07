@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # 支持的LLM提供商
 SUPPORTED_PROVIDERS = Literal[
     "openai", "deepseek", "qwen", "modelscope",
-    "kimi", "zhipu", "ollama", "vllm", "local", "auto"
+    "kimi", "zhipu", "siliconflow", "ollama", "vllm", "local", "auto"
 ]
 
 class HelloAgentsLLM:
@@ -69,7 +69,8 @@ class HelloAgentsLLM:
         self.provider = self._resolve_provider(provider, api_key, base_url)
 
         # 根据provider确定API密钥和base_url
-        self.api_key, self.base_url = self._resolve_credentials(api_key, base_url)
+        self.api_key, resolved_base_url = self._resolve_credentials(api_key, base_url)
+        self.base_url = self._normalize_base_url(resolved_base_url)
 
         # 验证必要参数
         if not self.model:
@@ -123,11 +124,31 @@ class HelloAgentsLLM:
         3) 自动探测
         """
         if provider:
-            return provider
+            return self._normalize_provider(provider)
         env_provider = self._get_env("LLM_PROVIDER")
         if env_provider:
-            return env_provider
+            return self._normalize_provider(env_provider)
         return self._auto_detect_provider(api_key, base_url)
+
+    def _normalize_provider(self, provider: str) -> str:
+        """标准化 provider 名称，兼容大小写和常见别名。"""
+        normalized = provider.strip().lower()
+        aliases = {
+            "silicon-flow": "siliconflow",
+            "silicon_flow": "siliconflow",
+        }
+        return aliases.get(normalized, normalized)
+
+    def _normalize_base_url(self, base_url: Optional[str]) -> Optional[str]:
+        """将误填的完整接口路径归一化为 OpenAI 客户端所需的 base_url。"""
+        if not base_url:
+            return base_url
+        normalized = base_url.strip().rstrip("/")
+        for suffix in ("/chat/completions", "/completions"):
+            if normalized.lower().endswith(suffix):
+                normalized = normalized[: -len(suffix)]
+                break
+        return normalized
 
     def _auto_detect_provider(self, api_key: Optional[str], base_url: Optional[str]) -> str:
         """
@@ -147,6 +168,7 @@ class HelloAgentsLLM:
             "qwen": ["DASHSCOPE_API_KEY"],
             "modelscope": ["MODELSCOPE_API_KEY"],
             "kimi": ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
+            "siliconflow": ["SILICONFLOW_API_KEY"],
             "ollama": ["OLLAMA_API_KEY", "OLLAMA_HOST"],
             "vllm": ["VLLM_API_KEY", "VLLM_HOST"],
         }
@@ -199,6 +221,8 @@ class HelloAgentsLLM:
                 return "kimi"
             elif "open.bigmodel.cn" in base_url_lower:
                 return "zhipu"
+            elif "api.siliconflow.cn" in base_url_lower:
+                return "siliconflow"
             elif "localhost" in base_url_lower or "127.0.0.1" in base_url_lower:
                 # 本地部署检测 - 优先检查特定服务
                 if ":11434" in base_url_lower or "ollama" in base_url_lower:
@@ -254,6 +278,11 @@ class HelloAgentsLLM:
             resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4"
             return resolved_api_key, resolved_base_url
 
+        elif self.provider == "siliconflow":
+            resolved_api_key = api_key or self._get_env("SILICONFLOW_API_KEY") or self._get_env("LLM_API_KEY")
+            resolved_base_url = base_url or self._get_env("SILICONFLOW_BASE_URL") or self._get_env("LLM_BASE_URL") or "https://api.siliconflow.cn/v1"
+            return resolved_api_key, resolved_base_url
+
         elif self.provider == "ollama":
             resolved_api_key = api_key or self._get_env("OLLAMA_API_KEY") or self._get_env("LLM_API_KEY") or "ollama"
             resolved_base_url = base_url or self._get_env("OLLAMA_HOST") or self._get_env("LLM_BASE_URL") or "http://localhost:11434/v1"
@@ -297,6 +326,8 @@ class HelloAgentsLLM:
             return "moonshot-v1-8k"
         elif self.provider == "zhipu":
             return "glm-4"
+        elif self.provider == "siliconflow":
+            return "Qwen/Qwen2.5-7B-Instruct"
         elif self.provider == "ollama":
             return "llama3.2"  # Ollama常用模型
         elif self.provider == "vllm":
@@ -317,6 +348,8 @@ class HelloAgentsLLM:
                 return "moonshot-v1-8k"
             elif "bigmodel" in base_url_lower:
                 return "glm-4"
+            elif "siliconflow" in base_url_lower:
+                return "Qwen/Qwen2.5-7B-Instruct"
             elif "ollama" in base_url_lower or ":11434" in base_url_lower:
                 return "llama3.2"
             elif ":8000" in base_url_lower or "vllm" in base_url_lower:

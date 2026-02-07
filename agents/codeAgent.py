@@ -461,6 +461,7 @@ class CodeAgent(Agent):
                         "action_type": "tool_call",
                         "tool_calls": tool_calls,
                     },
+                    reasoning_content=reasoning_content,  # ⚠️ 传递 reasoning_content
                 )
                 self._log_message_write(
                     trace_logger,
@@ -538,6 +539,7 @@ class CodeAgent(Agent):
             self.history_manager.append_assistant(
                 content=final_text,
                 metadata={"step": step, "action_type": "final"},
+                reasoning_content=reasoning_content,  # ⚠️ 传递 reasoning_content
             )
             self._log_message_write(trace_logger, "assistant", final_text, {"action_type": "final"}, step)
             trace_logger.log_event("finish", {"final": final_text}, step=step)
