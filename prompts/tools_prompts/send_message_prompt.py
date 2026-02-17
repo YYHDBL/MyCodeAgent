@@ -15,6 +15,10 @@ Parameters
   Required when type=broadcast.
 - request_id (string, optional)
   Required for shutdown_response and plan_approval_response.
+- approved (boolean, optional)
+  Approval decision for plan_approval_response.
+- feedback (string, optional)
+  Optional feedback for plan_approval_response.
 
 ACK status lifecycle
 - pending: message created

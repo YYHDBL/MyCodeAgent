@@ -166,6 +166,7 @@ class CodeAgent(Agent):
             from tools.builtin.send_message import SendMessageTool
             from tools.builtin.team_status import TeamStatusTool
             from tools.builtin.team_delete import TeamDeleteTool
+            from tools.builtin.team_cleanup import TeamCleanupTool
             from tools.builtin.team_fanout import TeamFanoutTool
             from tools.builtin.team_collect import TeamCollectTool
             from tools.builtin.team_task_create import TeamTaskCreateTool
@@ -180,6 +181,7 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(SendMessageTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamStatusTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamDeleteTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(TeamCleanupTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamFanoutTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamCollectTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamTaskCreateTool(project_root=self.project_root, team_manager=self.team_manager))

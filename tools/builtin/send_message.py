@@ -66,6 +66,18 @@ class SendMessageTool(Tool):
                 description="Correlation id for shutdown/approval protocols.",
                 required=False,
             ),
+            ToolParameter(
+                name="approved",
+                type="boolean",
+                description="Approval decision for plan_approval_response.",
+                required=False,
+            ),
+            ToolParameter(
+                name="feedback",
+                type="string",
+                description="Optional approval feedback.",
+                required=False,
+            ),
         ]
 
     def run(self, parameters: Dict[str, Any]) -> str:
@@ -78,6 +90,8 @@ class SendMessageTool(Tool):
         message_type = parameters.get("type", "message")
         summary = parameters.get("summary", "")
         request_id = parameters.get("request_id", "")
+        approved = parameters.get("approved")
+        feedback = parameters.get("feedback", "")
 
         for field_name, value in (
             ("team_name", team_name),
@@ -109,6 +123,18 @@ class SendMessageTool(Tool):
                 message="Parameter 'request_id' must be a string when provided.",
                 params_input=params_input,
             )
+        if approved is not None and not isinstance(approved, bool):
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'approved' must be a boolean when provided.",
+                params_input=params_input,
+            )
+        if feedback is not None and not isinstance(feedback, str):
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'feedback' must be a string when provided.",
+                params_input=params_input,
+            )
 
         try:
             sent = self._team_manager.send_message(
@@ -119,6 +145,8 @@ class SendMessageTool(Tool):
                 message_type=message_type,
                 summary=summary or "",
                 request_id=request_id or "",
+                approved=approved,
+                feedback=feedback or "",
             )
             return self.create_success_response(
                 data={
@@ -129,6 +157,8 @@ class SendMessageTool(Tool):
                     "recipient_count": sent.get("recipient_count", 1),
                     "request_id": sent.get("request_id", ""),
                     "summary": sent.get("summary", ""),
+                    "approved": sent.get("approved"),
+                    "feedback": sent.get("feedback", ""),
                     "team_name": team_name,
                     "from_member": from_member,
                     "to_member": to_member,
