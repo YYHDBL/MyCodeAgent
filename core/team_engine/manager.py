@@ -18,6 +18,7 @@ from .protocol import (
     sanitize_name,
 )
 from .store import TeamStore
+from .worker import TeammateWorker
 
 
 class TeamManagerError(Exception):
@@ -44,6 +45,7 @@ class TeamManager:
         self._events: Dict[str, List[Event]] = defaultdict(list)
         self._message_status: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         self._recent_errors: Dict[str, str] = {}
+        self._processed_by_member: Dict[tuple[str, str], set[str]] = defaultdict(set)
 
     def create_team(self, team_name: str, members: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
@@ -96,6 +98,7 @@ class TeamManager:
             raise TeamManagerError("INVALID_PARAM", f"duplicate teammate name: {teammate['name']}")
         cfg["members"] = list(cfg.get("members", [])) + [teammate]
         self.store.update_team(normalized_team, cfg)
+        self._start_worker(normalized_team, teammate["name"])
         return teammate
 
     def send_message(self, team_name: str, from_member: str, to_member: str, text: str) -> Dict[str, Any]:
@@ -183,6 +186,11 @@ class TeamManager:
             drained.extend(event.as_dict() for event in items)
         return drained
 
+    def has_worker(self, team_name: str, teammate_name: str) -> bool:
+        key = (sanitize_name(team_name), sanitize_name(teammate_name))
+        worker = self._workers.get(key)
+        return bool(worker and worker.is_alive())
+
     def export_state(self) -> Dict[str, Any]:
         return {
             "teams": {name: self.get_status(name) for name in list(self._events.keys())},
@@ -201,3 +209,33 @@ class TeamManager:
     def _emit(self, team_name: str, event_type: str, payload: Dict[str, Any]) -> None:
         self._events[team_name].append(Event.create(team=team_name, event_type=event_type, payload=payload))
 
+    def _start_worker(self, team_name: str, teammate_name: str) -> None:
+        key = (team_name, teammate_name)
+        existing = self._workers.get(key)
+        if existing and existing.is_alive():
+            return
+        worker = TeammateWorker(
+            team_name=team_name,
+            teammate_name=teammate_name,
+            poll_fn=lambda: self._process_member_inbox(team_name, teammate_name),
+            poll_interval_s=0.02,
+            idle_timeout_s=60.0,
+        )
+        worker.start()
+        self._workers[key] = worker
+
+    def _process_member_inbox(self, team_name: str, teammate_name: str) -> bool:
+        processed_ids = self._processed_by_member[(team_name, teammate_name)]
+        rows = self.store.read_inbox_messages(team_name, teammate_name)
+        did_work = False
+        for row in rows:
+            message_id = str(row.get("message_id") or "")
+            if not message_id or message_id in processed_ids:
+                continue
+            status = str(row.get("status") or "")
+            if status not in {MESSAGE_STATUS_PENDING, MESSAGE_STATUS_DELIVERED}:
+                continue
+            self.mark_message_processed(team_name, message_id, processed_by=teammate_name)
+            processed_ids.add(message_id)
+            did_work = True
+        return did_work
