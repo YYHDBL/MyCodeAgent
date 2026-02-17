@@ -30,7 +30,14 @@ def test_send_message_supports_broadcast(tmp_path):
     assert inbox_dev2[0]["type"] == "broadcast"
 
 
-def test_send_message_requires_summary_for_broadcast(tmp_path):
+@pytest.mark.parametrize(
+    "message_type,to_member",
+    [
+        ("message", "dev1"),
+        ("broadcast", "all"),
+    ],
+)
+def test_send_message_requires_summary_for_message_and_broadcast(tmp_path, message_type, to_member):
     manager = TeamManager(project_root=tmp_path)
     manager.create_team("demo", members=[{"name": "lead"}, {"name": "dev1"}, {"name": "dev2"}])
 
@@ -38,9 +45,9 @@ def test_send_message_requires_summary_for_broadcast(tmp_path):
         manager.send_message(
             "demo",
             "lead",
-            "all",
+            to_member,
             "Ping",
-            message_type="broadcast",
+            message_type=message_type,
             summary="",
         )
     assert exc.value.code == "INVALID_PARAM"

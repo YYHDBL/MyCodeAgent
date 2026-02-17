@@ -24,7 +24,17 @@ def test_send_message_tool_returns_ack_status(tmp_path):
     manager.spawn_teammate("demo", "dev")
     tool = SendMessageTool(project_root=tmp_path, team_manager=manager)
 
-    result = json.loads(tool.run({"team_name": "demo", "from_member": "lead", "to_member": "dev", "text": "ping"}))
+    result = json.loads(
+        tool.run(
+            {
+                "team_name": "demo",
+                "from_member": "lead",
+                "to_member": "dev",
+                "text": "ping",
+                "summary": "ping dev",
+            }
+        )
+    )
     assert result["status"] == "success"
     assert result["data"]["message_id"]
     assert result["data"]["status"] in {"pending", "delivered", "processed"}
@@ -76,7 +86,7 @@ def test_team_status_tool_aggregates_message_counts(tmp_path):
     manager = TeamManager(project_root=tmp_path)
     manager.create_team("demo", members=[{"name": "lead"}])
     manager.spawn_teammate("demo", "dev")
-    sent = manager.send_message("demo", "lead", "dev", "ping")
+    sent = manager.send_message("demo", "lead", "dev", "ping", summary="ping dev")
     manager.mark_message_processed("demo", sent["message_id"], processed_by="dev")
     tool = TeamStatusTool(project_root=tmp_path, team_manager=manager)
 

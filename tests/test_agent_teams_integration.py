@@ -19,7 +19,17 @@ def test_end_to_end_team_message_flow(tmp_path):
     assert created["status"] == "success"
     manager.spawn_teammate("demo", "dev")
 
-    sent = json.loads(send.run({"team_name": "demo", "from_member": "lead", "to_member": "dev", "text": "ping"}))
+    sent = json.loads(
+        send.run(
+            {
+                "team_name": "demo",
+                "from_member": "lead",
+                "to_member": "dev",
+                "text": "ping",
+                "summary": "ping dev",
+            }
+        )
+    )
     assert sent["status"] == "success"
     assert sent["data"]["status"] in {"pending", "delivered", "processed"}
 

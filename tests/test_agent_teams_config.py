@@ -59,6 +59,9 @@ class TestAgentTeamsConfig(unittest.TestCase):
             self.assertIsNotNone(registry.get_tool("SendMessage"))
             self.assertIsNotNone(registry.get_tool("TeamStatus"))
             self.assertIsNotNone(registry.get_tool("TeamDelete"))
+            self.assertIsNotNone(registry.get_tool("TeamCleanup"))
+            self.assertIsNotNone(registry.get_tool("TeamApprovals"))
+            self.assertIsNotNone(registry.get_tool("TeamApprovePlan"))
 
 
 if __name__ == "__main__":

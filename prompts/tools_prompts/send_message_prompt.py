@@ -12,7 +12,7 @@ Parameters
 - type (string, optional)
   message | broadcast | shutdown_request | shutdown_response | plan_approval_response
 - summary (string, optional)
-  Required when type=broadcast.
+  Required when type=message|broadcast.
 - request_id (string, optional)
   Required for shutdown_response and plan_approval_response.
 - approved (boolean, optional)

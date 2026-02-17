@@ -185,8 +185,8 @@ class TeamManager:
             raise TeamManagerError("INVALID_PARAM", "text is required")
         if message_kind not in MESSAGE_TYPES:
             raise TeamManagerError("INVALID_PARAM", f"unsupported message type: {message_kind}")
-        if message_kind == MESSAGE_TYPE_BROADCAST and not summary_text:
-            raise TeamManagerError("INVALID_PARAM", "summary is required when message type is broadcast")
+        if message_kind in {MESSAGE_TYPE_MESSAGE, MESSAGE_TYPE_BROADCAST} and not summary_text:
+            raise TeamManagerError("INVALID_PARAM", "summary is required when message type is message or broadcast")
         if message_kind in {MESSAGE_TYPE_SHUTDOWN_RESPONSE, MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE} and not request_ref:
             raise TeamManagerError("INVALID_PARAM", f"request_id is required when message type is {message_kind}")
         if message_kind == MESSAGE_TYPE_SHUTDOWN_REQUEST and not request_ref:
@@ -384,6 +384,53 @@ class TeamManager:
             rows = [x for x in rows if str(x.get("status") or "") == str(status)]
         rows.sort(key=lambda x: float(x.get("created_at") or 0))
         return rows
+
+    def respond_plan_approval(
+        self,
+        team_name: str,
+        request_id: str,
+        approved: bool,
+        feedback: str = "",
+        from_member: str = "lead",
+    ) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        req = str(request_id or "").strip()
+        if not req:
+            raise TeamManagerError("INVALID_PARAM", "request_id is required")
+        if not isinstance(approved, bool):
+            raise TeamManagerError("INVALID_PARAM", "approved must be boolean")
+
+        with self._plan_approvals_lock:
+            row = dict(self._plan_approvals.get(req) or {})
+        if not row or row.get("team_name") != normalized_team:
+            raise TeamManagerError("NOT_FOUND", f"plan approval request not found: {req}")
+        if row.get("status") not in {"pending", "approved", "rejected"}:
+            raise TeamManagerError("CONFLICT", f"invalid approval state: {row.get('status')}")
+        teammate = str(row.get("teammate") or "").strip()
+        if not teammate:
+            raise TeamManagerError("INTERNAL_ERROR", f"approval request missing teammate: {req}")
+
+        sent = self.send_message(
+            normalized_team,
+            from_member=from_member,
+            to_member=teammate,
+            text="approved" if approved else "rejected",
+            message_type=MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE,
+            request_id=req,
+            approved=approved,
+            feedback=feedback or "",
+            summary="plan approval",
+        )
+        return {
+            "request_id": req,
+            "team_name": normalized_team,
+            "teammate": teammate,
+            "approved": approved,
+            "feedback": feedback or "",
+            "message_id": sent.get("message_id"),
+            "status": "sent",
+        }
 
     def drain_events(self, team_name: Optional[str] = None) -> List[Dict[str, Any]]:
         if team_name is not None:
