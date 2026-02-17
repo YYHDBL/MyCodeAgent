@@ -313,6 +313,11 @@ class HelloAgentsLLM:
             timeout=self.timeout
         )
 
+    @staticmethod
+    def _compact_request_kwargs(kwargs: dict) -> dict:
+        """Drop None-valued fields for provider compatibility."""
+        return {k: v for k, v in kwargs.items() if v is not None}
+
     def _requires_temperature_one(self) -> bool:
         """Kimi 2.5 / K2 系列模型仅接受 temperature=1。"""
         if self.provider != "kimi":
@@ -430,6 +435,7 @@ class HelloAgentsLLM:
                 request_kwargs["tools"] = tools
                 if tool_choice is not None:
                     request_kwargs["tool_choice"] = tool_choice
+            request_kwargs = self._compact_request_kwargs(request_kwargs)
             response = self._client.chat.completions.create(**request_kwargs)
 
             # 处理流式响应
@@ -459,6 +465,7 @@ class HelloAgentsLLM:
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
                 if extra_kwargs:
                     request_kwargs.update(extra_kwargs)
+                request_kwargs = self._compact_request_kwargs(request_kwargs)
                 response = self._client.chat.completions.create(**request_kwargs)
                 return response.choices[0].message.content
             except Exception as e:
@@ -490,6 +497,7 @@ class HelloAgentsLLM:
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
                 if extra_kwargs:
                     request_kwargs.update(extra_kwargs)
+                request_kwargs = self._compact_request_kwargs(request_kwargs)
                 response = self._client.chat.completions.create(**request_kwargs)
                 return response
             except Exception as e:

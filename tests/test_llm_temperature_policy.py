@@ -53,3 +53,20 @@ def test_non_kimi_model_keeps_configured_temperature(monkeypatch):
     llm.invoke_raw([{"role": "user", "content": "hi"}])
 
     assert recorder["temperature"] == 0.3
+
+
+def test_invoke_raw_omits_none_max_tokens(monkeypatch):
+    recorder = {}
+    monkeypatch.setattr(HelloAgentsLLM, "_create_client", lambda self: _DummyClient(recorder))
+
+    llm = HelloAgentsLLM(
+        model="MiniMax-M2.1",
+        provider="auto",
+        api_key="test-key",
+        base_url="https://api.minimaxi.com/v1",
+        temperature=1,
+        max_tokens=None,
+    )
+    llm.invoke_raw([{"role": "user", "content": "hi"}])
+
+    assert "max_tokens" not in recorder
