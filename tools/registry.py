@@ -157,6 +157,9 @@ class ToolRegistry:
                 "type": ToolRegistry._normalize_schema_type(param_type),
                 "description": p.description or "",
             }
+            if schema["type"] == "array":
+                # OpenAI-compatible function schemas expect an `items` schema for arrays.
+                schema.setdefault("items", {"type": "string"})
             if p.default is not None:
                 schema["default"] = p.default
             properties[p.name] = schema

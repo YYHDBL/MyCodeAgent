@@ -70,3 +70,24 @@ def test_invoke_raw_omits_none_max_tokens(monkeypatch):
     llm.invoke_raw([{"role": "user", "content": "hi"}])
 
     assert "max_tokens" not in recorder
+
+
+def test_minimax_request_enforces_n_one_and_omits_auto_tool_choice(monkeypatch):
+    recorder = {}
+    monkeypatch.setattr(HelloAgentsLLM, "_create_client", lambda self: _DummyClient(recorder))
+
+    llm = HelloAgentsLLM(
+        model="MiniMax-M2.1",
+        provider="auto",
+        api_key="test-key",
+        base_url="https://api.minimaxi.com/v1",
+        temperature=1,
+    )
+    llm.invoke_raw(
+        [{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "Ping", "description": "ping", "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}}}],
+        tool_choice="auto",
+    )
+
+    assert recorder["n"] == 1
+    assert "tool_choice" not in recorder

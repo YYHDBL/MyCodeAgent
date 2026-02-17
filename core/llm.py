@@ -318,6 +318,19 @@ class HelloAgentsLLM:
         """Drop None-valued fields for provider compatibility."""
         return {k: v for k, v in kwargs.items() if v is not None}
 
+    def _is_minimax_backend(self) -> bool:
+        base = (self.base_url or "").lower()
+        return "minimaxi.com" in base or "minimax.io" in base
+
+    def _apply_provider_compat(self, request_kwargs: dict) -> dict:
+        """Apply backend-specific request normalization."""
+        normalized = dict(request_kwargs)
+        if self._is_minimax_backend():
+            normalized["n"] = 1
+            if normalized.get("tool_choice") == "auto":
+                normalized.pop("tool_choice", None)
+        return normalized
+
     def _requires_temperature_one(self) -> bool:
         """Kimi 2.5 / K2 系列模型仅接受 temperature=1。"""
         if self.provider != "kimi":
@@ -435,6 +448,7 @@ class HelloAgentsLLM:
                 request_kwargs["tools"] = tools
                 if tool_choice is not None:
                     request_kwargs["tool_choice"] = tool_choice
+            request_kwargs = self._apply_provider_compat(request_kwargs)
             request_kwargs = self._compact_request_kwargs(request_kwargs)
             response = self._client.chat.completions.create(**request_kwargs)
 
@@ -465,6 +479,7 @@ class HelloAgentsLLM:
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
                 if extra_kwargs:
                     request_kwargs.update(extra_kwargs)
+                request_kwargs = self._apply_provider_compat(request_kwargs)
                 request_kwargs = self._compact_request_kwargs(request_kwargs)
                 response = self._client.chat.completions.create(**request_kwargs)
                 return response.choices[0].message.content
@@ -497,6 +512,7 @@ class HelloAgentsLLM:
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
                 if extra_kwargs:
                     request_kwargs.update(extra_kwargs)
+                request_kwargs = self._apply_provider_compat(request_kwargs)
                 request_kwargs = self._compact_request_kwargs(request_kwargs)
                 response = self._client.chat.completions.create(**request_kwargs)
                 return response
