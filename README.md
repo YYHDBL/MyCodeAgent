@@ -28,6 +28,7 @@
 - **Function Calling 工具调用**（不依赖 Action 文本解析）
 - **统一工具响应协议**：`status/data/text/stats/context/error`
 - **内置工具**：LS / Glob / Grep / Read / Write / Edit / MultiEdit / Bash / TodoWrite / Skill / Task / AskUser
+- **AgentTeams MVP**：TeamCreate / SendMessage / TeamStatus / TeamDelete + Task persistent teammate
 - **上下文工程**：分层注入、历史压缩、@file 强制读取
 - **工具输出截断与落盘**：超限结果写入 `tool-output/`
 - **轻量熔断**：连续失败工具自动临时禁用
@@ -130,6 +131,25 @@ $ARGUMENTS
 - 主代理按复杂度选择模型：`main | light`
 - 子代理工具权限隔离（只读/受限）
 
+## AgentTeams（MVP）
+
+- Feature Flag：`ENABLE_AGENT_TEAMS=true` 启用（默认关闭，便于快速回滚）
+- Team 工具：`TeamCreate` / `SendMessage` / `TeamStatus` / `TeamDelete`
+- Task 双模式：
+  - `mode=oneshot`（默认，兼容旧行为）
+  - `mode=persistent`（创建持久 teammate，参数：`team_name` + `teammate_name`）
+- 消息 ACK 三态：`pending / delivered / processed`
+- runtime 通知通过 system block 注入，不污染 user 轮次
+
+最小示例（交互中由主代理触发工具调用）：
+1. `TeamCreate(team_name="demo")`
+2. `Task(mode="persistent", team_name="demo", teammate_name="dev", ...)`
+3. `SendMessage(team_name="demo", from_member="lead", to_member="dev", text="...")`
+4. `TeamStatus(team_name="demo")`
+5. `TeamDelete(team_name="demo")`
+
+快速回滚：将 `ENABLE_AGENT_TEAMS` 设为 `false`（或删除该环境变量）。
+
 ---
 
 ## MCP 工具集成
@@ -176,6 +196,12 @@ $ARGUMENTS
 
 - `SUBAGENT_MAX_STEPS`（默认 50）
 - `LIGHT_LLM_MODEL_ID / LIGHT_LLM_API_KEY / LIGHT_LLM_BASE_URL`
+
+### AgentTeams
+
+- `ENABLE_AGENT_TEAMS`（默认 false）
+- `AGENT_TEAMS_STORE_DIR`（默认 `.teams`）
+- `AGENT_TASKS_STORE_DIR`（默认 `.tasks`）
 
 ### Trace
 
