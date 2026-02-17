@@ -40,6 +40,7 @@ from agents.codeAgent import CodeAgent
 from tools.registry import ToolRegistry
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
 from core.config import Config
+from core.team_engine.cli_commands import TEAM_MSG_USAGE, parse_team_message_command
 from utils.ui_components import EnhancedUI, ToolCallTree
 
 # Geeky Theme
@@ -342,12 +343,39 @@ def main() -> None:
                     except Exception as exc:
                         console.print(f"[bold red]✗ Load failed:[/bold red] {exc}")
                     continue
+                elif user_input.lower().startswith("/team msg "):
+                    if not agent.enable_agent_teams or agent.team_manager is None:
+                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
+                        continue
+                    try:
+                        payload = parse_team_message_command(user_input, from_member=agent.name)
+                    except ValueError as exc:
+                        console.print(f"[bold red]✗ {exc}[/bold red]")
+                        continue
+                    try:
+                        sent = agent.team_manager.send_message(
+                            team_name=payload["team_name"],
+                            from_member=payload["from_member"],
+                            to_member=payload["to_member"],
+                            text=payload["text"],
+                            message_type=payload["type"],
+                            summary=payload["summary"],
+                        )
+                        console.print(
+                            "[bold green]✓ Team message sent:[/bold green] "
+                            f"{payload['team_name']} -> {payload['to_member']} "
+                            f"({sent.get('status', 'pending')})"
+                        )
+                    except Exception as exc:
+                        console.print(f"[bold red]✗ Team message failed:[/bold red] {exc}")
+                    continue
                 elif user_input.lower() == "/help":
                     console.print(Panel(
                         "[bold]Available Commands:[/bold]\n"
                         "/model, /info - Show model and usage info\n"
                         "/save [path] - Save session snapshot\n"
                         "/load [path] - Load session snapshot\n"
+                        f"{TEAM_MSG_USAGE}\n"
                         "/help - Show this help\n"
                         "exit, quit, q - Exit the chat\n"
                         "init - Generate code_law.md",
