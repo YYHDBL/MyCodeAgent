@@ -378,14 +378,14 @@ class TaskTool(Tool):
             ToolParameter(
                 name="mode",
                 type="string",
-                description="Execution mode: oneshot | persistent. Default is oneshot.",
+                description="Execution mode: oneshot | persistent | parallel. Default is oneshot.",
                 required=False,
                 default="oneshot",
             ),
             ToolParameter(
                 name="team_name",
                 type="string",
-                description="Required when mode=persistent.",
+                description="Required when mode=persistent|parallel.",
                 required=False,
             ),
             ToolParameter(
@@ -401,6 +401,12 @@ class TaskTool(Tool):
                 required=False,
             ),
             ToolParameter(
+                name="tasks",
+                type="array",
+                description="Required when mode=parallel. Work item list for fanout.",
+                required=False,
+            ),
+            ToolParameter(
                 name="run_in_background",
                 type="boolean",
                 description="Reserved field for future async execution.",
@@ -413,10 +419,10 @@ class TaskTool(Tool):
         start_time = time.monotonic()
         params_input = dict(parameters)
         mode = str(parameters.get("mode", "oneshot") or "oneshot").strip().lower()
-        if mode not in {"oneshot", "persistent"}:
+        if mode not in {"oneshot", "persistent", "parallel"}:
             return self.create_error_response(
                 error_code=ErrorCode.INVALID_PARAM,
-                message="Parameter 'mode' must be one of: oneshot, persistent.",
+                message="Parameter 'mode' must be one of: oneshot, persistent, parallel.",
                 params_input=params_input,
             )
         
@@ -458,6 +464,16 @@ class TaskTool(Tool):
 
         if mode == "persistent":
             return self._run_persistent(
+                parameters=parameters,
+                params_input=params_input,
+                start_time=start_time,
+                description=description,
+                prompt=prompt,
+                subagent_type=subagent_type,
+                model_choice=model_choice,
+            )
+        if mode == "parallel":
+            return self._run_parallel(
                 parameters=parameters,
                 params_input=params_input,
                 start_time=start_time,
@@ -605,6 +621,83 @@ class TaskTool(Tool):
             return self.create_error_response(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 message=f"Persistent teammate spawn failed: {exc}",
+                params_input=params_input,
+                time_ms=int((time.monotonic() - start_time) * 1000),
+            )
+
+    def _run_parallel(
+        self,
+        parameters: Dict[str, Any],
+        params_input: Dict[str, Any],
+        start_time: float,
+        description: str,
+        prompt: str,
+        subagent_type: str,
+        model_choice: str,
+    ) -> str:
+        team_name = parameters.get("team_name")
+        tasks = parameters.get("tasks")
+
+        if not isinstance(team_name, str) or not team_name.strip():
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'team_name' is required when mode='parallel'.",
+                params_input=params_input,
+            )
+        if not isinstance(tasks, list) or not tasks:
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'tasks' is required when mode='parallel' and must be a non-empty list.",
+                params_input=params_input,
+            )
+        if self._team_manager is None:
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message="Parallel mode is unavailable because TeamManager is not configured.",
+                params_input=params_input,
+            )
+
+        try:
+            dispatch = self._team_manager.fanout_work(team_name=team_name, tasks=tasks)
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            return self.create_success_response(
+                data={
+                    "status": "dispatched",
+                    "mode": "parallel",
+                    "team_name": dispatch.get("team_name", team_name),
+                    "dispatch_id": dispatch.get("dispatch_id"),
+                    "work_items": dispatch.get("work_items", []),
+                    "subagent_type": subagent_type,
+                    "model_used": model_choice,
+                    "description": description,
+                    "prompt": prompt,
+                },
+                text=f"Parallel work dispatched to team '{dispatch.get('team_name', team_name)}'.",
+                params_input=params_input,
+                time_ms=elapsed_ms,
+                extra_stats={"tool_calls": 0, "model": model_choice},
+            )
+        except TeamManagerError as exc:
+            code = str(getattr(exc, "code", "INTERNAL_ERROR"))
+            mapped = ErrorCode.INTERNAL_ERROR
+            if code == "INVALID_PARAM":
+                mapped = ErrorCode.INVALID_PARAM
+            elif code == "NOT_FOUND":
+                mapped = ErrorCode.NOT_FOUND
+            elif code == "TIMEOUT":
+                mapped = ErrorCode.TIMEOUT
+            elif code == "CONFLICT":
+                mapped = ErrorCode.CONFLICT
+            return self.create_error_response(
+                error_code=mapped,
+                message=str(getattr(exc, "message", str(exc))),
+                params_input=params_input,
+                time_ms=int((time.monotonic() - start_time) * 1000),
+            )
+        except Exception as exc:
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message=f"Parallel fanout failed: {exc}",
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )

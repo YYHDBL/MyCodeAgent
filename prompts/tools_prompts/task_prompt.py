@@ -7,6 +7,7 @@ Launches a subagent to handle complex, multi-step tasks in an isolated session.
 Supports two modes:
 - oneshot (default): run a temporary subagent and return final result.
 - persistent: register a long-lived teammate in AgentTeams runtime.
+- parallel: fan out multiple work items to teammates (non-blocking dispatch).
 
 When to use Task
 - When the request is complex, multi-step, or benefits from focused sub-work.
@@ -38,11 +39,13 @@ Parameters (JSON object)
 - model (string, optional)
   Choose "main" or "light". The main agent decides based on task complexity.
 - mode (string, optional)
-  oneshot | persistent. Default is oneshot.
+  oneshot | persistent | parallel. Default is oneshot.
 - team_name (string, optional)
-  Required when mode=persistent.
+  Required when mode=persistent|parallel.
 - teammate_name (string, optional)
   Required when mode=persistent. Legacy alias: name.
+- tasks (array, optional)
+  Required when mode=parallel. Each item should include owner/title/instruction.
 - run_in_background (boolean, optional)
   Reserved field for future compatibility.
 

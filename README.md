@@ -135,10 +135,13 @@ $ARGUMENTS
 
 - Feature Flag：`ENABLE_AGENT_TEAMS=true` 启用（默认关闭，便于快速回滚）
 - Team 工具：`TeamCreate` / `SendMessage` / `TeamStatus` / `TeamDelete`
+- 并行分工工具：`TeamFanout` / `TeamCollect`
 - Task 双模式：
   - `mode=oneshot`（默认，兼容旧行为）
   - `mode=persistent`（创建持久 teammate，参数：`team_name` + `teammate_name`）
+  - `mode=parallel`（快捷 fanout，参数：`team_name` + `tasks`）
 - 消息 ACK 三态：`pending / delivered / processed`
+- work item 状态：`queued / running / succeeded / failed / canceled`
 - runtime 通知通过 system block 注入，不污染 user 轮次
 
 最小示例（交互中由主代理触发工具调用）：
@@ -147,6 +150,13 @@ $ARGUMENTS
 3. `SendMessage(team_name="demo", from_member="lead", to_member="dev", text="...")`
 4. `TeamStatus(team_name="demo")`
 5. `TeamDelete(team_name="demo")`
+
+并行分工示例：
+1. `TeamCreate(team_name="demo")`
+2. `Task(mode="persistent", team_name="demo", teammate_name="dev1", ...)`
+3. `Task(mode="persistent", team_name="demo", teammate_name="dev2", ...)`
+4. `Task(mode="parallel", team_name="demo", tasks=[{"owner":"dev1","title":"impl","instruction":"..."},{"owner":"dev2","title":"test","instruction":"..."}])`
+5. `TeamCollect(team_name="demo")`（轮询直到 succeeded/failed 收敛）
 
 快速回滚：将 `ENABLE_AGENT_TEAMS` 设为 `false`（或删除该环境变量）。
 

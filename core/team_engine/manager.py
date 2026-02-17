@@ -3,22 +3,37 @@
 from __future__ import annotations
 
 import uuid
+import os
+import threading
+import time
+from pathlib import Path
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .events import Event
 from .protocol import (
     EVENT_MESSAGE_ACK,
     EVENT_MESSAGE_SENT,
     EVENT_SHUTDOWN_REQUEST,
+    EVENT_WORK_ITEM_ASSIGNED,
+    EVENT_WORK_ITEM_COMPLETED,
+    EVENT_WORK_ITEM_FAILED,
+    EVENT_WORK_ITEM_STARTED,
     MESSAGE_STATUS_DELIVERED,
     MESSAGE_STATUS_PENDING,
     MESSAGE_STATUS_PROCESSED,
+    WORK_ITEM_STATUS_FAILED,
+    WORK_ITEM_STATUS_QUEUED,
+    WORK_ITEM_STATUS_RUNNING,
+    WORK_ITEM_STATUS_SUCCEEDED,
+    WORK_ITEM_STATUSES,
     normalize_member,
     sanitize_name,
 )
 from .store import TeamStore
 from .worker import TeammateWorker
+from .turn_executor import TurnExecutor
+from tools.registry import ToolRegistry
 
 
 class TeamManagerError(Exception):
@@ -35,17 +50,27 @@ class TeamManager:
         team_store_dir: str = ".teams",
         task_store_dir: str = ".tasks",
         store: Optional[TeamStore] = None,
+        llm: Optional[Any] = None,
+        tool_registry: Optional[Any] = None,
+        work_executor: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        max_llm_concurrency: Optional[int] = None,
     ):
         self.store = store or TeamStore(
             project_root=project_root,
             team_store_dir=team_store_dir,
             task_store_dir=task_store_dir,
         )
+        self.project_root = project_root
+        self.llm = llm
+        self.tool_registry = tool_registry
+        self.work_executor = work_executor
         self._workers: Dict[tuple[str, str], Any] = {}
         self._events: Dict[str, List[Event]] = defaultdict(list)
         self._message_status: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         self._recent_errors: Dict[str, str] = {}
         self._processed_by_member: Dict[tuple[str, str], set[str]] = defaultdict(set)
+        max_parallel = max_llm_concurrency or int(os.getenv("TEAM_LLM_MAX_CONCURRENCY", "4"))
+        self._llm_semaphore = threading.Semaphore(max(1, max_parallel))
 
     def create_team(self, team_name: str, members: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
@@ -190,6 +215,94 @@ class TeamManager:
             drained.extend(event.as_dict() for event in items)
         return drained
 
+    def fanout_work(self, team_name: str, tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        cfg = self._read_team_or_raise(normalized_team)
+        members = {m["name"] for m in cfg.get("members", [])}
+        if not isinstance(tasks, list) or not tasks:
+            raise TeamManagerError("INVALID_PARAM", "tasks must be a non-empty list")
+
+        created: List[Dict[str, Any]] = []
+        for idx, task in enumerate(tasks):
+            if not isinstance(task, dict):
+                raise TeamManagerError("INVALID_PARAM", f"task at index {idx} must be an object")
+            owner = task.get("owner")
+            title = task.get("title")
+            instruction = task.get("instruction")
+            if not isinstance(owner, str) or not owner.strip():
+                raise TeamManagerError("INVALID_PARAM", f"task[{idx}].owner is required")
+            owner_name = sanitize_name(owner)
+            if owner_name not in members:
+                raise TeamManagerError("NOT_FOUND", f"owner not in team: {owner_name}")
+            if owner_name == "lead":
+                raise TeamManagerError("INVALID_PARAM", "owner cannot be lead for fanout work")
+            if not isinstance(title, str) or not title.strip():
+                raise TeamManagerError("INVALID_PARAM", f"task[{idx}].title is required")
+            if not isinstance(instruction, str) or not instruction.strip():
+                raise TeamManagerError("INVALID_PARAM", f"task[{idx}].instruction is required")
+            payload = task.get("payload")
+            item = self.store.create_work_item(
+                normalized_team,
+                owner=owner_name,
+                title=title,
+                instruction=instruction,
+                payload=payload if isinstance(payload, dict) else None,
+            )
+            created.append(item)
+            self._emit(
+                normalized_team,
+                EVENT_WORK_ITEM_ASSIGNED,
+                {"work_id": item["work_id"], "owner": owner_name, "status": item["status"]},
+            )
+
+        return {
+            "dispatch_id": f"dispatch_{uuid.uuid4().hex}",
+            "team_name": normalized_team,
+            "work_items": created,
+        }
+
+    def collect_work(self, team_name: str, work_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        items = self.store.list_work_items(normalized_team)
+        if work_ids:
+            wanted = {str(x) for x in work_ids}
+            items = [item for item in items if item.get("work_id") in wanted]
+
+        counts = {status: 0 for status in WORK_ITEM_STATUSES}
+        groups: Dict[str, List[Dict[str, Any]]] = {status: [] for status in WORK_ITEM_STATUSES}
+        for item in items:
+            status = str(item.get("status") or "")
+            if status not in counts:
+                continue
+            counts[status] += 1
+            groups[status].append(item)
+
+        return {
+            "team_name": normalized_team,
+            "total": len(items),
+            "counts": counts,
+            "groups": groups,
+        }
+
+    def retry_failed_work(self, team_name: str, work_id: str) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        try:
+            item = self.store.update_work_item_status(
+                normalized_team,
+                work_id=work_id,
+                status=WORK_ITEM_STATUS_QUEUED,
+            )
+        except FileNotFoundError as exc:
+            raise TeamManagerError("NOT_FOUND", str(exc)) from exc
+        self._emit(
+            normalized_team,
+            EVENT_WORK_ITEM_ASSIGNED,
+            {"work_id": work_id, "owner": item.get("owner"), "status": WORK_ITEM_STATUS_QUEUED},
+        )
+        return item
+
     def has_worker(self, team_name: str, teammate_name: str) -> bool:
         key = (sanitize_name(team_name), sanitize_name(teammate_name))
         worker = self._workers.get(key)
@@ -199,6 +312,10 @@ class TeamManager:
         teams = self.store.list_teams()
         return {
             "teams": {name: self.get_status(name) for name in teams},
+            "work_items": {
+                name: self.collect_work(name).get("counts", {})
+                for name in teams
+            },
         }
 
     def import_state(self, state: Optional[Dict[str, Any]]) -> None:
@@ -212,6 +329,7 @@ class TeamManager:
                 cfg = self.store.read_team(team_name)
             except FileNotFoundError:
                 continue
+            self.store.requeue_running_work_items(team_name)
             for member in cfg.get("members", []):
                 name = str(member.get("name") or "")
                 if not name or name == "lead":
@@ -256,4 +374,144 @@ class TeamManager:
             self.mark_message_processed(team_name, message_id, processed_by=teammate_name)
             processed_ids.add(message_id)
             did_work = True
+        did_work = self._process_next_work_item(team_name, teammate_name) or did_work
         return did_work
+
+    def _process_next_work_item(self, team_name: str, teammate_name: str) -> bool:
+        queued = self.store.list_work_items(team_name, owner=teammate_name, status=WORK_ITEM_STATUS_QUEUED)
+        if not queued:
+            return False
+        item = queued[0]
+        work_id = str(item.get("work_id"))
+        try:
+            running_item = self.store.update_work_item_status(
+                team_name,
+                work_id=work_id,
+                status=WORK_ITEM_STATUS_RUNNING,
+            )
+        except FileNotFoundError:
+            return False
+        self._emit(
+            team_name,
+            EVENT_WORK_ITEM_STARTED,
+            {"work_id": work_id, "owner": teammate_name, "status": WORK_ITEM_STATUS_RUNNING},
+        )
+
+        try:
+            with self._llm_semaphore:
+                execution = self._execute_work_item(team_name, teammate_name, running_item)
+            result = execution.get("result")
+            updated = self.store.update_work_item_status(
+                team_name,
+                work_id=work_id,
+                status=WORK_ITEM_STATUS_SUCCEEDED,
+                result=result,
+            )
+            self._emit(
+                team_name,
+                EVENT_WORK_ITEM_COMPLETED,
+                {"work_id": work_id, "owner": teammate_name, "status": WORK_ITEM_STATUS_SUCCEEDED},
+            )
+            _ = updated
+        except Exception as exc:
+            self.store.update_work_item_status(
+                team_name,
+                work_id=work_id,
+                status=WORK_ITEM_STATUS_FAILED,
+                error={"message": str(exc)},
+            )
+            self._recent_errors[team_name] = str(exc)
+            self._emit(
+                team_name,
+                EVENT_WORK_ITEM_FAILED,
+                {"work_id": work_id, "owner": teammate_name, "status": WORK_ITEM_STATUS_FAILED},
+            )
+        return True
+
+    def _execute_work_item(self, team_name: str, teammate_name: str, work_item: Dict[str, Any]) -> Dict[str, Any]:
+        if self.work_executor:
+            payload = self.work_executor(dict(work_item))
+            if isinstance(payload, dict):
+                return payload
+            return {"result": payload}
+        if self.llm is None or self.tool_registry is None:
+            # Fallback behavior when no executor is wired yet.
+            return {
+                "result": f"[{team_name}/{teammate_name}] completed: {work_item.get('title', '')}",
+            }
+
+        last_error: Optional[Exception] = None
+        for attempt in range(3):
+            try:
+                return self._run_turn_executor_work(team_name, teammate_name, work_item)
+            except Exception as exc:  # pragma: no cover - defensive
+                last_error = exc
+                message = str(exc).lower()
+                retryable = "rate limit" in message or "429" in message or "timeout" in message
+                if not retryable or attempt >= 2:
+                    break
+                time.sleep(0.2 * (2 ** attempt))
+        raise RuntimeError(str(last_error) if last_error else "work item execution failed")
+
+    def _run_turn_executor_work(self, team_name: str, teammate_name: str, work_item: Dict[str, Any]) -> Dict[str, Any]:
+        registry, denied_tools = self._build_teammate_registry(team_name, teammate_name)
+        executor = TurnExecutor(
+            llm=self.llm,
+            tool_registry=registry,
+            project_root=Path(self.project_root),
+            denied_tools=denied_tools,
+        )
+        instruction = str(work_item.get("instruction") or "")
+        messages: List[Dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a teammate worker. Complete the assigned work item. "
+                    "Task recursion is forbidden."
+                ),
+            },
+            {"role": "user", "content": instruction},
+        ]
+        tool_usage: Dict[str, int] = {}
+        last_tool_msg = ""
+        max_steps = int(os.getenv("TEAM_WORKER_MAX_STEPS", "8"))
+        for _ in range(max(1, max_steps)):
+            turn = executor.execute_turn(messages, tool_usage=tool_usage)
+            messages = turn["messages"]
+            tool_messages = [m for m in messages if m.get("role") == "tool"]
+            if tool_messages:
+                last_tool_msg = str(tool_messages[-1].get("content", ""))
+            if turn["done"]:
+                final_result = str(turn.get("final_result") or "").strip()
+                if final_result:
+                    return {"result": final_result, "tool_usage": tool_usage}
+                break
+        if last_tool_msg:
+            return {"result": last_tool_msg, "tool_usage": tool_usage}
+        return {"result": "", "tool_usage": tool_usage}
+
+    def _build_teammate_registry(self, team_name: str, teammate_name: str) -> tuple[ToolRegistry, set[str]]:
+        cfg = self._read_team_or_raise(team_name)
+        teammate = None
+        for member in cfg.get("members", []):
+            if str(member.get("name") or "") == teammate_name:
+                teammate = member
+                break
+        policy = (teammate or {}).get("tool_policy") if isinstance(teammate, dict) else {}
+        if not isinstance(policy, dict):
+            policy = {}
+        allowlist = policy.get("allowlist")
+        denylist = policy.get("denylist")
+        allowset = {str(x) for x in allowlist} if isinstance(allowlist, list) else set()
+        denyset = {str(x) for x in denylist} if isinstance(denylist, list) else set()
+        denyset.add("Task")
+
+        filtered = ToolRegistry()
+        for tool in self.tool_registry.get_all_tools():
+            name = tool.name
+            if name in denyset:
+                continue
+            if allowset and name not in allowset:
+                continue
+            filtered.register_tool(tool)
+        return filtered, denyset

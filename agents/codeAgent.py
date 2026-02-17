@@ -81,6 +81,8 @@ class CodeAgent(Agent):
                     project_root=self.project_root,
                     team_store_dir=self.team_store_dir,
                     task_store_dir=self.task_store_dir,
+                    llm=self.llm,
+                    tool_registry=self.tool_registry,
                 )
             except Exception as exc:
                 self.logger.warning("Failed to initialize TeamManager, AgentTeams disabled: %s", exc)
@@ -164,6 +166,8 @@ class CodeAgent(Agent):
             from tools.builtin.send_message import SendMessageTool
             from tools.builtin.team_status import TeamStatusTool
             from tools.builtin.team_delete import TeamDeleteTool
+            from tools.builtin.team_fanout import TeamFanoutTool
+            from tools.builtin.team_collect import TeamCollectTool
         except Exception as exc:
             self.logger.warning("AgentTeams enabled but team tools unavailable: %s", exc)
             return
@@ -172,6 +176,8 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(SendMessageTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamStatusTool(project_root=self.project_root, team_manager=self.team_manager))
         self.tool_registry.register_tool(TeamDeleteTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(TeamFanoutTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(TeamCollectTool(project_root=self.project_root, team_manager=self.team_manager))
 
     def _refresh_skills_prompt(self) -> None:
         refresh = os.getenv("SKILLS_REFRESH_ON_CALL", "true").lower() in {"1", "true", "yes", "y", "on"}
@@ -329,7 +335,8 @@ class CodeAgent(Agent):
         for step in range(1, self.max_steps + 1):
             if self.enable_agent_teams and self.team_manager and hasattr(self.context_builder, "set_runtime_system_blocks"):
                 events = self.team_manager.drain_events()
-                runtime_blocks = self._format_runtime_system_blocks(events)
+                runtime_state = self.team_manager.export_state()
+                runtime_blocks = self._format_runtime_system_blocks(events, runtime_state=runtime_state)
                 self.context_builder.set_runtime_system_blocks(runtime_blocks)
 
             if self.console_verbose:
@@ -620,6 +627,7 @@ class CodeAgent(Agent):
         system_messages = self._get_system_messages_for_run()
         history_messages = self.history_manager.serialize_messages()
         tool_schema = self.tool_registry.get_openai_tools()
+        teams_snapshot = self.team_manager.export_state() if self.team_manager else {}
         snapshot = build_session_snapshot(
             system_messages=system_messages,
             history_messages=history_messages,
@@ -632,7 +640,8 @@ class CodeAgent(Agent):
             read_cache=self.tool_registry.export_read_cache(),
             tool_output_dir="tool-output",
             schema_version=1,
-            teams_snapshot=(self.team_manager.export_state() if self.team_manager else {}),
+            teams_snapshot=teams_snapshot,
+            parallel_work_index=(teams_snapshot.get("work_items", {}) if isinstance(teams_snapshot, dict) else {}),
             team_store_dir=self.team_store_dir,
             task_store_dir=self.task_store_dir,
         )
@@ -690,28 +699,62 @@ class CodeAgent(Agent):
         print(message, file=sys.stderr, flush=True)
 
     @staticmethod
-    def _format_runtime_system_blocks(events: list[dict]) -> list[str]:
-        if not events:
+    def _format_runtime_system_blocks(
+        events: list[dict],
+        runtime_state: Optional[dict] = None,
+        max_lines: int = 16,
+    ) -> list[str]:
+        has_events = bool(events)
+        state = runtime_state if isinstance(runtime_state, dict) else {}
+        teams = state.get("teams") if isinstance(state.get("teams"), dict) else {}
+        work_items = state.get("work_items") if isinstance(state.get("work_items"), dict) else {}
+        if not has_events and not work_items:
             return []
         lines = ["[Team Runtime]"]
-        preview = events[:10]
-        for event in preview:
+
+        for team_name in sorted(work_items.keys()):
+            counts = work_items.get(team_name)
+            if not isinstance(counts, dict):
+                continue
+            queued = int(counts.get("queued", 0) or 0)
+            running = int(counts.get("running", 0) or 0)
+            succeeded = int(counts.get("succeeded", 0) or 0)
+            failed = int(counts.get("failed", 0) or 0)
+            lines.append(
+                f"- {team_name} work queued={queued} running={running} succeeded={succeeded} failed={failed}"
+            )
+            team_state = teams.get(team_name) if isinstance(teams, dict) else {}
+            if isinstance(team_state, dict):
+                last_error = str(team_state.get("last_error") or "").strip()
+                if last_error:
+                    compact_error = " ".join(last_error.split())
+                    if len(compact_error) > 120:
+                        compact_error = f"{compact_error[:117]}..."
+                    lines.append(f"- {team_name} last_error={compact_error}")
+
+        for event in events[:10]:
             team = event.get("team", "unknown")
             event_type = event.get("type", "event")
-            payload = event.get("payload") or {}
-            if isinstance(payload, dict):
-                message_id = payload.get("message_id")
-                status = payload.get("status")
-                if message_id and status:
-                    lines.append(f"- {team}:{event_type} message={message_id} status={status}")
-                elif message_id:
-                    lines.append(f"- {team}:{event_type} message={message_id}")
-                else:
-                    lines.append(f"- {team}:{event_type}")
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            status = payload.get("status")
+            message_id = payload.get("message_id")
+            work_id = payload.get("work_id")
+            if work_id and status:
+                lines.append(f"- event {team}:{event_type} work={work_id} status={status}")
+            elif message_id and status:
+                lines.append(f"- event {team}:{event_type} message={message_id} status={status}")
+            elif message_id:
+                lines.append(f"- event {team}:{event_type} message={message_id}")
             else:
-                lines.append(f"- {team}:{event_type}")
+                lines.append(f"- event {team}:{event_type}")
         if len(events) > 10:
             lines.append(f"- ... {len(events) - 10} more events")
+
+        limit = max(2, int(max_lines or 0))
+        if len(lines) > limit:
+            hidden = len(lines) - (limit - 1)
+            lines = lines[: limit - 1] + [f"- ... {hidden} more lines"]
+
         return ["\n".join(lines)]
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
