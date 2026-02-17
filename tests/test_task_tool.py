@@ -167,6 +167,9 @@ class TestTaskToolParameters:
         assert "prompt" in param_names
         assert "subagent_type" in param_names
         assert "model" in param_names
+        assert "mode" in param_names
+        assert "team_name" in param_names
+        assert "teammate_name" in param_names
     
     def test_required_parameters(self, task_tool):
         """Test required parameter flags."""
@@ -249,6 +252,17 @@ class TestTaskToolValidation:
         
         # Should succeed with default model
         assert data["status"] == "success"
+
+    def test_persistent_mode_requires_team_fields(self, task_tool):
+        result = task_tool.run({
+            "description": "d",
+            "prompt": "p",
+            "subagent_type": "general",
+            "mode": "persistent",
+        })
+        data = json.loads(result)
+        assert data["status"] == "error"
+        assert data["error"]["code"] == ErrorCode.INVALID_PARAM.value
 
 
 # =============================================================================
@@ -458,6 +472,28 @@ class TestTaskToolExecution:
         assert data["status"] == "success"
         assert "Short desc" in captured["system_prompt"]
         assert "Full detailed task prompt" == captured["task_prompt"]
+
+    def test_persistent_mode_spawns_teammate(self, task_tool):
+        fake_manager = Mock()
+        fake_manager.spawn_teammate.return_value = {
+            "name": "dev",
+            "role": "developer",
+            "tool_policy": {"allowlist": [], "denylist": ["Task"]},
+        }
+        task_tool._team_manager = fake_manager
+
+        result = task_tool.run({
+            "description": "Team worker",
+            "prompt": "Handle backlog",
+            "subagent_type": "general",
+            "mode": "persistent",
+            "team_name": "demo",
+            "teammate_name": "dev",
+        })
+        data = json.loads(result)
+        assert data["status"] == "success"
+        assert data["data"]["mode"] == "persistent"
+        fake_manager.spawn_teammate.assert_called_once()
 
 
 # =============================================================================

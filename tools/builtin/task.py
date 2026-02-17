@@ -18,11 +18,17 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm import HelloAgentsLLM
 from core.message import Message
+from core.team_engine.turn_executor import TurnExecutor
 from tools.registry import ToolRegistry
 from core.context_engine.observation_truncator import truncate_observation
 from prompts.tools_prompts.task_prompt import task_prompt
 from ..base import Tool, ToolParameter, ErrorCode
 from core.env import load_env
+
+try:
+    from core.team_engine.manager import TeamManagerError
+except Exception:  # pragma: no cover
+    TeamManagerError = Exception
 
 load_env()
 
@@ -174,64 +180,26 @@ class SubagentRunner:
             {"role": "user", "content": task_prompt}
         ]
         
-        tools_schema = self._get_allowed_tools_schema()
-        tool_choice = "auto"
+        executor = TurnExecutor(
+            llm=self.llm,
+            tool_registry=self.tool_registry,
+            project_root=self.project_root,
+            denied_tools=set(DENIED_TOOLS),
+        )
 
         # Simple ReAct loop
-        for step in range(self.max_steps):
-            # Get LLM response
+        for _ in range(self.max_steps):
             try:
-                raw_response = self.llm.invoke_raw(self.messages, tools=tools_schema, tool_choice=tool_choice)
+                turn = executor.execute_turn(self.messages, tool_usage=self.tool_usage)
             except Exception as e:
                 logger.error("Subagent LLM error: %s", e)
                 return f"Error: LLM call failed - {str(e)}", self.tool_usage
-
-            response_text = self._extract_content(raw_response) or ""
-            tool_calls = self._extract_tool_calls(raw_response)
-
-            if not tool_calls and not response_text.strip():
-                return "Error: Empty response from subagent", self.tool_usage
-
-            # Add assistant response to history (with tool_calls if any)
-            assistant_msg: Dict[str, Any] = {"role": "assistant", "content": response_text}
-            if tool_calls:
-                for call in tool_calls:
-                    if not call.get("id"):
-                        call["id"] = f"call_{uuid.uuid4().hex}"
-                assistant_msg["tool_calls"] = []
-                for call in tool_calls:
-                    arguments = call.get("arguments") or {}
-                    args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-                    assistant_msg["tool_calls"].append({
-                        "id": call.get("id"),
-                        "type": "function",
-                        "function": {"name": call.get("name"), "arguments": args_str},
-                    })
-            self.messages.append(assistant_msg)
-
-            if not tool_calls:
-                final_result = self._extract_final_answer(response_text)
-                return final_result, self.tool_usage
-
-            # Execute tools
-            for call in tool_calls:
-                tool_name = call.get("name") or "unknown_tool"
-                tool_call_id = call.get("id") or f"call_{uuid.uuid4().hex}"
-                tool_input, parse_err = self._ensure_json_input(call.get("arguments"))
-                if parse_err:
-                    observation = json.dumps({
-                        "status": "error",
-                        "error": {"code": "INVALID_PARAM", "message": f"Tool arguments parse error: {parse_err}"},
-                        "data": {},
-                    }, ensure_ascii=False)
-                else:
-                    observation = self._execute_tool(tool_name, tool_input)
-
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": observation,
-                })
+            self.messages = turn["messages"]
+            if turn["done"]:
+                final_result = turn.get("final_result") or ""
+                if not str(final_result).strip():
+                    return "Error: Empty response from subagent", self.tool_usage
+                return str(final_result), self.tool_usage
         
         # Max steps reached
         return "Subagent reached maximum steps without completing.", self.tool_usage
@@ -358,6 +326,7 @@ class TaskTool(Tool):
         working_dir: Optional[Path] = None,
         main_llm: Optional[HelloAgentsLLM] = None,
         tool_registry: Optional[ToolRegistry] = None,
+        team_manager: Optional[Any] = None,
     ):
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -376,6 +345,7 @@ class TaskTool(Tool):
         self._main_llm = main_llm
         self._light_llm: Optional[HelloAgentsLLM] = None
         self._tool_registry = tool_registry
+        self._team_manager = team_manager
         self._subagent_max_steps = int(os.getenv("SUBAGENT_MAX_STEPS", "50"))
     
     def get_parameters(self) -> List[ToolParameter]:
@@ -405,11 +375,50 @@ class TaskTool(Tool):
                 required=False,
                 default="light",
             ),
+            ToolParameter(
+                name="mode",
+                type="string",
+                description="Execution mode: oneshot | persistent. Default is oneshot.",
+                required=False,
+                default="oneshot",
+            ),
+            ToolParameter(
+                name="team_name",
+                type="string",
+                description="Required when mode=persistent.",
+                required=False,
+            ),
+            ToolParameter(
+                name="teammate_name",
+                type="string",
+                description="Required when mode=persistent. Legacy alias: name.",
+                required=False,
+            ),
+            ToolParameter(
+                name="name",
+                type="string",
+                description="Legacy alias for teammate_name in persistent mode.",
+                required=False,
+            ),
+            ToolParameter(
+                name="run_in_background",
+                type="boolean",
+                description="Reserved field for future async execution.",
+                required=False,
+                default=False,
+            ),
         ]
     
     def run(self, parameters: Dict[str, Any]) -> str:
         start_time = time.monotonic()
         params_input = dict(parameters)
+        mode = str(parameters.get("mode", "oneshot") or "oneshot").strip().lower()
+        if mode not in {"oneshot", "persistent"}:
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'mode' must be one of: oneshot, persistent.",
+                params_input=params_input,
+            )
         
         # Validate required parameters
         description = parameters.get("description")
@@ -446,6 +455,17 @@ class TaskTool(Tool):
         model_choice = model_choice.lower().strip()
         if model_choice not in VALID_MODELS:
             model_choice = "light"  # Default to light
+
+        if mode == "persistent":
+            return self._run_persistent(
+                parameters=parameters,
+                params_input=params_input,
+                start_time=start_time,
+                description=description,
+                prompt=prompt,
+                subagent_type=subagent_type,
+                model_choice=model_choice,
+            )
         
         # Select LLM
         llm = self._select_llm(model_choice)
@@ -507,6 +527,87 @@ class TaskTool(Tool):
                 "model": model_choice,
             },
         )
+
+    def _run_persistent(
+        self,
+        parameters: Dict[str, Any],
+        params_input: Dict[str, Any],
+        start_time: float,
+        description: str,
+        prompt: str,
+        subagent_type: str,
+        model_choice: str,
+    ) -> str:
+        team_name = parameters.get("team_name")
+        teammate_name = parameters.get("teammate_name") or parameters.get("name")
+
+        if not isinstance(team_name, str) or not team_name.strip():
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'team_name' is required when mode='persistent'.",
+                params_input=params_input,
+            )
+        if not isinstance(teammate_name, str) or not teammate_name.strip():
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'teammate_name' (or legacy 'name') is required when mode='persistent'.",
+                params_input=params_input,
+            )
+        if self._team_manager is None:
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message="Persistent mode is unavailable because TeamManager is not configured.",
+                params_input=params_input,
+            )
+
+        try:
+            teammate = self._team_manager.spawn_teammate(
+                team_name=team_name,
+                teammate_name=teammate_name,
+                role="developer",
+                tool_policy={"allowlist": [], "denylist": ["Task"]},
+            )
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            return self.create_success_response(
+                data={
+                    "status": "spawned",
+                    "mode": "persistent",
+                    "team_name": team_name,
+                    "teammate": teammate,
+                    "subagent_type": subagent_type,
+                    "model_used": model_choice,
+                    "description": description,
+                    "prompt": prompt,
+                },
+                text=f"Persistent teammate '{teammate.get('name')}' is ready in team '{team_name}'.",
+                params_input=params_input,
+                time_ms=elapsed_ms,
+                extra_stats={"tool_calls": 0, "model": model_choice},
+            )
+        except TeamManagerError as exc:
+            code = str(getattr(exc, "code", "INTERNAL_ERROR"))
+            mapped = ErrorCode.INTERNAL_ERROR
+            if code == "INVALID_PARAM":
+                mapped = ErrorCode.INVALID_PARAM
+            elif code == "NOT_FOUND":
+                mapped = ErrorCode.NOT_FOUND
+            elif code == "TIMEOUT":
+                mapped = ErrorCode.TIMEOUT
+            elif code == "CONFLICT":
+                mapped = ErrorCode.CONFLICT
+            return self.create_error_response(
+                error_code=mapped,
+                message=str(getattr(exc, "message", str(exc))),
+                params_input=params_input,
+                time_ms=int((time.monotonic() - start_time) * 1000),
+            )
+        except Exception as exc:
+            return self.create_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message=f"Persistent teammate spawn failed: {exc}",
+                params_input=params_input,
+                time_ms=int((time.monotonic() - start_time) * 1000),
+            )
     
     def _select_llm(self, model_choice: str) -> HelloAgentsLLM:
         """Select the appropriate LLM based on model choice."""

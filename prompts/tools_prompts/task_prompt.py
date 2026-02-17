@@ -4,7 +4,9 @@ task_prompt = """
 Tool name: Task
 Tool description:
 Launches a subagent to handle complex, multi-step tasks in an isolated session.
-The subagent uses a restricted toolset and returns a single final result.
+Supports two modes:
+- oneshot (default): run a temporary subagent and return final result.
+- persistent: register a long-lived teammate in AgentTeams runtime.
 
 When to use Task
 - When the request is complex, multi-step, or benefits from focused sub-work.
@@ -35,12 +37,20 @@ Parameters (JSON object)
   Role to select a system prompt: general | explore | summary | plan.
 - model (string, optional)
   Choose "main" or "light". The main agent decides based on task complexity.
+- mode (string, optional)
+  oneshot | persistent. Default is oneshot.
+- team_name (string, optional)
+  Required when mode=persistent.
+- teammate_name (string, optional)
+  Required when mode=persistent. Legacy alias: name.
+- run_in_background (boolean, optional)
+  Reserved field for future compatibility.
 
 Usage notes
 1) Only one Task call is supported at a time (single tool call).
 2) The subagent returns one final result; summarize it back to the user.
 3) Your prompt should be detailed and specify exactly what to return.
-4) Subagents must not call Task again.
+4) Subagents and teammates must not call Task recursively.
 
 Example
 {"description": "Explore auth flow", "prompt": "Find key files and summarize auth flow. Return file paths and purpose.", "subagent_type": "explore", "model": "light"}

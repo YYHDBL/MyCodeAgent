@@ -152,6 +152,7 @@ class CodeAgent(Agent):
                 project_root=self.project_root,
                 main_llm=self.llm,
                 tool_registry=self.tool_registry,
+                team_manager=self.team_manager,
             )
         )
         if self.enable_agent_teams:
