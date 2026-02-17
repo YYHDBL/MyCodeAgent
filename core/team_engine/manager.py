@@ -43,9 +43,12 @@ from .protocol import (
 )
 from .store import TeamStore
 from .task_board_store import TaskBoardStore
-from .worker import TeammateWorker
-from .turn_executor import TurnExecutor
-from tools.registry import ToolRegistry
+from .message_router import MessageRouter
+from .task_board import TaskBoardService
+from .approval import ApprovalService
+from .supervisor import WorkerSupervisor
+from .execution import ExecutionService
+from .errors import TeamEngineError
 
 
 class TeamManagerError(Exception):
@@ -80,15 +83,28 @@ class TeamManager:
         self.llm = llm
         self.tool_registry = tool_registry
         self.work_executor = work_executor
-        self._workers: Dict[tuple[str, str], Any] = {}
         self._events: Dict[str, List[Event]] = defaultdict(list)
-        self._message_status: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
         self._recent_errors: Dict[str, str] = {}
         self._processed_by_member: Dict[tuple[str, str], set[str]] = defaultdict(set)
-        self._plan_approvals: Dict[str, Dict[str, Any]] = {}
-        self._plan_approvals_lock = threading.Lock()
         max_parallel = max_llm_concurrency or int(os.getenv("TEAM_LLM_MAX_CONCURRENCY", "4"))
         self._llm_semaphore = threading.Semaphore(max(1, max_parallel))
+        self.message_router = MessageRouter(store=self.store, emit_fn=self._emit)
+        self.task_board_service = TaskBoardService(self.task_board)
+        self.approval_service = ApprovalService()
+        self.worker_supervisor = WorkerSupervisor()
+        self.execution_service = ExecutionService(
+            project_root=self.project_root,
+            llm=self.llm,
+            tool_registry=self.tool_registry,
+            work_executor=self.work_executor,
+            read_team_fn=self._read_team_or_raise,
+            llm_semaphore=self._llm_semaphore,
+        )
+        # Backward-compatible aliases used by existing tests.
+        self._workers = self.worker_supervisor.workers
+        self._message_status = self.message_router.message_status
+        self._plan_approvals = self.approval_service.requests
+        self._plan_approvals_lock = self.approval_service.lock
 
     def create_team(self, team_name: str, members: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
@@ -106,18 +122,10 @@ class TeamManager:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
         self._emit(normalized_team, EVENT_SHUTDOWN_REQUEST, {"team_name": normalized_team})
-        for (team, member), worker in list(self._workers.items()):
-            if team != normalized_team:
-                continue
-            try:
-                if hasattr(worker, "stop"):
-                    worker.stop()
-                if hasattr(worker, "join"):
-                    worker.join(timeout=2.0)
-            finally:
-                self._workers.pop((team, member), None)
+        self.worker_supervisor.stop_team(normalized_team, join_timeout_s=2.0)
         self.store.delete_team(normalized_team)
-        self._message_status.pop(normalized_team, None)
+        self.message_router.clear_team(normalized_team)
+        self.approval_service.clear_team(normalized_team)
         self._recent_errors.pop(normalized_team, None)
         for key in list(self._processed_by_member.keys()):
             if key[0] == normalized_team:
@@ -127,11 +135,8 @@ class TeamManager:
     def cleanup_team(self, team_name: str, force: bool = False) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
-        active = [
-            f"{team}:{member}"
-            for (team, member), worker in self._workers.items()
-            if team == normalized_team and worker and worker.is_alive()
-        ]
+        active_members = self.worker_supervisor.active_workers(normalized_team)
+        active = [f"{normalized_team}:{member}" for member in active_members]
         if active and not force:
             raise TeamManagerError(
                 "CONFLICT",
@@ -176,114 +181,35 @@ class TeamManager:
         feedback: str = "",
     ) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
-        sender = sanitize_name(from_member)
-        message_kind = str(message_type or MESSAGE_TYPE_MESSAGE).strip().lower()
-        summary_text = str(summary or "").strip()
-        request_ref = str(request_id or "").strip()
-        feedback_text = str(feedback or "").strip()
-        if not text or not str(text).strip():
-            raise TeamManagerError("INVALID_PARAM", "text is required")
-        if message_kind not in MESSAGE_TYPES:
-            raise TeamManagerError("INVALID_PARAM", f"unsupported message type: {message_kind}")
-        if message_kind in {MESSAGE_TYPE_MESSAGE, MESSAGE_TYPE_BROADCAST} and not summary_text:
-            raise TeamManagerError("INVALID_PARAM", "summary is required when message type is message or broadcast")
-        if message_kind in {MESSAGE_TYPE_SHUTDOWN_RESPONSE, MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE} and not request_ref:
-            raise TeamManagerError("INVALID_PARAM", f"request_id is required when message type is {message_kind}")
-        if message_kind == MESSAGE_TYPE_SHUTDOWN_REQUEST and not request_ref:
-            request_ref = f"req_{uuid.uuid4().hex[:10]}"
-
         cfg = self._read_team_or_raise(normalized_team)
         members = {m["name"] for m in cfg.get("members", [])}
-        if sender not in members:
-            raise TeamManagerError("NOT_FOUND", f"member not found: {sender}")
-        recipients: List[str]
-        if message_kind == MESSAGE_TYPE_BROADCAST:
-            recipients = sorted(name for name in members if name != sender)
-            if not recipients:
-                raise TeamManagerError("INVALID_PARAM", "broadcast requires at least one recipient")
-        else:
-            recipient = sanitize_name(to_member)
-            if recipient not in members:
-                raise TeamManagerError("NOT_FOUND", f"member not found: {sender}->{recipient}")
-            recipients = [recipient]
-
-        message_ids: List[str] = []
-        for recipient in recipients:
-            message_id = f"msg_{uuid.uuid4().hex}"
-            pending = {
-                "message_id": message_id,
-                "team_name": normalized_team,
-                "from": sender,
-                "to": recipient,
-                "text": str(text),
-                "type": message_kind,
-                "summary": summary_text,
-                "request_id": request_ref,
-                "approved": approved if isinstance(approved, bool) else None,
-                "feedback": feedback_text,
-                "status": MESSAGE_STATUS_PENDING,
-            }
-            self._message_status[normalized_team][message_id] = dict(pending)
-            delivered = dict(pending)
-            delivered["status"] = MESSAGE_STATUS_DELIVERED
-            self.store.append_inbox_message(normalized_team, recipient, delivered)
-            self._message_status[normalized_team][message_id] = delivered
-            event_type = EVENT_MESSAGE_SENT
-            if message_kind == MESSAGE_TYPE_SHUTDOWN_REQUEST:
-                event_type = EVENT_SHUTDOWN_REQUEST
-            elif message_kind == MESSAGE_TYPE_SHUTDOWN_RESPONSE:
-                event_type = EVENT_SHUTDOWN_RESPONSE
-            elif message_kind == MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE:
-                event_type = EVENT_PLAN_APPROVAL_RESPONSE
-            self._emit(
-                normalized_team,
-                event_type,
-                {
-                    "message_id": message_id,
-                    "from": sender,
-                    "to": recipient,
-                    "type": message_kind,
-                    "status": MESSAGE_STATUS_DELIVERED,
-                    "request_id": request_ref,
-                    "approved": approved if isinstance(approved, bool) else None,
-                },
+        try:
+            return self.message_router.send_message(
+                team_name=normalized_team,
+                members=members,
+                from_member=from_member,
+                to_member=to_member,
+                text=text,
+                message_type=message_type,
+                summary=summary,
+                request_id=request_id,
+                approved=approved,
+                feedback=feedback,
             )
-            message_ids.append(message_id)
-
-        result: Dict[str, Any] = {
-            "message_id": message_ids[0],
-            "message_ids": message_ids,
-            "status": MESSAGE_STATUS_DELIVERED,
-            "type": message_kind,
-            "request_id": request_ref,
-            "summary": summary_text,
-            "approved": approved if isinstance(approved, bool) else None,
-            "feedback": feedback_text,
-        }
-        if message_kind == MESSAGE_TYPE_BROADCAST:
-            result["recipient_count"] = len(recipients)
-        return result
+        except TeamEngineError as exc:
+            raise TeamManagerError(exc.code, exc.message) from exc
 
     def mark_message_processed(self, team_name: str, message_id: str, processed_by: str) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
-        statuses = self._message_status.get(normalized_team, {})
-        if message_id not in statuses:
-            raise TeamManagerError("NOT_FOUND", f"message not found: {message_id}")
-        state = dict(statuses[message_id])
-        state["status"] = MESSAGE_STATUS_PROCESSED
-        state["processed_by"] = sanitize_name(processed_by)
-        statuses[message_id] = state
-        self._emit(
-            normalized_team,
-            EVENT_MESSAGE_ACK,
-            {"message_id": message_id, "status": MESSAGE_STATUS_PROCESSED, "processed_by": state["processed_by"]},
-        )
-        return state
+        try:
+            return self.message_router.mark_processed(normalized_team, message_id, processed_by=processed_by)
+        except TeamEngineError as exc:
+            raise TeamManagerError(exc.code, exc.message) from exc
 
     def get_status(self, team_name: str) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
         cfg = self._read_team_or_raise(normalized_team)
-        statuses = self._message_status.get(normalized_team, {})
+        statuses = self.message_router.team_messages(normalized_team)
         counts = {
             MESSAGE_STATUS_PENDING: 0,
             MESSAGE_STATUS_DELIVERED: 0,
@@ -313,7 +239,7 @@ class TeamManager:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
         try:
-            return self.task_board.create_task(
+            return self.task_board_service.create_task(
                 normalized_team,
                 subject=subject,
                 description=description,
@@ -329,14 +255,14 @@ class TeamManager:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
         try:
-            return self.task_board.get_task(normalized_team, str(task_id))
+            return self.task_board_service.get_task(normalized_team, str(task_id))
         except FileNotFoundError as exc:
             raise TeamManagerError("NOT_FOUND", str(exc)) from exc
 
     def list_board_tasks(self, team_name: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
-        return self.task_board.list_tasks(normalized_team, status=status)
+        return self.task_board_service.list_tasks(normalized_team, status=status)
 
     def update_board_task(
         self,
@@ -352,7 +278,7 @@ class TeamManager:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
         try:
-            return self.task_board.update_task(
+            return self.task_board_service.update_task(
                 normalized_team,
                 task_id=str(task_id),
                 status=status,
@@ -371,19 +297,14 @@ class TeamManager:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
         try:
-            return self.task_board.claim_next_task(normalized_team, owner=owner)
+            return self.task_board_service.claim_next_task(normalized_team, owner=owner)
         except ValueError as exc:
             raise TeamManagerError("INVALID_PARAM", str(exc)) from exc
 
     def list_plan_approvals(self, team_name: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
         normalized_team = sanitize_name(team_name)
         self._read_team_or_raise(normalized_team)
-        with self._plan_approvals_lock:
-            rows = [dict(x) for x in self._plan_approvals.values() if x.get("team_name") == normalized_team]
-        if status:
-            rows = [x for x in rows if str(x.get("status") or "") == str(status)]
-        rows.sort(key=lambda x: float(x.get("created_at") or 0))
-        return rows
+        return self.approval_service.list_requests(normalized_team, status=status)
 
     def respond_plan_approval(
         self,
@@ -401,8 +322,7 @@ class TeamManager:
         if not isinstance(approved, bool):
             raise TeamManagerError("INVALID_PARAM", "approved must be boolean")
 
-        with self._plan_approvals_lock:
-            row = dict(self._plan_approvals.get(req) or {})
+        row = self.approval_service.get_request(req)
         if not row or row.get("team_name") != normalized_team:
             raise TeamManagerError("NOT_FOUND", f"plan approval request not found: {req}")
         if row.get("status") not in {"pending", "approved", "rejected"}:
@@ -535,9 +455,7 @@ class TeamManager:
         return item
 
     def has_worker(self, team_name: str, teammate_name: str) -> bool:
-        key = (sanitize_name(team_name), sanitize_name(teammate_name))
-        worker = self._workers.get(key)
-        return bool(worker and worker.is_alive())
+        return self.worker_supervisor.has_worker(team_name, teammate_name)
 
     def export_state(self) -> Dict[str, Any]:
         teams = self.store.list_teams()
@@ -587,19 +505,13 @@ class TeamManager:
         self._events[team_name].append(Event.create(team=team_name, event_type=event_type, payload=payload))
 
     def _start_worker(self, team_name: str, teammate_name: str) -> None:
-        key = (team_name, teammate_name)
-        existing = self._workers.get(key)
-        if existing and existing.is_alive():
-            return
-        worker = TeammateWorker(
+        self.worker_supervisor.start_worker(
             team_name=team_name,
             teammate_name=teammate_name,
             poll_fn=lambda: self._process_member_inbox(team_name, teammate_name),
             poll_interval_s=0.02,
             idle_timeout_s=60.0,
         )
-        worker.start()
-        self._workers[key] = worker
 
     def _process_member_inbox(self, team_name: str, teammate_name: str) -> bool:
         processed_ids = self._processed_by_member[(team_name, teammate_name)]
@@ -647,8 +559,7 @@ class TeamManager:
         )
 
         try:
-            with self._llm_semaphore:
-                execution = self._execute_work_item(team_name, teammate_name, running_item)
+            execution = self.execution_service.execute_work_item(team_name, teammate_name, running_item)
             result = execution.get("result")
             updated = self.store.update_work_item_status(
                 team_name,
@@ -710,27 +621,12 @@ class TeamManager:
         description = str(claimed.get("description") or "").strip()
         instruction = description or subject
         if self._teammate_requires_plan_approval(team_name, teammate_name):
-            request_id = f"req_{uuid.uuid4().hex[:10]}"
-            entry = {
-                "request_id": request_id,
-                "team_name": sanitize_name(team_name),
-                "teammate": sanitize_name(teammate_name),
-                "task_id": task_id,
-                "subject": subject,
-                "status": "pending",
-                "feedback": "",
-                "approved": None,
-                "dispatched": False,
-                "created_at": time.time(),
-                "updated_at": time.time(),
-            }
-            with self._plan_approvals_lock:
-                self._plan_approvals[request_id] = entry
+            entry = self.approval_service.create_request(team_name, teammate_name, task_id, subject)
             self._emit(
                 team_name,
                 EVENT_PLAN_APPROVAL_REQUESTED,
                 {
-                    "request_id": request_id,
+                    "request_id": entry["request_id"],
                     "teammate": teammate_name,
                     "task_id": task_id,
                     "status": "pending",
@@ -754,22 +650,7 @@ class TeamManager:
     def _dispatch_approved_plan_work(self, team_name: str, teammate_name: str) -> bool:
         normalized_team = sanitize_name(team_name)
         normalized_teammate = sanitize_name(teammate_name)
-        candidate: Optional[Dict[str, Any]] = None
-        with self._plan_approvals_lock:
-            for row in self._plan_approvals.values():
-                if row.get("team_name") != normalized_team:
-                    continue
-                if row.get("teammate") != normalized_teammate:
-                    continue
-                if row.get("status") != "approved":
-                    continue
-                if row.get("dispatched"):
-                    continue
-                candidate = row
-                break
-            if candidate is not None:
-                candidate["dispatched"] = True
-                candidate["updated_at"] = time.time()
+        candidate = self.approval_service.claim_next_approved_request(normalized_team, normalized_teammate)
         if candidate is None:
             return False
         task_id = str(candidate.get("task_id"))
@@ -795,10 +676,7 @@ class TeamManager:
         return True
 
     def _request_worker_stop(self, team_name: str, teammate_name: str) -> None:
-        key = (sanitize_name(team_name), sanitize_name(teammate_name))
-        worker = self._workers.get(key)
-        if worker and hasattr(worker, "stop"):
-            worker.stop()
+        self.worker_supervisor.request_stop(team_name, teammate_name)
 
     def _teammate_requires_plan_approval(self, team_name: str, teammate_name: str) -> bool:
         member = self._get_teammate_member(team_name, teammate_name)
@@ -825,103 +703,13 @@ class TeamManager:
             text = str(message_row.get("text") or "").lower()
             approved = "approve" in text and "reject" not in text
         feedback = str(message_row.get("feedback") or "").strip()
-        normalized_team = sanitize_name(team_name)
-        normalized_teammate = sanitize_name(teammate_name)
-        with self._plan_approvals_lock:
-            row = self._plan_approvals.get(request_id)
-            if not row:
-                return
-            if row.get("team_name") != normalized_team or row.get("teammate") != normalized_teammate:
-                return
-            row["status"] = "approved" if approved else "rejected"
-            row["approved"] = approved
-            row["feedback"] = feedback
-            row["updated_at"] = time.time()
+        self.approval_service.apply_response(team_name, teammate_name, request_id, approved, feedback)
 
     def _execute_work_item(self, team_name: str, teammate_name: str, work_item: Dict[str, Any]) -> Dict[str, Any]:
-        if self.work_executor:
-            payload = self.work_executor(dict(work_item))
-            if isinstance(payload, dict):
-                return payload
-            return {"result": payload}
-        if self.llm is None or self.tool_registry is None:
-            # Fallback behavior when no executor is wired yet.
-            return {
-                "result": f"[{team_name}/{teammate_name}] completed: {work_item.get('title', '')}",
-            }
-
-        last_error: Optional[Exception] = None
-        for attempt in range(3):
-            try:
-                return self._run_turn_executor_work(team_name, teammate_name, work_item)
-            except Exception as exc:  # pragma: no cover - defensive
-                last_error = exc
-                message = str(exc).lower()
-                retryable = "rate limit" in message or "429" in message or "timeout" in message
-                if not retryable or attempt >= 2:
-                    break
-                time.sleep(0.2 * (2 ** attempt))
-        raise RuntimeError(str(last_error) if last_error else "work item execution failed")
+        return self.execution_service.execute_work_item(team_name, teammate_name, work_item)
 
     def _run_turn_executor_work(self, team_name: str, teammate_name: str, work_item: Dict[str, Any]) -> Dict[str, Any]:
-        registry, denied_tools = self._build_teammate_registry(team_name, teammate_name)
-        executor = TurnExecutor(
-            llm=self.llm,
-            tool_registry=registry,
-            project_root=Path(self.project_root),
-            denied_tools=denied_tools,
-        )
-        instruction = str(work_item.get("instruction") or "")
-        messages: List[Dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a teammate worker. Complete the assigned work item. "
-                    "Task recursion is forbidden."
-                ),
-            },
-            {"role": "user", "content": instruction},
-        ]
-        tool_usage: Dict[str, int] = {}
-        last_tool_msg = ""
-        max_steps = int(os.getenv("TEAM_WORKER_MAX_STEPS", "8"))
-        for _ in range(max(1, max_steps)):
-            turn = executor.execute_turn(messages, tool_usage=tool_usage)
-            messages = turn["messages"]
-            tool_messages = [m for m in messages if m.get("role") == "tool"]
-            if tool_messages:
-                last_tool_msg = str(tool_messages[-1].get("content", ""))
-            if turn["done"]:
-                final_result = str(turn.get("final_result") or "").strip()
-                if final_result:
-                    return {"result": final_result, "tool_usage": tool_usage}
-                break
-        if last_tool_msg:
-            return {"result": last_tool_msg, "tool_usage": tool_usage}
-        return {"result": "", "tool_usage": tool_usage}
+        return self.execution_service._run_turn_executor_work(team_name, teammate_name, work_item)
 
     def _build_teammate_registry(self, team_name: str, teammate_name: str) -> tuple[ToolRegistry, set[str]]:
-        cfg = self._read_team_or_raise(team_name)
-        teammate = None
-        for member in cfg.get("members", []):
-            if str(member.get("name") or "") == teammate_name:
-                teammate = member
-                break
-        policy = (teammate or {}).get("tool_policy") if isinstance(teammate, dict) else {}
-        if not isinstance(policy, dict):
-            policy = {}
-        allowlist = policy.get("allowlist")
-        denylist = policy.get("denylist")
-        allowset = {str(x) for x in allowlist} if isinstance(allowlist, list) else set()
-        denyset = {str(x) for x in denylist} if isinstance(denylist, list) else set()
-        denyset.add("Task")
-
-        filtered = ToolRegistry()
-        for tool in self.tool_registry.get_all_tools():
-            name = tool.name
-            if name in denyset:
-                continue
-            if allowset and name not in allowset:
-                continue
-            filtered.register_tool(tool)
-        return filtered, denyset
+        return self.execution_service._build_teammate_registry(team_name, teammate_name)
