@@ -16,6 +16,7 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.tree import Tree
 from rich.markdown import Markdown
+from core.team_engine.progress_view import build_team_progress_rows
 
 
 class ThinkingTimer:
@@ -312,3 +313,34 @@ class EnhancedUI:
         if self.token_tracker.total_tokens > 0:
             self.console.print(self.token_tracker.get_summary())
             self.console.print()
+
+    def show_team_progress(self, runtime_state: dict, team_name: Optional[str] = None):
+        """Render concise team parallel progress table."""
+        rows = build_team_progress_rows(runtime_state, team_name=team_name)
+        if not rows:
+            return
+        table = Table(title="🚦 Team Parallel Progress", show_header=True, header_style="bold cyan")
+        table.add_column("Team", style="bold")
+        table.add_column("Q", justify="right")
+        table.add_column("R", justify="right")
+        table.add_column("S", justify="right")
+        table.add_column("F", justify="right")
+        table.add_column("Active", justify="right")
+        table.add_column("Idle", justify="right")
+        table.add_column("Appr", justify="right")
+        table.add_column("Blk", justify="right")
+        for row in rows:
+            running_style = "bold yellow" if row["running"] > 0 else "white"
+            table.add_row(
+                str(row["team"]),
+                str(row["queued"]),
+                f"[{running_style}]{row['running']}[/]",
+                str(row["succeeded"]),
+                str(row["failed"]),
+                str(row["active"]),
+                str(row["idle"]),
+                str(row["approvals_pending"]),
+                str(row["blocked"]),
+            )
+        self.console.print(table)
+        self.console.print()

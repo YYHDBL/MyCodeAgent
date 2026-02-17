@@ -164,11 +164,28 @@ class RichConsoleCodeAgent(CodeAgent):
         # Show tool call in enhanced UI
         if self.ui:
             self.ui.show_tool_call(tool_name, tool_input)
+            if tool_name in {"Task", "TeamFanout", "TeamCollect"}:
+                mode = ""
+                if isinstance(tool_input, dict):
+                    mode = str(tool_input.get("mode", "") or "").strip()
+                mode_suffix = f" mode={mode}" if mode else ""
+                console.print(
+                    f"[bold magenta]⚡ Team Dispatch[/bold magenta] "
+                    f"{tool_name}{mode_suffix}"
+                )
         
         with console.status(f"[bold cyan]Executing {tool_name}...[/bold cyan]", spinner="dots"):
             # artificial small delay to make the spinner visible if tool is too fast
             # time.sleep(0.1) 
-            return super()._execute_tool(tool_name, tool_input)
+            result = super()._execute_tool(tool_name, tool_input)
+
+        if self.ui and self.enable_agent_teams and self.team_manager and tool_name in {"Task", "TeamFanout", "TeamCollect"}:
+            try:
+                state = self.team_manager.export_state()
+                self.ui.show_team_progress(state)
+            except Exception:
+                pass
+        return result
 
 def _env_flag(name: str, default: bool = True) -> bool:
     value = os.getenv(name)
@@ -520,6 +537,11 @@ def main() -> None:
                 timing_text.append(f"⏱️  Completed in {elapsed:.1f}s", style="dim cyan")
                 console.print(timing_text)
                 enhanced_ui.show_token_summary()
+                if agent.enable_agent_teams and agent.team_manager:
+                    try:
+                        enhanced_ui.show_team_progress(agent.team_manager.export_state())
+                    except Exception:
+                        pass
                 console.print()
 
             if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
