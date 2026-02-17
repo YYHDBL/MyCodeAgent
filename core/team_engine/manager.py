@@ -69,6 +69,8 @@ class TeamManager:
         tool_registry: Optional[Any] = None,
         work_executor: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
         max_llm_concurrency: Optional[int] = None,
+        teammate_runtime_mode: str = "in-process",
+        tmux_orchestrator: Optional[Any] = None,
     ):
         self.store = store or TeamStore(
             project_root=project_root,
@@ -83,6 +85,13 @@ class TeamManager:
         self.llm = llm
         self.tool_registry = tool_registry
         self.work_executor = work_executor
+        runtime_mode = str(teammate_runtime_mode or "in-process").strip().lower()
+        self.teammate_runtime_mode = runtime_mode if runtime_mode in {"in-process", "tmux"} else "in-process"
+        self.tmux_orchestrator = tmux_orchestrator
+        if self.teammate_runtime_mode == "tmux" and self.tmux_orchestrator is None:
+            from .tmux_orchestrator import TmuxOrchestrator
+
+            self.tmux_orchestrator = TmuxOrchestrator()
         self._events: Dict[str, List[Event]] = defaultdict(list)
         self._recent_errors: Dict[str, str] = {}
         self._processed_by_member: Dict[tuple[str, str], set[str]] = defaultdict(set)
@@ -116,6 +125,7 @@ class TeamManager:
             cfg = self.store.create_team(normalized_team, members=normalized_members)
         except FileExistsError as exc:
             raise TeamManagerError("CONFLICT", str(exc)) from exc
+        self._ensure_tmux_team_session(normalized_team)
         return cfg
 
     def delete_team(self, team_name: str) -> Dict[str, Any]:
@@ -123,6 +133,7 @@ class TeamManager:
         self._read_team_or_raise(normalized_team)
         self._emit(normalized_team, EVENT_SHUTDOWN_REQUEST, {"team_name": normalized_team})
         self.worker_supervisor.stop_team(normalized_team, join_timeout_s=2.0)
+        self._cleanup_tmux_team_session(normalized_team)
         self.store.delete_team(normalized_team)
         self.message_router.clear_team(normalized_team)
         self.approval_service.clear_team(normalized_team)
@@ -165,6 +176,7 @@ class TeamManager:
             raise TeamManagerError("INVALID_PARAM", f"duplicate teammate name: {teammate['name']}")
         cfg["members"] = list(cfg.get("members", [])) + [teammate]
         self.store.update_team(normalized_team, cfg)
+        self._ensure_tmux_teammate_window(normalized_team, teammate["name"])
         self._start_worker(normalized_team, teammate["name"])
         return teammate
 
@@ -528,6 +540,30 @@ class TeamManager:
 
     def _emit(self, team_name: str, event_type: str, payload: Dict[str, Any]) -> None:
         self._events[team_name].append(Event.create(team=team_name, event_type=event_type, payload=payload))
+
+    def _ensure_tmux_team_session(self, team_name: str) -> None:
+        if self.teammate_runtime_mode != "tmux" or self.tmux_orchestrator is None:
+            return
+        try:
+            self.tmux_orchestrator.ensure_session(team_name)
+        except Exception as exc:  # pragma: no cover - best effort display-plane
+            self._recent_errors[team_name] = str(exc)
+
+    def _ensure_tmux_teammate_window(self, team_name: str, teammate_name: str) -> None:
+        if self.teammate_runtime_mode != "tmux" or self.tmux_orchestrator is None:
+            return
+        try:
+            self.tmux_orchestrator.ensure_teammate_window(team_name, teammate_name)
+        except Exception as exc:  # pragma: no cover - best effort display-plane
+            self._recent_errors[team_name] = str(exc)
+
+    def _cleanup_tmux_team_session(self, team_name: str) -> None:
+        if self.teammate_runtime_mode != "tmux" or self.tmux_orchestrator is None:
+            return
+        try:
+            self.tmux_orchestrator.cleanup_session(team_name)
+        except Exception:  # pragma: no cover - best effort display-plane
+            return
 
     def _start_worker(self, team_name: str, teammate_name: str) -> None:
         self.worker_supervisor.start_worker(

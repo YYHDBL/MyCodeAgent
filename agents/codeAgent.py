@@ -88,6 +88,7 @@ class CodeAgent(Agent):
                     task_store_dir=self.task_store_dir,
                     llm=self.llm,
                     tool_registry=self.tool_registry,
+                    teammate_runtime_mode=self.teammate_runtime_mode,
                 )
             except Exception as exc:
                 self.logger.warning("Failed to initialize TeamManager, AgentTeams disabled: %s", exc)
