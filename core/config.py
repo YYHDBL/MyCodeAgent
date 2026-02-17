@@ -30,6 +30,7 @@ class Config(BaseModel):
     enable_agent_teams: bool = False
     agent_teams_store_dir: str = ".teams"
     agent_tasks_store_dir: str = ".tasks"
+    teammate_mode: str = "auto"
     
     # 上下文工程配置（E5）
     context_window: int = 128000  # 默认 128K tokens
@@ -46,6 +47,9 @@ class Config(BaseModel):
         if enable_agent_teams_raw is None:
             # Claude Code compatibility env flag
             enable_agent_teams_raw = os.getenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "false")
+        teammate_mode_raw = (os.getenv("TEAMMATE_MODE", "auto") or "auto").strip().lower()
+        if teammate_mode_raw not in {"auto", "in-process", "tmux"}:
+            teammate_mode_raw = "auto"
         return cls(
             debug=os.getenv("DEBUG", "false").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "INFO"),
@@ -56,6 +60,7 @@ class Config(BaseModel):
             enable_agent_teams=str(enable_agent_teams_raw).lower() in {"1", "true", "yes", "y", "on"},
             agent_teams_store_dir=os.getenv("AGENT_TEAMS_STORE_DIR", ".teams"),
             agent_tasks_store_dir=os.getenv("AGENT_TASKS_STORE_DIR", ".tasks"),
+            teammate_mode=teammate_mode_raw,
             context_window=int(os.getenv("CONTEXT_WINDOW", "128000")),
             compression_threshold=float(os.getenv("COMPRESSION_THRESHOLD", "0.8")),
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),

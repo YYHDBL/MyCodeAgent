@@ -229,11 +229,19 @@ def main() -> None:
     parser.add_argument("--api-key", default=None, help="api key (override LLM_API_KEY)")
     parser.add_argument("--base-url", default=None, help="base url (override LLM_BASE_URL)")
     parser.add_argument("--temperature", type=float, default=None, help="temperature (override TEMPERATURE)")
+    parser.add_argument(
+        "--teammate-mode",
+        choices=["auto", "in-process", "tmux"],
+        default=None,
+        help="teammate display mode (override TEAMMATE_MODE)",
+    )
     parser.add_argument("--show-raw", action="store_true", help="print raw response structure")
     args = parser.parse_args()
 
     # Initialize config first (used for temperature fallback)
     config = Config.from_env()
+    if args.teammate_mode is not None:
+        config.teammate_mode = args.teammate_mode
 
     # Initialize LLM
     try:
