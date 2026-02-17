@@ -14,11 +14,21 @@ from .events import Event
 from .protocol import (
     EVENT_MESSAGE_ACK,
     EVENT_MESSAGE_SENT,
+    EVENT_PLAN_APPROVAL_RESPONSE,
     EVENT_SHUTDOWN_REQUEST,
+    EVENT_SHUTDOWN_RESPONSE,
     EVENT_WORK_ITEM_ASSIGNED,
     EVENT_WORK_ITEM_COMPLETED,
     EVENT_WORK_ITEM_FAILED,
     EVENT_WORK_ITEM_STARTED,
+    MESSAGE_TYPES,
+    MESSAGE_TYPE_BROADCAST,
+    MESSAGE_TYPE_MESSAGE,
+    MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE,
+    MESSAGE_TYPE_SHUTDOWN_REQUEST,
+    MESSAGE_TYPE_SHUTDOWN_RESPONSE,
+    TASK_STATUS_CANCELED,
+    TASK_STATUS_COMPLETED,
     MESSAGE_STATUS_DELIVERED,
     MESSAGE_STATUS_PENDING,
     MESSAGE_STATUS_PROCESSED,
@@ -31,6 +41,7 @@ from .protocol import (
     sanitize_name,
 )
 from .store import TeamStore
+from .task_board_store import TaskBoardStore
 from .worker import TeammateWorker
 from .turn_executor import TurnExecutor
 from tools.registry import ToolRegistry
@@ -58,6 +69,10 @@ class TeamManager:
         self.store = store or TeamStore(
             project_root=project_root,
             team_store_dir=team_store_dir,
+            task_store_dir=task_store_dir,
+        )
+        self.task_board = TaskBoardStore(
+            project_root=project_root,
             task_store_dir=task_store_dir,
         )
         self.project_root = project_root
@@ -130,38 +145,98 @@ class TeamManager:
         self._start_worker(normalized_team, teammate["name"])
         return teammate
 
-    def send_message(self, team_name: str, from_member: str, to_member: str, text: str) -> Dict[str, Any]:
+    def send_message(
+        self,
+        team_name: str,
+        from_member: str,
+        to_member: str,
+        text: str,
+        message_type: str = MESSAGE_TYPE_MESSAGE,
+        summary: str = "",
+        request_id: str = "",
+    ) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
         sender = sanitize_name(from_member)
-        recipient = sanitize_name(to_member)
+        message_kind = str(message_type or MESSAGE_TYPE_MESSAGE).strip().lower()
+        summary_text = str(summary or "").strip()
+        request_ref = str(request_id or "").strip()
         if not text or not str(text).strip():
             raise TeamManagerError("INVALID_PARAM", "text is required")
+        if message_kind not in MESSAGE_TYPES:
+            raise TeamManagerError("INVALID_PARAM", f"unsupported message type: {message_kind}")
+        if message_kind == MESSAGE_TYPE_BROADCAST and not summary_text:
+            raise TeamManagerError("INVALID_PARAM", "summary is required when message type is broadcast")
+        if message_kind in {MESSAGE_TYPE_SHUTDOWN_RESPONSE, MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE} and not request_ref:
+            raise TeamManagerError("INVALID_PARAM", f"request_id is required when message type is {message_kind}")
+        if message_kind == MESSAGE_TYPE_SHUTDOWN_REQUEST and not request_ref:
+            request_ref = f"req_{uuid.uuid4().hex[:10]}"
 
         cfg = self._read_team_or_raise(normalized_team)
         members = {m["name"] for m in cfg.get("members", [])}
-        if sender not in members or recipient not in members:
-            raise TeamManagerError("NOT_FOUND", f"member not found: {sender}->{recipient}")
+        if sender not in members:
+            raise TeamManagerError("NOT_FOUND", f"member not found: {sender}")
+        recipients: List[str]
+        if message_kind == MESSAGE_TYPE_BROADCAST:
+            recipients = sorted(name for name in members if name != sender)
+            if not recipients:
+                raise TeamManagerError("INVALID_PARAM", "broadcast requires at least one recipient")
+        else:
+            recipient = sanitize_name(to_member)
+            if recipient not in members:
+                raise TeamManagerError("NOT_FOUND", f"member not found: {sender}->{recipient}")
+            recipients = [recipient]
 
-        message_id = f"msg_{uuid.uuid4().hex}"
-        pending = {
-            "message_id": message_id,
-            "team_name": normalized_team,
-            "from": sender,
-            "to": recipient,
-            "text": str(text),
-            "status": MESSAGE_STATUS_PENDING,
+        message_ids: List[str] = []
+        for recipient in recipients:
+            message_id = f"msg_{uuid.uuid4().hex}"
+            pending = {
+                "message_id": message_id,
+                "team_name": normalized_team,
+                "from": sender,
+                "to": recipient,
+                "text": str(text),
+                "type": message_kind,
+                "summary": summary_text,
+                "request_id": request_ref,
+                "status": MESSAGE_STATUS_PENDING,
+            }
+            self._message_status[normalized_team][message_id] = dict(pending)
+            delivered = dict(pending)
+            delivered["status"] = MESSAGE_STATUS_DELIVERED
+            self.store.append_inbox_message(normalized_team, recipient, delivered)
+            self._message_status[normalized_team][message_id] = delivered
+            event_type = EVENT_MESSAGE_SENT
+            if message_kind == MESSAGE_TYPE_SHUTDOWN_REQUEST:
+                event_type = EVENT_SHUTDOWN_REQUEST
+            elif message_kind == MESSAGE_TYPE_SHUTDOWN_RESPONSE:
+                event_type = EVENT_SHUTDOWN_RESPONSE
+            elif message_kind == MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE:
+                event_type = EVENT_PLAN_APPROVAL_RESPONSE
+            self._emit(
+                normalized_team,
+                event_type,
+                {
+                    "message_id": message_id,
+                    "from": sender,
+                    "to": recipient,
+                    "type": message_kind,
+                    "status": MESSAGE_STATUS_DELIVERED,
+                    "request_id": request_ref,
+                },
+            )
+            message_ids.append(message_id)
+
+        result: Dict[str, Any] = {
+            "message_id": message_ids[0],
+            "message_ids": message_ids,
+            "status": MESSAGE_STATUS_DELIVERED,
+            "type": message_kind,
+            "request_id": request_ref,
+            "summary": summary_text,
         }
-        self._message_status[normalized_team][message_id] = dict(pending)
-        delivered = dict(pending)
-        delivered["status"] = MESSAGE_STATUS_DELIVERED
-        self.store.append_inbox_message(normalized_team, recipient, delivered)
-        self._message_status[normalized_team][message_id] = delivered
-        self._emit(
-            normalized_team,
-            EVENT_MESSAGE_SENT,
-            {"message_id": message_id, "from": sender, "to": recipient, "status": MESSAGE_STATUS_DELIVERED},
-        )
-        return {"message_id": message_id, "status": MESSAGE_STATUS_DELIVERED}
+        if message_kind == MESSAGE_TYPE_BROADCAST:
+            result["recipient_count"] = len(recipients)
+        return result
 
     def mark_message_processed(self, team_name: str, message_id: str, processed_by: str) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
@@ -200,6 +275,79 @@ class TeamManager:
             "recent_messages": recent_messages,
             "last_error": self._recent_errors.get(normalized_team),
         }
+
+    def create_board_task(
+        self,
+        team_name: str,
+        subject: str,
+        description: str = "",
+        owner: str = "",
+        blocked_by: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        try:
+            return self.task_board.create_task(
+                normalized_team,
+                subject=subject,
+                description=description,
+                owner=owner,
+                blocked_by=blocked_by or [],
+            )
+        except FileNotFoundError as exc:
+            raise TeamManagerError("NOT_FOUND", str(exc)) from exc
+        except ValueError as exc:
+            raise TeamManagerError("INVALID_PARAM", str(exc)) from exc
+
+    def get_board_task(self, team_name: str, task_id: str) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        try:
+            return self.task_board.get_task(normalized_team, str(task_id))
+        except FileNotFoundError as exc:
+            raise TeamManagerError("NOT_FOUND", str(exc)) from exc
+
+    def list_board_tasks(self, team_name: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        return self.task_board.list_tasks(normalized_team, status=status)
+
+    def update_board_task(
+        self,
+        team_name: str,
+        task_id: str,
+        status: Optional[str] = None,
+        owner: Optional[str] = None,
+        subject: Optional[str] = None,
+        description: Optional[str] = None,
+        add_blocked_by: Optional[List[str]] = None,
+        add_blocks: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        try:
+            return self.task_board.update_task(
+                normalized_team,
+                task_id=str(task_id),
+                status=status,
+                owner=owner,
+                subject=subject,
+                description=description,
+                add_blocked_by=add_blocked_by or [],
+                add_blocks=add_blocks or [],
+            )
+        except FileNotFoundError as exc:
+            raise TeamManagerError("NOT_FOUND", str(exc)) from exc
+        except ValueError as exc:
+            raise TeamManagerError("INVALID_PARAM", str(exc)) from exc
+
+    def claim_next_board_task(self, team_name: str, owner: str) -> Optional[Dict[str, Any]]:
+        normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
+        try:
+            return self.task_board.claim_next_task(normalized_team, owner=owner)
+        except ValueError as exc:
+            raise TeamManagerError("INVALID_PARAM", str(exc)) from exc
 
     def drain_events(self, team_name: Optional[str] = None) -> List[Dict[str, Any]]:
         if team_name is not None:
@@ -375,6 +523,8 @@ class TeamManager:
             processed_ids.add(message_id)
             did_work = True
         did_work = self._process_next_work_item(team_name, teammate_name) or did_work
+        if not did_work:
+            did_work = self._claim_board_task_to_work_item(team_name, teammate_name) or did_work
         return did_work
 
     def _process_next_work_item(self, team_name: str, teammate_name: str) -> bool:
@@ -407,6 +557,18 @@ class TeamManager:
                 status=WORK_ITEM_STATUS_SUCCEEDED,
                 result=result,
             )
+            payload = running_item.get("payload") if isinstance(running_item.get("payload"), dict) else {}
+            board_task_id = str(payload.get("board_task_id") or "").strip()
+            if board_task_id:
+                try:
+                    self.update_board_task(
+                        team_name,
+                        task_id=board_task_id,
+                        status=TASK_STATUS_COMPLETED,
+                        owner=teammate_name,
+                    )
+                except TeamManagerError:
+                    pass
             self._emit(
                 team_name,
                 EVENT_WORK_ITEM_COMPLETED,
@@ -420,12 +582,46 @@ class TeamManager:
                 status=WORK_ITEM_STATUS_FAILED,
                 error={"message": str(exc)},
             )
+            payload = running_item.get("payload") if isinstance(running_item.get("payload"), dict) else {}
+            board_task_id = str(payload.get("board_task_id") or "").strip()
+            if board_task_id:
+                try:
+                    self.update_board_task(
+                        team_name,
+                        task_id=board_task_id,
+                        status=TASK_STATUS_CANCELED,
+                        owner=teammate_name,
+                    )
+                except TeamManagerError:
+                    pass
             self._recent_errors[team_name] = str(exc)
             self._emit(
                 team_name,
                 EVENT_WORK_ITEM_FAILED,
                 {"work_id": work_id, "owner": teammate_name, "status": WORK_ITEM_STATUS_FAILED},
             )
+        return True
+
+    def _claim_board_task_to_work_item(self, team_name: str, teammate_name: str) -> bool:
+        claimed = self.claim_next_board_task(team_name, owner=teammate_name)
+        if not claimed:
+            return False
+        task_id = str(claimed.get("id"))
+        subject = str(claimed.get("subject") or f"task-{task_id}")
+        description = str(claimed.get("description") or "").strip()
+        instruction = description or subject
+        item = self.store.create_work_item(
+            team_name,
+            owner=teammate_name,
+            title=subject,
+            instruction=instruction,
+            payload={"board_task_id": task_id},
+        )
+        self._emit(
+            team_name,
+            EVENT_WORK_ITEM_ASSIGNED,
+            {"work_id": item["work_id"], "owner": teammate_name, "status": item["status"]},
+        )
         return True
 
     def _execute_work_item(self, team_name: str, teammate_name: str, work_item: Dict[str, Any]) -> Dict[str, Any]:

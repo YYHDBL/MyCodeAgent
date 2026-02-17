@@ -47,6 +47,25 @@ class SendMessageTool(Tool):
             ToolParameter(name="from_member", type="string", description="Sender member name", required=True),
             ToolParameter(name="to_member", type="string", description="Receiver member name", required=True),
             ToolParameter(name="text", type="string", description="Message text", required=True),
+            ToolParameter(
+                name="type",
+                type="string",
+                description="message | broadcast | shutdown_request | shutdown_response | plan_approval_response",
+                required=False,
+                default="message",
+            ),
+            ToolParameter(
+                name="summary",
+                type="string",
+                description="Short summary. Required for broadcast.",
+                required=False,
+            ),
+            ToolParameter(
+                name="request_id",
+                type="string",
+                description="Correlation id for shutdown/approval protocols.",
+                required=False,
+            ),
         ]
 
     def run(self, parameters: Dict[str, Any]) -> str:
@@ -56,6 +75,9 @@ class SendMessageTool(Tool):
         from_member = parameters.get("from_member")
         to_member = parameters.get("to_member")
         text = parameters.get("text")
+        message_type = parameters.get("type", "message")
+        summary = parameters.get("summary", "")
+        request_id = parameters.get("request_id", "")
 
         for field_name, value in (
             ("team_name", team_name),
@@ -69,18 +91,49 @@ class SendMessageTool(Tool):
                     message=f"Parameter '{field_name}' is required and must be a non-empty string.",
                     params_input=params_input,
                 )
+        if not isinstance(message_type, str) or not message_type.strip():
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'type' must be a non-empty string when provided.",
+                params_input=params_input,
+            )
+        if summary is not None and not isinstance(summary, str):
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'summary' must be a string when provided.",
+                params_input=params_input,
+            )
+        if request_id is not None and not isinstance(request_id, str):
+            return self.create_error_response(
+                error_code=ErrorCode.INVALID_PARAM,
+                message="Parameter 'request_id' must be a string when provided.",
+                params_input=params_input,
+            )
 
         try:
-            sent = self._team_manager.send_message(team_name, from_member, to_member, text)
+            sent = self._team_manager.send_message(
+                team_name,
+                from_member,
+                to_member,
+                text,
+                message_type=message_type,
+                summary=summary or "",
+                request_id=request_id or "",
+            )
             return self.create_success_response(
                 data={
                     "message_id": sent.get("message_id"),
+                    "message_ids": sent.get("message_ids", []),
                     "status": sent.get("status"),
+                    "type": sent.get("type", "message"),
+                    "recipient_count": sent.get("recipient_count", 1),
+                    "request_id": sent.get("request_id", ""),
+                    "summary": sent.get("summary", ""),
                     "team_name": team_name,
                     "from_member": from_member,
                     "to_member": to_member,
                 },
-                text=f"Message sent to '{to_member}' ({sent.get('status')}).",
+                text=f"Message sent ({sent.get('status')}).",
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
@@ -98,4 +151,3 @@ class SendMessageTool(Tool):
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
-
