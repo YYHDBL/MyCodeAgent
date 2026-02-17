@@ -65,6 +65,27 @@ class WorkerSupervisor:
                 active.append(member)
         return sorted(active)
 
+    def team_state(self, team_name: str) -> dict:
+        team = sanitize_name(team_name)
+        active: list[str] = []
+        idle: list[str] = []
+        stopped: list[str] = []
+        for (w_team, member), worker in self._workers.items():
+            if w_team != team:
+                continue
+            state = str(getattr(worker, "state", "") or "")
+            if state == "idle":
+                idle.append(member)
+            elif worker and worker.is_alive():
+                active.append(member)
+            else:
+                stopped.append(member)
+        return {
+            "active_teammates": sorted(active),
+            "idle_teammates": sorted(idle),
+            "stopped_teammates": sorted(stopped),
+        }
+
     def stop_team(self, team_name: str, join_timeout_s: float = 2.0) -> None:
         team = sanitize_name(team_name)
         for (w_team, member), worker in list(self._workers.items()):
@@ -77,4 +98,3 @@ class WorkerSupervisor:
                     worker.join(timeout=join_timeout_s)
             finally:
                 self._workers.pop((w_team, member), None)
-

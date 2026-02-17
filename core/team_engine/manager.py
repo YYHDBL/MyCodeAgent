@@ -459,20 +459,45 @@ class TeamManager:
 
     def export_state(self) -> Dict[str, Any]:
         teams = self.store.list_teams()
-        return {
-            "teams": {name: self.get_status(name) for name in teams},
-            "work_items": {
-                name: self.collect_work(name).get("counts", {})
-                for name in teams
-            },
-            "approvals": {
-                name: {
-                    "pending": len(self.list_plan_approvals(name, status="pending")),
-                    "approved": len(self.list_plan_approvals(name, status="approved")),
-                    "rejected": len(self.list_plan_approvals(name, status="rejected")),
-                }
-                for name in teams
+        team_states: Dict[str, Dict[str, Any]] = {}
+        work_counts: Dict[str, Dict[str, Any]] = {}
+        approval_counts: Dict[str, Dict[str, Any]] = {}
+        task_board_counts: Dict[str, Dict[str, Any]] = {}
+        for name in teams:
+            team_state = self.get_status(name)
+            worker_state = self.worker_supervisor.team_state(name)
+            team_state.update(worker_state)
+            team_states[name] = team_state
+            work_counts[name] = self.collect_work(name).get("counts", {})
+            approval_counts[name] = {
+                "pending": len(self.list_plan_approvals(name, status="pending")),
+                "approved": len(self.list_plan_approvals(name, status="approved")),
+                "rejected": len(self.list_plan_approvals(name, status="rejected")),
             }
+            board_rows = self.list_board_tasks(name)
+            blocked = 0
+            pending = 0
+            in_progress = 0
+            for row in board_rows:
+                status = str(row.get("status") or "")
+                blocked_by = row.get("blocked_by")
+                if status == "pending":
+                    pending += 1
+                    if isinstance(blocked_by, list) and blocked_by:
+                        blocked += 1
+                elif status == "in_progress":
+                    in_progress += 1
+            task_board_counts[name] = {
+                "total": len(board_rows),
+                "blocked": blocked,
+                "pending": pending,
+                "in_progress": in_progress,
+            }
+        return {
+            "teams": team_states,
+            "work_items": work_counts,
+            "approvals": approval_counts,
+            "task_board": task_board_counts,
         }
 
     def import_state(self, state: Optional[Dict[str, Any]]) -> None:
