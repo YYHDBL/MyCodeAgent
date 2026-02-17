@@ -10,6 +10,29 @@
 
 ---
 
+## Mandatory Rules (Must Follow)
+
+1. **TurnExecutor integration is a hard prerequisite**
+   - 并行功能实现前，必须先完成 worker 与 `TurnExecutor` 的真实执行集成。
+   - 未接入 `TurnExecutor` 的 worker 仅 ACK 不执行，不能视为并行能力完成。
+
+2. **Concurrency model**
+   - 每个 worker 线程内保持 `max_concurrency=1`（线程内串行，简化一致性）。
+   - 多 worker 线程并行执行。
+   - 必须增加全局 LLM 并发闸门（如 `Semaphore`）与 rate-limit 退避，避免 API 429/超时雪崩。
+
+3. **Work item storage sharding**
+   - 不使用单一 `work_items.jsonl` 热点文件。
+   - 按 teammate 分片：`work_items/work_items_<teammate>.jsonl`（或等价结构）。
+   - 保留轻量索引/聚合视图供 collect 查询，避免全量扫描成为瓶颈。
+
+4. **Task recursion ban for teammate**
+   - teammate 绝对禁止 `Task`（防递归）。
+   - 在 worker 执行路径中必须二次校验：`TurnExecutor` 工具过滤 + `tool_policy` denylist 双重生效。
+   - 该约束需有专门测试覆盖，防止后续回归。
+
+---
+
 ### Task 1: 并行工作项协议扩展
 
 **Files:**
@@ -86,9 +109,10 @@ Expected: FAIL（store 无 work item 方法）
 
 **Step 3: Write minimal implementation**
 
-- 在 `.teams/<team>/` 下新增：
-  - `work_items.jsonl`（记录任务项）
-  - `work_items.lock`（目录锁）
+- 在 `.teams/<team>/work_items/` 下新增分片存储：
+  - `work_items_<teammate>.jsonl`（每个 teammate 独立工作项文件）
+  - `work_items_<teammate>.lock`（对应分片锁）
+  - 可选：`work_items_index.json`（轻量聚合索引）
 - 新增方法：
   - `create_work_item(team, owner, title, instruction, payload=None)`
   - `list_work_items(team, owner=None, status=None)`
@@ -183,6 +207,16 @@ def test_two_workers_run_tasks_in_parallel(tmp_path):
     # 断言总耗时显著小于串行总和（例如 < 1.5s 而不是 ~2.0s）
 ```
 
+```python
+def test_worker_uses_turn_executor_not_ack_only(tmp_path):
+    # 若未调用 TurnExecutor，则测试失败（防止仅做 processed 标记）
+```
+
+```python
+def test_teammate_cannot_call_task_in_worker_path(tmp_path):
+    # worker 执行时 Task 调用被拒绝（双重过滤）
+```
+
 **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_team_worker_parallel_execution.py -q`  
@@ -197,6 +231,9 @@ Expected: FAIL（worker 尚未执行 work item）
   - 写回 `succeeded/failed` 与 `result/error`
   - 发 `completed/failed` 事件
 - 增加每 worker 的 `max_concurrency=1`（线程内串行，跨 worker 并行）
+- 增加全局 LLM 并发闸门（例如 TeamManager 级 `Semaphore`）：
+  - worker 调用 LLM 前 acquire，完成后 release
+  - 对 429/限流错误执行指数退避并上报事件
 
 **Step 4: Run test to verify it passes**
 
@@ -393,10 +430,12 @@ Run:
   tests/test_team_store.py \
   tests/test_team_manager.py \
   tests/test_team_worker.py \
+  tests/test_team_worker_parallel_execution.py \
+  tests/test_team_store_parallel.py \
+  tests/test_team_manager_parallel.py \
   tests/test_team_tools.py \
   tests/test_team_parallel_tools.py \
   tests/test_task_tool_parallel_mode.py \
-  tests/test_team_worker_parallel_execution.py \
   tests/test_team_parallel_runtime_injection.py \
   tests/test_team_parallel_session_restore.py \
   tests/test_agent_teams_parallel_integration.py -q
@@ -409,4 +448,3 @@ Expected: 全绿；无协议破坏；oneshot/persistent 回归通过。
 1. 灰度开启：`ENABLE_AGENT_TEAMS=true` 且仅在测试环境启用并行工具。
 2. 观察项：worker 并发数、失败率、平均完成时长、锁冲突率。
 3. 快速回滚：`ENABLE_AGENT_TEAMS=false`，并行入口立即关闭，主链路保持不变。
-
