@@ -43,8 +43,10 @@ from core.config import Config
 from core.team_engine.cli_commands import (
     DELEGATE_USAGE,
     TEAM_MSG_USAGE,
+    TEAM_WATCH_USAGE,
     parse_delegate_command,
     parse_team_message_command,
+    parse_team_watch_command,
 )
 from utils.ui_components import EnhancedUI, ToolCallTree
 
@@ -374,6 +376,50 @@ def main() -> None:
                     except Exception as exc:
                         console.print(f"[bold red]✗ Team message failed:[/bold red] {exc}")
                     continue
+                elif user_input.lower().startswith("/team watch "):
+                    if not agent.enable_agent_teams or agent.team_manager is None:
+                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
+                        continue
+                    try:
+                        cmd = parse_team_watch_command(user_input)
+                    except ValueError as exc:
+                        console.print(f"[bold red]✗ {exc}[/bold red]")
+                        continue
+                    team_name = str(cmd.get("team_name"))
+                    rounds = int(cmd.get("rounds", 15))
+                    console.print(
+                        f"[bold cyan]Watching team[/bold cyan] {team_name} "
+                        f"for {rounds} rounds..."
+                    )
+                    for i in range(rounds):
+                        try:
+                            snapshot = agent.team_manager.collect_work(team_name)
+                            state = agent.team_manager.export_state()
+                        except Exception as exc:
+                            console.print(f"[bold red]✗ Team watch failed:[/bold red] {exc}")
+                            break
+                        counts = snapshot.get("counts", {}) if isinstance(snapshot, dict) else {}
+                        queued = int(counts.get("queued", 0) or 0)
+                        running = int(counts.get("running", 0) or 0)
+                        succeeded = int(counts.get("succeeded", 0) or 0)
+                        failed = int(counts.get("failed", 0) or 0)
+                        team_state = (
+                            state.get("teams", {}).get(team_name, {})
+                            if isinstance(state, dict)
+                            else {}
+                        )
+                        active = len(team_state.get("active_teammates", [])) if isinstance(team_state, dict) else 0
+                        idle = len(team_state.get("idle_teammates", [])) if isinstance(team_state, dict) else 0
+                        console.print(
+                            f"[dim][{i+1}/{rounds}] "
+                            f"queued={queued} running={running} succeeded={succeeded} failed={failed} "
+                            f"active={active} idle={idle}[/dim]"
+                        )
+                        if queued == 0 and running == 0:
+                            console.print("[bold green]✓ Team watch reached steady state.[/bold green]")
+                            break
+                        time.sleep(1.0)
+                    continue
                 elif user_input.lower().startswith("/delegate"):
                     try:
                         cmd = parse_delegate_command(user_input)
@@ -400,6 +446,7 @@ def main() -> None:
                         "/save [path] - Save session snapshot\n"
                         "/load [path] - Load session snapshot\n"
                         f"{TEAM_MSG_USAGE}\n"
+                        f"{TEAM_WATCH_USAGE}\n"
                         f"{DELEGATE_USAGE}\n"
                         "/help - Show this help\n"
                         "exit, quit, q - Exit the chat\n"

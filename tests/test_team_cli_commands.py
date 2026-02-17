@@ -1,6 +1,10 @@
 import pytest
 
-from core.team_engine.cli_commands import parse_delegate_command, parse_team_message_command
+from core.team_engine.cli_commands import (
+    parse_delegate_command,
+    parse_team_message_command,
+    parse_team_watch_command,
+)
 
 
 def test_parse_team_message_command_with_auto_summary():
@@ -47,3 +51,22 @@ def test_parse_delegate_command_on_and_off():
 def test_parse_delegate_command_invalid_raises():
     with pytest.raises(ValueError):
         parse_delegate_command("/delegate maybe")
+
+
+def test_parse_team_watch_command_default_rounds():
+    parsed = parse_team_watch_command("/team watch demo")
+    assert parsed["team_name"] == "demo"
+    assert parsed["rounds"] == 15
+
+
+def test_parse_team_watch_command_with_rounds():
+    parsed = parse_team_watch_command("/team watch demo 20")
+    assert parsed["team_name"] == "demo"
+    assert parsed["rounds"] == 20
+
+
+def test_parse_team_watch_command_invalid_raises():
+    with pytest.raises(ValueError):
+        parse_team_watch_command("/team watch")
+    with pytest.raises(ValueError):
+        parse_team_watch_command("/team watch demo abc")

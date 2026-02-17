@@ -7,6 +7,7 @@ from typing import Dict
 
 TEAM_MSG_USAGE = "Usage: /team msg <team_name> <teammate_name> <summary :: message | message>"
 DELEGATE_USAGE = "Usage: /delegate <on|off|status>"
+TEAM_WATCH_USAGE = "Usage: /team watch <team_name> [rounds]"
 
 
 def _build_summary(text: str, limit: int = 80) -> str:
@@ -69,3 +70,24 @@ def parse_delegate_command(command: str) -> Dict[str, object]:
     if action == "off":
         return {"action": "set", "enabled": False}
     raise ValueError(DELEGATE_USAGE)
+
+
+def parse_team_watch_command(command: str) -> Dict[str, object]:
+    raw = (command or "").strip()
+    if not raw.lower().startswith("/team watch "):
+        raise ValueError(TEAM_WATCH_USAGE)
+    parts = raw.split()
+    if len(parts) not in {3, 4}:
+        raise ValueError(TEAM_WATCH_USAGE)
+    team_name = str(parts[2] or "").strip()
+    if not team_name:
+        raise ValueError(TEAM_WATCH_USAGE)
+    rounds = 15
+    if len(parts) == 4:
+        try:
+            rounds = int(parts[3])
+        except Exception as exc:
+            raise ValueError(TEAM_WATCH_USAGE) from exc
+    if rounds <= 0:
+        raise ValueError(TEAM_WATCH_USAGE)
+    return {"team_name": team_name, "rounds": rounds}
