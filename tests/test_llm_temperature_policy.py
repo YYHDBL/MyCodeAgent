@@ -91,3 +91,29 @@ def test_minimax_request_enforces_n_one_and_omits_auto_tool_choice(monkeypatch):
 
     assert recorder["n"] == 1
     assert "tool_choice" not in recorder
+
+
+def test_minimax_merges_multiple_system_messages(monkeypatch):
+    recorder = {}
+    monkeypatch.setattr(HelloAgentsLLM, "_create_client", lambda self: _DummyClient(recorder))
+
+    llm = HelloAgentsLLM(
+        model="MiniMax-M2.1",
+        provider="auto",
+        api_key="test-key",
+        base_url="https://api.minimaxi.com/v1",
+        temperature=1,
+    )
+    llm.invoke_raw(
+        [
+            {"role": "system", "content": "S1"},
+            {"role": "system", "content": "S2"},
+            {"role": "user", "content": "U"},
+        ]
+    )
+
+    sent_messages = recorder["messages"]
+    assert len([m for m in sent_messages if m.get("role") == "system"]) == 1
+    assert sent_messages[0]["role"] == "system"
+    assert "S1" in sent_messages[0]["content"]
+    assert "S2" in sent_messages[0]["content"]

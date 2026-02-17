@@ -331,6 +331,30 @@ class HelloAgentsLLM:
                 normalized.pop("tool_choice", None)
         return normalized
 
+    def _normalize_messages_for_provider(self, messages: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Normalize message list for backend-specific constraints."""
+        if not self._is_minimax_backend():
+            return messages
+        if not isinstance(messages, list) or len(messages) <= 1:
+            return messages
+        system_messages = [m for m in messages if isinstance(m, dict) and str(m.get("role") or "") == "system"]
+        if len(system_messages) <= 1:
+            return messages
+
+        merged_parts: list[str] = []
+        for m in system_messages:
+            content = m.get("content")
+            if content is None:
+                continue
+            text = str(content).strip()
+            if text:
+                merged_parts.append(text)
+        merged_system = {"role": "system", "content": "\n\n".join(merged_parts)}
+        non_system = [m for m in messages if not (isinstance(m, dict) and str(m.get("role") or "") == "system")]
+        if merged_system["content"]:
+            return [merged_system] + non_system
+        return non_system
+
     def _requires_temperature_one(self) -> bool:
         """Kimi 2.5 / K2 系列模型仅接受 temperature=1。"""
         if self.provider != "kimi":
@@ -439,7 +463,7 @@ class HelloAgentsLLM:
         try:
             request_kwargs = {
                 "model": self.model,
-                "messages": messages,
+                "messages": self._normalize_messages_for_provider(messages),
                 "temperature": self._resolve_temperature(temperature),
                 "max_tokens": self.max_tokens,
                 "stream": True,
@@ -472,7 +496,7 @@ class HelloAgentsLLM:
             try:
                 request_kwargs = {
                     "model": self.model,
-                    "messages": messages,
+                    "messages": self._normalize_messages_for_provider(messages),
                     "temperature": self._resolve_temperature(kwargs.get("temperature")),
                     "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
@@ -505,7 +529,7 @@ class HelloAgentsLLM:
             try:
                 request_kwargs = {
                     "model": self.model,
-                    "messages": messages,
+                    "messages": self._normalize_messages_for_provider(messages),
                     "temperature": self._resolve_temperature(kwargs.get("temperature")),
                     "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
