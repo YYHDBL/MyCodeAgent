@@ -64,6 +64,7 @@ class HelloAgentsLLM:
         self.max_retries = int(self._get_env("LLM_MAX_RETRIES", "2"))
         self.retry_backoff = float(self._get_env("LLM_RETRY_BACKOFF", "1.0"))
         self.kwargs = kwargs
+        self._temperature_policy_notice_emitted = False
 
         # 自动检测provider或使用指定的provider
         self.provider = self._resolve_provider(provider, api_key, base_url)
@@ -311,6 +312,45 @@ class HelloAgentsLLM:
             base_url=self.base_url,
             timeout=self.timeout
         )
+
+    def _requires_temperature_one(self) -> bool:
+        """Kimi 2.5 / K2 系列模型仅接受 temperature=1。"""
+        if self.provider != "kimi":
+            return False
+        model = (self.model or "").strip().lower()
+        if not model:
+            return False
+        strict_markers = (
+            "kimi2.5",
+            "kimi-2.5",
+            "kimi_2.5",
+            "kimi-k2",
+            "kimi k2",
+            "k2-",
+            "-k2",
+            "/k2",
+            "k2",
+        )
+        return any(marker in model for marker in strict_markers)
+
+    def _resolve_temperature(self, requested: Optional[float]) -> float:
+        """根据模型约束解析 temperature。"""
+        value = self.temperature if requested is None else requested
+        try:
+            temp = float(value)
+        except Exception:
+            temp = float(self.temperature)
+
+        if self._requires_temperature_one() and temp != 1.0:
+            if not self._temperature_policy_notice_emitted:
+                logger.warning(
+                    "模型 %s 仅支持 temperature=1，已自动从 %.3f 调整为 1。",
+                    self.model,
+                    temp,
+                )
+                self._temperature_policy_notice_emitted = True
+            return 1
+        return temp
     
     def _get_default_model(self) -> str:
         """获取默认模型"""
@@ -382,7 +422,7 @@ class HelloAgentsLLM:
             request_kwargs = {
                 "model": self.model,
                 "messages": messages,
-                "temperature": temperature if temperature is not None else self.temperature,
+                "temperature": self._resolve_temperature(temperature),
                 "max_tokens": self.max_tokens,
                 "stream": True,
             }
@@ -413,7 +453,7 @@ class HelloAgentsLLM:
                 request_kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": kwargs.get("temperature", self.temperature),
+                    "temperature": self._resolve_temperature(kwargs.get("temperature")),
                     "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
@@ -444,7 +484,7 @@ class HelloAgentsLLM:
                 request_kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": kwargs.get("temperature", self.temperature),
+                    "temperature": self._resolve_temperature(kwargs.get("temperature")),
                     "max_tokens": kwargs.get("max_tokens", self.max_tokens),
                 }
                 extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
