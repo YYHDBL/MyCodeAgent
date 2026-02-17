@@ -42,6 +42,10 @@ class Config(BaseModel):
     @classmethod
     def from_env(cls) -> "Config":
         """从环境变量创建配置"""
+        enable_agent_teams_raw = os.getenv("ENABLE_AGENT_TEAMS")
+        if enable_agent_teams_raw is None:
+            # Claude Code compatibility env flag
+            enable_agent_teams_raw = os.getenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "false")
         return cls(
             debug=os.getenv("DEBUG", "false").lower() == "true",
             log_level=os.getenv("LOG_LEVEL", "INFO"),
@@ -49,7 +53,7 @@ class Config(BaseModel):
             show_progress=os.getenv("SHOW_PROGRESS", "true").lower() == "true",
             temperature=float(os.getenv("TEMPERATURE", "0.7")),
             max_tokens=int(os.getenv("MAX_TOKENS")) if os.getenv("MAX_TOKENS") else None,
-            enable_agent_teams=os.getenv("ENABLE_AGENT_TEAMS", "false").lower() == "true",
+            enable_agent_teams=str(enable_agent_teams_raw).lower() in {"1", "true", "yes", "y", "on"},
             agent_teams_store_dir=os.getenv("AGENT_TEAMS_STORE_DIR", ".teams"),
             agent_tasks_store_dir=os.getenv("AGENT_TASKS_STORE_DIR", ".tasks"),
             context_window=int(os.getenv("CONTEXT_WINDOW", "128000")),

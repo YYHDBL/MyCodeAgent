@@ -24,6 +24,11 @@ class TestAgentTeamsConfig(unittest.TestCase):
             cfg = Config.from_env()
             self.assertTrue(cfg.enable_agent_teams)
 
+    def test_agent_teams_enabled_from_claude_compat_env(self):
+        with patch.dict("os.environ", {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}, clear=True):
+            cfg = Config.from_env()
+            self.assertTrue(cfg.enable_agent_teams)
+
     def test_code_agent_feature_flag_and_store_dirs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = Config(enable_agent_teams=False)
