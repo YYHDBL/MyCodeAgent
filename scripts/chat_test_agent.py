@@ -40,7 +40,12 @@ from agents.codeAgent import CodeAgent
 from tools.registry import ToolRegistry
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
 from core.config import Config
-from core.team_engine.cli_commands import TEAM_MSG_USAGE, parse_team_message_command
+from core.team_engine.cli_commands import (
+    DELEGATE_USAGE,
+    TEAM_MSG_USAGE,
+    parse_delegate_command,
+    parse_team_message_command,
+)
 from utils.ui_components import EnhancedUI, ToolCallTree
 
 # Geeky Theme
@@ -369,6 +374,25 @@ def main() -> None:
                     except Exception as exc:
                         console.print(f"[bold red]✗ Team message failed:[/bold red] {exc}")
                     continue
+                elif user_input.lower().startswith("/delegate"):
+                    try:
+                        cmd = parse_delegate_command(user_input)
+                    except ValueError as exc:
+                        console.print(f"[bold red]✗ {exc}[/bold red]")
+                        continue
+                    if cmd.get("action") == "status":
+                        console.print(
+                            "[bold cyan]Delegate mode:[/bold cyan] "
+                            f"{'ON' if agent.delegate_mode else 'OFF'}"
+                        )
+                        continue
+                    enabled = bool(cmd.get("enabled"))
+                    agent.set_delegate_mode(enabled)
+                    console.print(
+                        "[bold green]✓ Delegate mode updated:[/bold green] "
+                        f"{'ON' if enabled else 'OFF'}"
+                    )
+                    continue
                 elif user_input.lower() == "/help":
                     console.print(Panel(
                         "[bold]Available Commands:[/bold]\n"
@@ -376,6 +400,7 @@ def main() -> None:
                         "/save [path] - Save session snapshot\n"
                         "/load [path] - Load session snapshot\n"
                         f"{TEAM_MSG_USAGE}\n"
+                        f"{DELEGATE_USAGE}\n"
                         "/help - Show this help\n"
                         "exit, quit, q - Exit the chat\n"
                         "init - Generate code_law.md",

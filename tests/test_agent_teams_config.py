@@ -44,6 +44,16 @@ class TestAgentTeamsConfig(unittest.TestCase):
             cfg = Config.from_env()
             self.assertEqual(cfg.teammate_mode, "auto")
 
+    def test_delegate_mode_default_false(self):
+        with patch.dict("os.environ", {}, clear=True):
+            cfg = Config.from_env()
+            self.assertFalse(cfg.delegate_mode)
+
+    def test_delegate_mode_from_env(self):
+        with patch.dict("os.environ", {"TEAM_DELEGATE_MODE": "true"}, clear=True):
+            cfg = Config.from_env()
+            self.assertTrue(cfg.delegate_mode)
+
     def test_code_agent_feature_flag_and_store_dirs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = Config(enable_agent_teams=False)
@@ -58,6 +68,7 @@ class TestAgentTeamsConfig(unittest.TestCase):
             self.assertEqual(agent.team_store_dir, ".teams")
             self.assertEqual(agent.task_store_dir, ".tasks")
             self.assertEqual(agent.teammate_mode, "auto")
+            self.assertFalse(agent.delegate_mode)
 
     def test_code_agent_resolves_runtime_teammate_mode(self):
         with tempfile.TemporaryDirectory() as temp_dir:

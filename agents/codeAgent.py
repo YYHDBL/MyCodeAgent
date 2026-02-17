@@ -47,6 +47,23 @@ class CodeAgent(Agent):
     - ReAct 每一步同步写入 assistant/tool 消息到 history
     - 支持压缩触发和 Summary 生成
     """
+    DELEGATION_ALLOWED_TOOLS = {
+        "TeamCreate",
+        "SendMessage",
+        "TeamStatus",
+        "TeamDelete",
+        "TeamCleanup",
+        "TeamApprovals",
+        "TeamApprovePlan",
+        "TeamFanout",
+        "TeamCollect",
+        "TeamTaskCreate",
+        "TeamTaskGet",
+        "TeamTaskUpdate",
+        "TeamTaskList",
+        "TodoWrite",
+        "AskUser",
+    }
     
     def __init__(
         self, 
@@ -76,6 +93,7 @@ class CodeAgent(Agent):
         self.task_store_dir = str(getattr(self.config, "agent_tasks_store_dir", ".tasks") or ".tasks")
         self.teammate_mode = str(getattr(self.config, "teammate_mode", "auto") or "auto")
         self.teammate_runtime_mode, self.teammate_mode_warning = resolve_teammate_mode(self.teammate_mode)
+        self.delegate_mode = bool(getattr(self.config, "delegate_mode", False))
         if self.teammate_mode_warning:
             self.logger.warning(self.teammate_mode_warning)
         self.team_manager = None
@@ -94,12 +112,13 @@ class CodeAgent(Agent):
                 self.logger.warning("Failed to initialize TeamManager, AgentTeams disabled: %s", exc)
                 self.enable_agent_teams = False
         self.logger.info(
-            "AgentTeams enabled=%s, team_store_dir=%s, task_store_dir=%s, teammate_mode=%s, teammate_runtime_mode=%s",
+            "AgentTeams enabled=%s, team_store_dir=%s, task_store_dir=%s, teammate_mode=%s, teammate_runtime_mode=%s, delegate_mode=%s",
             self.enable_agent_teams,
             self.team_store_dir,
             self.task_store_dir,
             self.teammate_mode,
             self.teammate_runtime_mode,
+            self.delegate_mode,
         )
         
         # 创建 Summary 生成器（Phase 7）
@@ -355,10 +374,10 @@ class CodeAgent(Agent):
         4. 若为 Finish：返回结果
         5. 若为工具调用：执行工具，将 assistant + tool 消息追加到 history
         """
-        tools_schema = self.tool_registry.get_openai_tools()
         tool_choice = "auto"
 
         for step in range(1, self.max_steps + 1):
+            tools_schema = self._get_openai_tools_for_current_mode()
             if self.enable_agent_teams and self.team_manager and hasattr(self.context_builder, "set_runtime_system_blocks"):
                 events = self.team_manager.drain_events()
                 runtime_state = self.team_manager.export_state()
@@ -652,7 +671,7 @@ class CodeAgent(Agent):
         """保存会话快照（含 system messages）。"""
         system_messages = self._get_system_messages_for_run()
         history_messages = self.history_manager.serialize_messages()
-        tool_schema = self.tool_registry.get_openai_tools()
+        tool_schema = self._get_openai_tools_for_current_mode()
         teams_snapshot = self.team_manager.export_state() if self.team_manager else {}
         snapshot = build_session_snapshot(
             system_messages=system_messages,
@@ -831,8 +850,44 @@ class CodeAgent(Agent):
         return ["\n".join(lines)]
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
+        if not self._is_tool_allowed_in_delegate_mode(tool_name):
+            payload = {
+                "status": "error",
+                "data": {},
+                "text": f"Tool '{tool_name}' is blocked in delegate mode.",
+                "error": {
+                    "code": "PERMISSION_DENIED",
+                    "message": f"Tool '{tool_name}' is not allowed in delegate mode.",
+                },
+                "stats": {"time_ms": 0},
+                "context": {"cwd": ".", "params_input": tool_input if isinstance(tool_input, dict) else {"input": tool_input}},
+            }
+            return json.dumps(payload, ensure_ascii=False, indent=2)
         res = self.tool_registry.execute_tool(tool_name, tool_input)
         return str(res)
+
+    def set_delegate_mode(self, enabled: bool) -> None:
+        self.delegate_mode = bool(enabled)
+        if hasattr(self.config, "delegate_mode"):
+            self.config.delegate_mode = self.delegate_mode
+        self.logger.info("Delegate mode set to %s", self.delegate_mode)
+
+    def _is_tool_allowed_in_delegate_mode(self, tool_name: str) -> bool:
+        if not self.delegate_mode:
+            return True
+        return str(tool_name or "") in self.DELEGATION_ALLOWED_TOOLS
+
+    def _get_openai_tools_for_current_mode(self) -> list[dict[str, Any]]:
+        tools = self.tool_registry.get_openai_tools()
+        if not self.delegate_mode:
+            return tools
+        filtered: list[dict[str, Any]] = []
+        for item in tools:
+            function = item.get("function") if isinstance(item, dict) else None
+            name = function.get("name") if isinstance(function, dict) else ""
+            if self._is_tool_allowed_in_delegate_mode(str(name or "")):
+                filtered.append(item)
+        return filtered
 
     def _ensure_json_input(self, raw: str) -> Tuple[Any, Optional[str]]:
         if raw is None:

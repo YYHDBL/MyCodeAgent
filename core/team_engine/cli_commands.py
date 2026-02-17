@@ -6,6 +6,7 @@ import re
 from typing import Dict
 
 TEAM_MSG_USAGE = "Usage: /team msg <team_name> <teammate_name> <summary :: message | message>"
+DELEGATE_USAGE = "Usage: /delegate <on|off|status>"
 
 
 def _build_summary(text: str, limit: int = 80) -> str:
@@ -54,3 +55,17 @@ def parse_team_message_command(command: str, from_member: str) -> Dict[str, str]
         "type": "message",
     }
 
+
+def parse_delegate_command(command: str) -> Dict[str, object]:
+    raw = (command or "").strip().lower()
+    parts = raw.split()
+    if len(parts) != 2 or parts[0] != "/delegate":
+        raise ValueError(DELEGATE_USAGE)
+    action = parts[1]
+    if action == "status":
+        return {"action": "status"}
+    if action == "on":
+        return {"action": "set", "enabled": True}
+    if action == "off":
+        return {"action": "set", "enabled": False}
+    raise ValueError(DELEGATE_USAGE)

@@ -1,6 +1,6 @@
 import pytest
 
-from core.team_engine.cli_commands import parse_team_message_command
+from core.team_engine.cli_commands import parse_delegate_command, parse_team_message_command
 
 
 def test_parse_team_message_command_with_auto_summary():
@@ -32,3 +32,18 @@ def test_parse_team_message_command_missing_arguments_raises():
 def test_parse_team_message_command_empty_text_raises():
     with pytest.raises(ValueError):
         parse_team_message_command("/team msg demo dev1   ", from_member="lead")
+
+
+def test_parse_delegate_command_status():
+    parsed = parse_delegate_command("/delegate status")
+    assert parsed["action"] == "status"
+
+
+def test_parse_delegate_command_on_and_off():
+    assert parse_delegate_command("/delegate on")["enabled"] is True
+    assert parse_delegate_command("/delegate off")["enabled"] is False
+
+
+def test_parse_delegate_command_invalid_raises():
+    with pytest.raises(ValueError):
+        parse_delegate_command("/delegate maybe")
