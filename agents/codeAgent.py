@@ -70,6 +70,12 @@ class CodeAgent(Agent):
         self.console_verbose = bool(self.config.show_react_steps)
         self.console_progress = bool(self.config.show_progress)
         self.interactive = os.getenv("AGENT_INTERACTIVE", "true").lower() in {"1", "true", "yes", "y", "on"}
+        self.enable_agent_teams = bool(getattr(self.config, "enable_agent_teams", False))
+        self.team_store_dir = str(getattr(self.config, "agent_teams_store_dir", ".teams") or ".teams")
+        self.task_store_dir = str(getattr(self.config, "agent_tasks_store_dir", ".tasks") or ".tasks")
+        self.team_manager = None
+        self.logger.info("AgentTeams enabled=%s, team_store_dir=%s, task_store_dir=%s",
+                         self.enable_agent_teams, self.team_store_dir, self.task_store_dir)
         
         # 创建 Summary 生成器（Phase 7）
         summary_generator = create_summary_generator(
@@ -137,6 +143,23 @@ class CodeAgent(Agent):
                 tool_registry=self.tool_registry,
             )
         )
+        if self.enable_agent_teams:
+            self._register_agent_teams_tools()
+
+    def _register_agent_teams_tools(self) -> None:
+        try:
+            from tools.builtin.team_create import TeamCreateTool
+            from tools.builtin.send_message import SendMessageTool
+            from tools.builtin.team_status import TeamStatusTool
+            from tools.builtin.team_delete import TeamDeleteTool
+        except Exception as exc:
+            self.logger.warning("AgentTeams enabled but team tools unavailable: %s", exc)
+            return
+
+        self.tool_registry.register_tool(TeamCreateTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(SendMessageTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(TeamStatusTool(project_root=self.project_root, team_manager=self.team_manager))
+        self.tool_registry.register_tool(TeamDeleteTool(project_root=self.project_root, team_manager=self.team_manager))
 
     def _refresh_skills_prompt(self) -> None:
         refresh = os.getenv("SKILLS_REFRESH_ON_CALL", "true").lower() in {"1", "true", "yes", "y", "on"}

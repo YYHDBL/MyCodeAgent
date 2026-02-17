@@ -25,6 +25,11 @@ class Config(BaseModel):
     
     # 历史记录配置
     max_history_length: int = 100
+
+    # AgentTeams 配置（MVP）
+    enable_agent_teams: bool = False
+    agent_teams_store_dir: str = ".teams"
+    agent_tasks_store_dir: str = ".tasks"
     
     # 上下文工程配置（E5）
     context_window: int = 128000  # 默认 128K tokens
@@ -44,6 +49,9 @@ class Config(BaseModel):
             show_progress=os.getenv("SHOW_PROGRESS", "true").lower() == "true",
             temperature=float(os.getenv("TEMPERATURE", "0.7")),
             max_tokens=int(os.getenv("MAX_TOKENS")) if os.getenv("MAX_TOKENS") else None,
+            enable_agent_teams=os.getenv("ENABLE_AGENT_TEAMS", "false").lower() == "true",
+            agent_teams_store_dir=os.getenv("AGENT_TEAMS_STORE_DIR", ".teams"),
+            agent_tasks_store_dir=os.getenv("AGENT_TASKS_STORE_DIR", ".tasks"),
             context_window=int(os.getenv("CONTEXT_WINDOW", "128000")),
             compression_threshold=float(os.getenv("COMPRESSION_THRESHOLD", "0.8")),
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),
