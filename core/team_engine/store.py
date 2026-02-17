@@ -111,6 +111,17 @@ class TeamStore:
     def delete_team(self, team_name: str) -> None:
         shutil.rmtree(self._team_dir(team_name), ignore_errors=True)
 
+    def list_teams(self) -> List[str]:
+        if not self.teams_root.exists():
+            return []
+        names: List[str] = []
+        for item in self.teams_root.iterdir():
+            if not item.is_dir():
+                continue
+            if (item / "config.json").exists():
+                names.append(item.name)
+        return sorted(names)
+
     def append_inbox_message(self, team_name: str, to_member: str, message: Dict[str, Any]) -> Dict[str, Any]:
         inbox_path = self._inbox_path(team_name, to_member)
         inbox_path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,4 +145,3 @@ class TeamStore:
                 continue
             rows.append(json.loads(line))
         return rows
-

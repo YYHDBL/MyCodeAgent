@@ -269,8 +269,9 @@ class HistoryManager:
         if len(self._messages) < 3:
             return False
         
-        # 计算预估 token 数（基于当前上下文）
-        estimated_total = self.estimate_context_tokens(pending_input)
+        # 计算预估 token 数（兼容 usage 与上下文字符估算两条路径）
+        usage_estimated_total = self._last_usage_tokens + len(pending_input or "") // 3
+        estimated_total = max(self.estimate_context_tokens(pending_input), usage_estimated_total)
         
         # 计算阈值
         threshold = int(self._config.context_window * self._config.compression_threshold)

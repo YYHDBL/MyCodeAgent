@@ -31,9 +31,14 @@ def build_session_snapshot(
     mcp_tools_prompt: Optional[str] = None,
     read_cache: Optional[Dict[str, Any]] = None,
     tool_output_dir: Optional[str] = None,
+    schema_version: int = 1,
+    teams_snapshot: Optional[Dict[str, Any]] = None,
+    team_store_dir: str = ".teams",
+    task_store_dir: str = ".tasks",
 ) -> Dict[str, Any]:
     return {
         "version": 1,
+        "schema_version": int(schema_version),
         "system_messages": system_messages or [],
         "history_messages": history_messages or [],
         "tool_schema_hash": _hash_json(tool_schema or []),
@@ -44,6 +49,9 @@ def build_session_snapshot(
         "mcp_tools_prompt_hash": _hash_text(mcp_tools_prompt or ""),
         "read_cache": read_cache or {},
         "tool_output_dir": tool_output_dir or "tool-output",
+        "teams_snapshot": teams_snapshot or {},
+        "team_store_dir": team_store_dir or ".teams",
+        "task_store_dir": task_store_dir or ".tasks",
     }
 
 
@@ -55,4 +63,9 @@ def save_session_snapshot(path: str | Path, snapshot: Dict[str, Any]) -> None:
 
 def load_session_snapshot(path: str | Path) -> Dict[str, Any]:
     path = Path(path)
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("teams_snapshot", {})
+    payload.setdefault("team_store_dir", ".teams")
+    payload.setdefault("task_store_dir", ".tasks")
+    return payload

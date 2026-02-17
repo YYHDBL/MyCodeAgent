@@ -49,6 +49,7 @@ class ContextBuilder:
     _cached_system_messages: Optional[List[Dict[str, Any]]] = field(default=None, init=False)
     _mcp_tools_prompt: str = field(default="", init=False)
     _skills_prompt: str = field(default="", init=False)
+    _runtime_system_blocks: List[str] = field(default_factory=list, init=False)
 
     def build_messages(
         self,
@@ -94,7 +95,7 @@ class ContextBuilder:
             # 检查 CODE_LAW 是否需要更新
             has_code_law_msg = len(self._cached_system_messages) > 1
             if (code_law and has_code_law_msg) or (not code_law and not has_code_law_msg):
-                return self._cached_system_messages
+                return self._with_runtime_system_blocks(self._cached_system_messages)
         
         # 重新构建
         messages: List[Dict[str, Any]] = []
@@ -125,7 +126,7 @@ class ContextBuilder:
             })
         
         self._cached_system_messages = messages
-        return messages
+        return self._with_runtime_system_blocks(messages)
 
     def set_mcp_tools_prompt(self, prompt: str) -> None:
         """更新 MCP 工具提示，并清空 system cache。"""
@@ -136,6 +137,18 @@ class ContextBuilder:
         """更新 Skills 提示，并清空 system cache。"""
         self._skills_prompt = prompt or ""
         self._cached_system_messages = None
+
+    def set_runtime_system_blocks(self, blocks: List[str]) -> None:
+        """设置 runtime 通知块（注入 system，不污染 user 轮次）。"""
+        self._runtime_system_blocks = [str(block).strip() for block in (blocks or []) if str(block).strip()]
+
+    def _with_runtime_system_blocks(self, base_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self._runtime_system_blocks:
+            return list(base_messages)
+        messages = list(base_messages)
+        for block in self._runtime_system_blocks:
+            messages.append({"role": "system", "content": block})
+        return messages
 
     def _load_system_prompt(self) -> str:
         """加载 L1 系统 prompt"""

@@ -327,6 +327,11 @@ class CodeAgent(Agent):
         tool_choice = "auto"
 
         for step in range(1, self.max_steps + 1):
+            if self.enable_agent_teams and self.team_manager and hasattr(self.context_builder, "set_runtime_system_blocks"):
+                events = self.team_manager.drain_events()
+                runtime_blocks = self._format_runtime_system_blocks(events)
+                self.context_builder.set_runtime_system_blocks(runtime_blocks)
+
             if self.console_verbose:
                 self._console(f"\n--- Step {step}/{self.max_steps} ---")
             elif self.console_progress:
@@ -626,6 +631,10 @@ class CodeAgent(Agent):
             mcp_tools_prompt=self._mcp_tools_prompt,
             read_cache=self.tool_registry.export_read_cache(),
             tool_output_dir="tool-output",
+            schema_version=1,
+            teams_snapshot=(self.team_manager.export_state() if self.team_manager else {}),
+            team_store_dir=self.team_store_dir,
+            task_store_dir=self.task_store_dir,
         )
         save_session_snapshot(path, snapshot)
 
@@ -636,6 +645,12 @@ class CodeAgent(Agent):
         history_items = snapshot.get("history_messages") or []
         self.history_manager.load_messages(history_items)
         self.tool_registry.import_read_cache(snapshot.get("read_cache") or {})
+        if self.team_manager:
+            self.team_manager.import_state(snapshot.get("teams_snapshot") or {})
+            if hasattr(self.context_builder, "set_runtime_system_blocks"):
+                self.context_builder.set_runtime_system_blocks(
+                    ["[Team Runtime]\n- Team state restored from session snapshot."]
+                )
 
     def _print_context_preview(
         self,
@@ -673,6 +688,31 @@ class CodeAgent(Agent):
 
     def _console(self, message: str) -> None:
         print(message, file=sys.stderr, flush=True)
+
+    @staticmethod
+    def _format_runtime_system_blocks(events: list[dict]) -> list[str]:
+        if not events:
+            return []
+        lines = ["[Team Runtime]"]
+        preview = events[:10]
+        for event in preview:
+            team = event.get("team", "unknown")
+            event_type = event.get("type", "event")
+            payload = event.get("payload") or {}
+            if isinstance(payload, dict):
+                message_id = payload.get("message_id")
+                status = payload.get("status")
+                if message_id and status:
+                    lines.append(f"- {team}:{event_type} message={message_id} status={status}")
+                elif message_id:
+                    lines.append(f"- {team}:{event_type} message={message_id}")
+                else:
+                    lines.append(f"- {team}:{event_type}")
+            else:
+                lines.append(f"- {team}:{event_type}")
+        if len(events) > 10:
+            lines.append(f"- ... {len(events) - 10} more events")
+        return ["\n".join(lines)]
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
         res = self.tool_registry.execute_tool(tool_name, tool_input)

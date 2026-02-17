@@ -76,6 +76,9 @@ class TeamManager:
         self.store.delete_team(normalized_team)
         self._message_status.pop(normalized_team, None)
         self._recent_errors.pop(normalized_team, None)
+        for key in list(self._processed_by_member.keys()):
+            if key[0] == normalized_team:
+                self._processed_by_member.pop(key, None)
         return {"team_name": normalized_team, "deleted": True}
 
     def spawn_teammate(
@@ -193,13 +196,27 @@ class TeamManager:
         return bool(worker and worker.is_alive())
 
     def export_state(self) -> Dict[str, Any]:
+        teams = self.store.list_teams()
         return {
-            "teams": {name: self.get_status(name) for name in list(self._events.keys())},
+            "teams": {name: self.get_status(name) for name in teams},
         }
 
     def import_state(self, state: Optional[Dict[str, Any]]) -> None:
-        # MVP keeps file store as source of truth; snapshot import is best-effort.
-        _ = state or {}
+        snapshot = state or {}
+        names = set(self.store.list_teams())
+        snapshot_teams = snapshot.get("teams")
+        if isinstance(snapshot_teams, dict):
+            names.update(snapshot_teams.keys())
+        for team_name in sorted(names):
+            try:
+                cfg = self.store.read_team(team_name)
+            except FileNotFoundError:
+                continue
+            for member in cfg.get("members", []):
+                name = str(member.get("name") or "")
+                if not name or name == "lead":
+                    continue
+                self._start_worker(team_name, name)
 
     def _read_team_or_raise(self, team_name: str) -> Dict[str, Any]:
         try:
