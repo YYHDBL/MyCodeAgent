@@ -38,6 +38,23 @@ class TestAgentTeamsConfig(unittest.TestCase):
             self.assertEqual(agent.team_store_dir, ".teams")
             self.assertEqual(agent.task_store_dir, ".tasks")
 
+    def test_code_agent_registers_team_tools_when_enabled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cfg = Config(enable_agent_teams=True)
+            registry = ToolRegistry()
+            agent = CodeAgent(
+                name="tester",
+                llm=DummyLLM(),
+                tool_registry=registry,
+                project_root=str(Path(temp_dir)),
+                config=cfg,
+            )
+            self.assertTrue(agent.enable_agent_teams)
+            self.assertIsNotNone(registry.get_tool("TeamCreate"))
+            self.assertIsNotNone(registry.get_tool("SendMessage"))
+            self.assertIsNotNone(registry.get_tool("TeamStatus"))
+            self.assertIsNotNone(registry.get_tool("TeamDelete"))
+
 
 if __name__ == "__main__":
     unittest.main()

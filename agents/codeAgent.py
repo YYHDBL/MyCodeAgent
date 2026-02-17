@@ -74,6 +74,17 @@ class CodeAgent(Agent):
         self.team_store_dir = str(getattr(self.config, "agent_teams_store_dir", ".teams") or ".teams")
         self.task_store_dir = str(getattr(self.config, "agent_tasks_store_dir", ".tasks") or ".tasks")
         self.team_manager = None
+        if self.enable_agent_teams:
+            try:
+                from core.team_engine.manager import TeamManager
+                self.team_manager = TeamManager(
+                    project_root=self.project_root,
+                    team_store_dir=self.team_store_dir,
+                    task_store_dir=self.task_store_dir,
+                )
+            except Exception as exc:
+                self.logger.warning("Failed to initialize TeamManager, AgentTeams disabled: %s", exc)
+                self.enable_agent_teams = False
         self.logger.info("AgentTeams enabled=%s, team_store_dir=%s, task_store_dir=%s",
                          self.enable_agent_teams, self.team_store_dir, self.task_store_dir)
         

@@ -61,6 +61,7 @@ class TeamManager:
 
     def delete_team(self, team_name: str) -> Dict[str, Any]:
         normalized_team = sanitize_name(team_name)
+        self._read_team_or_raise(normalized_team)
         self._emit(normalized_team, EVENT_SHUTDOWN_REQUEST, {"team_name": normalized_team})
         for (team, member), worker in list(self._workers.items()):
             if team != normalized_team:
