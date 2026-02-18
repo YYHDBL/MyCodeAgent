@@ -131,7 +131,6 @@ class TeamManager:
             if not teammate_name or teammate_name == "lead":
                 continue
             self._ensure_tmux_teammate_window(normalized_team, teammate_name)
-            self._start_worker(normalized_team, teammate_name)
         return cfg
 
     def delete_team(self, team_name: str) -> Dict[str, Any]:
@@ -202,7 +201,7 @@ class TeamManager:
         cfg = self._read_team_or_raise(normalized_team)
         members = {m["name"] for m in cfg.get("members", [])}
         try:
-            return self.message_router.send_message(
+            sent = self.message_router.send_message(
                 team_name=normalized_team,
                 members=members,
                 from_member=from_member,
@@ -214,6 +213,17 @@ class TeamManager:
                 approved=approved,
                 feedback=feedback,
             )
+            sender = sanitize_name(from_member)
+            message_kind = str(message_type or MESSAGE_TYPE_MESSAGE).strip().lower()
+            if message_kind == MESSAGE_TYPE_BROADCAST:
+                recipients = sorted(name for name in members if name != sender)
+            else:
+                recipients = [sanitize_name(to_member)]
+            for recipient in recipients:
+                if recipient == "lead":
+                    continue
+                self._start_worker(normalized_team, recipient)
+            return sent
         except TeamEngineError as exc:
             raise TeamManagerError(exc.code, exc.message) from exc
 
@@ -596,7 +606,10 @@ class TeamManager:
             if status not in {MESSAGE_STATUS_PENDING, MESSAGE_STATUS_DELIVERED}:
                 continue
             message_type = str(row.get("type") or MESSAGE_TYPE_MESSAGE)
-            if message_type == MESSAGE_TYPE_SHUTDOWN_REQUEST:
+            if message_type in {MESSAGE_TYPE_MESSAGE, MESSAGE_TYPE_BROADCAST}:
+                did_work = self._enqueue_message_work(team_name, teammate_name, row) or did_work
+            elif message_type == MESSAGE_TYPE_SHUTDOWN_REQUEST:
+                self._send_shutdown_response(team_name, teammate_name, row)
                 self._request_worker_stop(team_name, teammate_name)
             elif message_type == MESSAGE_TYPE_PLAN_APPROVAL_RESPONSE:
                 self._apply_plan_approval_response(team_name, teammate_name, row)
@@ -745,6 +758,63 @@ class TeamManager:
             {"work_id": item["work_id"], "owner": normalized_teammate, "status": item["status"]},
         )
         return True
+
+    def _enqueue_message_work(self, team_name: str, teammate_name: str, message_row: Dict[str, Any]) -> bool:
+        message_id = str(message_row.get("message_id") or "").strip()
+        if not message_id:
+            return False
+        text = str(message_row.get("text") or "").strip()
+        if not text:
+            return False
+        existing = self.store.list_work_items(team_name, owner=teammate_name)
+        for item in existing:
+            payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            if str(payload.get("source_message_id") or "") == message_id:
+                return False
+
+        summary = str(message_row.get("summary") or "").strip()
+        message_kind = str(message_row.get("type") or MESSAGE_TYPE_MESSAGE).strip().lower()
+        title = summary or f"message-{message_id[:8]}"
+        payload = {
+            "source": "message",
+            "source_message_id": message_id,
+            "message_type": message_kind,
+            "from_member": str(message_row.get("from") or ""),
+            "request_id": str(message_row.get("request_id") or ""),
+        }
+        item = self.store.create_work_item(
+            team_name,
+            owner=teammate_name,
+            title=title,
+            instruction=text,
+            payload=payload,
+        )
+        self._emit(
+            team_name,
+            EVENT_WORK_ITEM_ASSIGNED,
+            {"work_id": item["work_id"], "owner": teammate_name, "status": item["status"]},
+        )
+        return True
+
+    def _send_shutdown_response(self, team_name: str, teammate_name: str, message_row: Dict[str, Any]) -> None:
+        request_id = str(message_row.get("request_id") or "").strip()
+        if not request_id:
+            request_id = f"req_{uuid.uuid4().hex[:10]}"
+        sender = str(message_row.get("from") or "").strip()
+        if not sender:
+            return
+        try:
+            self.send_message(
+                team_name,
+                from_member=teammate_name,
+                to_member=sender,
+                text="shutdown acknowledged",
+                message_type=MESSAGE_TYPE_SHUTDOWN_RESPONSE,
+                summary="shutdown response",
+                request_id=request_id,
+            )
+        except TeamManagerError as exc:
+            self._recent_errors[team_name] = exc.message
 
     def _request_worker_stop(self, team_name: str, teammate_name: str) -> None:
         self.worker_supervisor.request_stop(team_name, teammate_name)
