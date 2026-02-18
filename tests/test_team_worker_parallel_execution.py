@@ -95,6 +95,22 @@ def test_two_workers_run_tasks_in_parallel(tmp_path):
     assert elapsed < 0.55
 
 
+def test_create_team_with_members_autostarts_workers(tmp_path):
+    manager = TeamManager(project_root=tmp_path, llm=SleepLLM(), tool_registry=ToolRegistry())
+    manager.create_team("demo", members=[{"name": "lead"}, {"name": "dev1"}, {"name": "dev2"}])
+
+    manager.fanout_work(
+        "demo",
+        tasks=[
+            {"owner": "dev1", "title": "impl", "instruction": "sleep:0.05"},
+            {"owner": "dev2", "title": "test", "instruction": "sleep:0.05"},
+        ],
+    )
+    collected = _wait_collect(manager, "demo", expect=2, timeout_s=3.0)
+
+    assert collected["counts"]["succeeded"] >= 2
+
+
 def test_teammate_cannot_call_task_in_worker_path(tmp_path):
     manager = TeamManager(project_root=tmp_path, llm=TaskCallingLLM(), tool_registry=ToolRegistry())
     manager.create_team("demo", members=[{"name": "lead"}])

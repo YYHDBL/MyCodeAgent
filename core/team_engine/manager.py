@@ -126,6 +126,12 @@ class TeamManager:
         except FileExistsError as exc:
             raise TeamManagerError("CONFLICT", str(exc)) from exc
         self._ensure_tmux_team_session(normalized_team)
+        for member in normalized_members:
+            teammate_name = str(member.get("name") or "")
+            if not teammate_name or teammate_name == "lead":
+                continue
+            self._ensure_tmux_teammate_window(normalized_team, teammate_name)
+            self._start_worker(normalized_team, teammate_name)
         return cfg
 
     def delete_team(self, team_name: str) -> Dict[str, Any]:
@@ -417,6 +423,7 @@ class TeamManager:
                 EVENT_WORK_ITEM_ASSIGNED,
                 {"work_id": item["work_id"], "owner": owner_name, "status": item["status"]},
             )
+            self._start_worker(normalized_team, owner_name)
 
         return {
             "dispatch_id": f"dispatch_{uuid.uuid4().hex}",
@@ -464,6 +471,9 @@ class TeamManager:
             EVENT_WORK_ITEM_ASSIGNED,
             {"work_id": work_id, "owner": item.get("owner"), "status": WORK_ITEM_STATUS_QUEUED},
         )
+        owner_name = str(item.get("owner") or "")
+        if owner_name and owner_name != "lead":
+            self._start_worker(normalized_team, owner_name)
         return item
 
     def has_worker(self, team_name: str, teammate_name: str) -> bool:
