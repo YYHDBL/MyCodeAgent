@@ -28,7 +28,7 @@
 - **Function Calling 工具调用**（不依赖 Action 文本解析）
 - **统一工具响应协议**：`status/data/text/stats/context/error`
 - **内置工具**：LS / Glob / Grep / Read / Write / Edit / MultiEdit / Bash / TodoWrite / Skill / Task / AskUser
-- **AgentTeams MVP**：TeamCreate / SendMessage / TeamStatus / TeamDelete + Task persistent teammate
+- **AgentTeams MVP（实验性）**：TeamCreate / SendMessage / TeamStatus / TeamDelete + Task persistent teammate
 - **上下文工程**：分层注入、历史压缩、@file 强制读取
 - **工具输出截断与落盘**：超限结果写入 `tool-output/`
 - **轻量熔断**：连续失败工具自动临时禁用
@@ -41,10 +41,44 @@
 
 ## 快速开始
 
+### 环境要求
+
+- Python 3.8+
+- pip 包管理器
+
 ### 安装
 
 ```bash
+# 克隆项目
+git clone <repository-url>
+cd MyCodeAgent
+
+# 创建虚拟环境（推荐）
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# 或
+.\venv\Scripts\activate  # Windows
+
+# 安装依赖
 pip install -r requirements.txt
+```
+
+### 配置环境变量
+
+创建 `.env` 文件或设置以下环境变量：
+
+```bash
+# LLM 配置
+export OPENAI_API_KEY="your-api-key"
+export DEFAULT_MODEL="gpt-4"
+export TEMPERATURE="0.7"
+
+# AgentTeams（可选，默认为关闭）
+export ENABLE_AGENT_TEAMS="true"
+
+# 上下文配置
+export CONTEXT_WINDOW="128000"
+export COMPRESSION_THRESHOLD="0.8"
 ```
 
 ### 运行交互式 CLI
@@ -133,7 +167,11 @@ $ARGUMENTS
 
 ## AgentTeams（MVP）
 
+> ⚠️ `AgentTeams` 已加入当前版本，但仍为**实验性功能**，默认关闭。  
+> 建议仅在开发/测试环境启用。
+
 - Feature Flag：`ENABLE_AGENT_TEAMS=true` 启用（默认关闭，便于快速回滚）
+- Claude 兼容开关：`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`
 - Team 工具：`TeamCreate` / `SendMessage` / `TeamStatus` / `TeamDelete`
 - 并行分工工具：`TeamFanout` / `TeamCollect`
 - Task 双模式：
@@ -284,11 +322,59 @@ Skills 能力
 ## 测试
 
 ```bash
+# 运行所有测试
 python -m pytest tests/ -v
+
+# 运行特定测试文件
+python -m pytest tests/test_message.py -v
+
+# 运行测试并查看覆盖率
+python -m pytest tests/ --cov=.
 ```
+
+---
+
+## 贡献指南
+
+欢迎贡献代码！请遵循以下步骤：
+
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交改动 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
+
+### 代码规范
+
+- 使用 4 空格缩进（PEP 8）
+- 类名使用 PascalCase
+- 函数和变量使用 snake_case
+- 常量使用 UPPER_SNAKE_CASE
+- 函数必须添加类型注解
+- 为新功能添加单元测试
+
+---
+
+## 常见问题
+
+**Q: 如何启用 AgentTeams 功能？**
+
+A: 设置环境变量 `ENABLE_AGENT_TEAMS=true`，然后重启 CLI。
+
+**Q: 工具调用失败怎么办？**
+
+A: 使用 `--show-raw` 参数运行，查看详细错误信息。常见原因包括 API Key 配置错误或网络问题。
+
+**Q: 如何调试上下文压缩问题？**
+
+A: 设置 `TRACE_ENABLED=true` 并查看 `memory/traces/` 目录下的日志文件。
+
+**Q: 支持哪些 LLM 提供商？**
+
+A: 支持 OpenAI、Anthropic、Zhipu（智谱）等兼容 OpenAI API 格式的提供商。
 
 ---
 
 ## License
 
-本项目采用 MIT许可证 授权。
+本项目采用 MIT 许可证 授权。
