@@ -73,7 +73,7 @@ class TestAgentTeamsConfig(unittest.TestCase):
     def test_code_agent_skips_runtime_teammate_mode_when_disabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = Config(enable_agent_teams=False, teammate_mode="tmux")
-            with patch("agents.codeAgent.resolve_teammate_mode", return_value=("in-process", "tmux unavailable")):
+            with patch("runtime.agent_host.resolve_teammate_mode", return_value=("in-process", "tmux unavailable")):
                 agent = CodeAgent(
                     name="tester",
                     llm=DummyLLM(),

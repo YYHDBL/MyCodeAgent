@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from agents.codeAgent import CodeAgent
 from core.config import Config
 from core.llm import HelloAgentsLLM
+from runtime.agent_host import CodeAgent
 from tools.registry import ToolRegistry
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
