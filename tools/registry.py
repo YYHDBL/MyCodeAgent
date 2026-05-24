@@ -203,6 +203,46 @@ class ToolRegistry:
         func_info = self._functions.get(name)
         return func_info["func"] if func_info else None
 
+    def prepare_parameters(self, input_text: Any) -> dict[str, Any]:
+        """Normalize raw tool input into a dict payload."""
+        if isinstance(input_text, dict):
+            return input_text.copy()
+        return {"input": input_text}
+
+    def is_available(self, name: str) -> bool:
+        """Whether a tool/function is currently executable."""
+        return self._circuit_breaker.is_available(name)
+
+    def create_circuit_open_response(self, name: str, parameters: dict[str, Any]) -> str:
+        payload = {
+            "status": ToolStatus.ERROR.value,
+            "data": {},
+            "text": f"工具 '{name}' 因连续失败被临时禁用。",
+            "error": {
+                "code": ErrorCode.CIRCUIT_OPEN.value,
+                "message": f"工具 '{name}' 因连续失败被临时禁用。",
+            },
+            "stats": {"time_ms": 0},
+            "context": {"cwd": ".", "params_input": parameters},
+        }
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def record_execution_result(self, name: str, result_payload: Optional[dict]) -> None:
+        """Update execution health after a tool run."""
+        if not isinstance(result_payload, dict):
+            return
+        status = result_payload.get("status")
+        if status == ToolStatus.ERROR.value:
+            err = result_payload.get("error", {}) or {}
+            err_msg = err.get("message") if isinstance(err, dict) else None
+            self._circuit_breaker.record_failure(name, str(err_msg or result_payload.get("text") or ""))
+        else:
+            self._circuit_breaker.record_success(name)
+
+    def cache_read_result(self, result: Any, params_input: dict) -> None:
+        """Persist optimistic-lock metadata from Read outputs."""
+        self._cache_read_meta(result, params_input)
+
     def execute_tool(self, name: str, input_text) -> str:
         """
         执行工具
@@ -214,85 +254,9 @@ class ToolRegistry:
         Returns:
             工具执行结果（符合《通用工具响应协议》的 JSON 字符串）
         """
-        result_payload: Optional[dict] = None
-        
-        # 准备参数
-        if isinstance(input_text, dict):
-            parameters = input_text.copy()  # 复制以避免修改原始参数
-        else:
-            parameters = {"input": input_text}
-        
-        # =====================================================================
-        # 乐观锁自动注入：为 Write/Edit 注入 expected_mtime_ms / expected_size_bytes
-        # =====================================================================
-        if name in {"Write", "Edit", "MultiEdit"}:
-            parameters = self._inject_optimistic_lock_params(name, parameters)
-        
-        # 熔断检查
-        if not self._circuit_breaker.is_available(name):
-            payload = {
-                "status": ToolStatus.ERROR.value,
-                "data": {},
-                "text": f"工具 '{name}' 因连续失败被临时禁用。",
-                "error": {
-                    "code": ErrorCode.CIRCUIT_OPEN.value,
-                    "message": f"工具 '{name}' 因连续失败被临时禁用。",
-                },
-                "stats": {"time_ms": 0},
-                "context": {"cwd": ".", "params_input": parameters},
-            }
-            return json.dumps(payload, ensure_ascii=False, indent=2)
+        from .executor import ToolExecutor
 
-        # 优先查找Tool对象
-        if name in self._tools:
-            tool = self._tools[name]
-            try:
-                result = tool.run(parameters)
-                result_payload = self._normalize_result(name, result, parameters)
-            except Exception as e:
-                result_payload = self._create_internal_error_payload(
-                    name=name,
-                    message=f"执行工具 '{name}' 时发生异常: {str(e)}",
-                    params_input=parameters,
-                )
-
-        # 查找函数工具
-        elif name in self._functions:
-            func = self._functions[name]["func"]
-            try:
-                result = func(input_text)
-                result_payload = self._normalize_result(name, result, parameters)
-            except Exception as e:
-                result_payload = self._create_internal_error_payload(
-                    name=name,
-                    message=f"执行工具 '{name}' 时发生异常: {str(e)}",
-                    params_input=parameters,
-                )
-
-        else:
-            result_payload = self._create_internal_error_payload(
-                name=name,
-                message=f"未找到名为 '{name}' 的工具。",
-                params_input={},
-            )
-        
-        # 熔断记录
-        if isinstance(result_payload, dict):
-            status = result_payload.get("status")
-            if status == ToolStatus.ERROR.value:
-                err = result_payload.get("error", {}) or {}
-                err_msg = err.get("message") if isinstance(err, dict) else None
-                self._circuit_breaker.record_failure(name, str(err_msg or result_payload.get("text") or ""))
-            else:
-                self._circuit_breaker.record_success(name)
-        
-        # =====================================================================
-        # 乐观锁缓存更新：记录 Read 结果的元信息
-        # =====================================================================
-        if name == "Read":
-            self._cache_read_meta(result_payload, parameters)
-
-        return json.dumps(result_payload, ensure_ascii=False, indent=2)
+        return ToolExecutor(self).execute(name, input_text)
 
     def export_read_cache(self) -> dict[str, ReadMeta]:
         """导出 Read 缓存（用于会话持久）。"""

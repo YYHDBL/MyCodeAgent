@@ -326,7 +326,10 @@ class RuntimeRunner:
                         elif host.logger.isEnabledFor(10):
                             host.logger.debug("Action: %s %s", tool_name, tool_input)
                         try:
-                            observation = host._execute_tool(tool_name, tool_input)
+                            if hasattr(host, "tool_executor") and host.tool_executor is not None:
+                                observation = host.tool_executor.execute(tool_name, tool_input)
+                            else:
+                                observation = host._execute_tool(tool_name, tool_input)
                             try:
                                 result_obj = json.loads(observation)
                                 trace_logger.log_event(
@@ -398,4 +401,3 @@ class RuntimeRunner:
             return final_text
 
         return "抱歉，我无法在限定步数内完成这个任务。"
-

@@ -34,6 +34,7 @@ from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
 from tools.builtin.task import TaskTool
 from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
+from tools.executor import ToolExecutor
 from utils import setup_logger
 from core.skills.skill_loader import SkillLoader
 from runtime.runner import RuntimeRunner
@@ -160,6 +161,10 @@ class CodeAgent(Agent):
         self._system_messages_logged = False
         self._run_id = 0
         self._system_messages_override: Optional[List[dict]] = None
+        self.tool_executor = ToolExecutor(
+            self.tool_registry,
+            permission_checker=self._is_tool_allowed_in_delegate_mode,
+        )
         self.runner = RuntimeRunner(self)
     
     def _register_builtin_tools(self):
@@ -492,21 +497,7 @@ class CodeAgent(Agent):
         return ["\n".join(lines)]
 
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
-        if not self._is_tool_allowed_in_delegate_mode(tool_name):
-            payload = {
-                "status": "error",
-                "data": {},
-                "text": f"Tool '{tool_name}' is blocked in delegate mode.",
-                "error": {
-                    "code": "PERMISSION_DENIED",
-                    "message": f"Tool '{tool_name}' is not allowed in delegate mode.",
-                },
-                "stats": {"time_ms": 0},
-                "context": {"cwd": ".", "params_input": tool_input if isinstance(tool_input, dict) else {"input": tool_input}},
-            }
-            return json.dumps(payload, ensure_ascii=False, indent=2)
-        res = self.tool_registry.execute_tool(tool_name, tool_input)
-        return str(res)
+        return self.tool_executor.execute(tool_name, tool_input)
 
     def set_delegate_mode(self, enabled: bool) -> None:
         self.delegate_mode = bool(enabled)
