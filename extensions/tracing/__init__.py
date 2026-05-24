@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from core.context_engine.trace_logger import TraceLogger, create_trace_logger
-from core.context_engine.trace_sanitizer import TraceSanitizer
+from extensions.tracing.logger import TraceLogger, create_trace_logger
+from extensions.tracing.sanitizer import TraceSanitizer
 
 
 class NullTraceLogger:

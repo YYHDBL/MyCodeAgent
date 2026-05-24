@@ -13,7 +13,7 @@ __pycache__/
 tool-output/
 tmp/
 .claude/
-skills/
+/skills/
 .chat_history
 AGENTS.md
 claude_code_env.sh

@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-from tools.mcp.client import MCPClient, MCPClientConfig
-from tools.mcp.adapter import register_mcp_tools
-from tools.mcp.config import load_mcp_servers, connect_mode
+from extensions.mcp.client import MCPClient, MCPClientConfig
+from extensions.mcp.adapter import register_mcp_tools
+from extensions.mcp.config import load_mcp_servers, connect_mode
 
 logger = logging.getLogger(__name__)
 

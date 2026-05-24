@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.context_engine.trace_sanitizer import TraceSanitizer
+from extensions.tracing.sanitizer import TraceSanitizer
 from core.env import load_env
 
 load_env()

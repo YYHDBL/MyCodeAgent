@@ -11,7 +11,7 @@ import time
 import unittest
 
 from tools.base import ErrorCode
-from tools.mcp.protocol import (
+from extensions.mcp.protocol import (
     to_protocol_error,
     to_protocol_invalid_param,
     to_protocol_result,

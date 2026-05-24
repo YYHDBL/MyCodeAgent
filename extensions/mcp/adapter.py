@@ -9,7 +9,7 @@ import logging
 import re
 
 from tools.base import Tool, ToolParameter, ErrorCode
-from tools.mcp.protocol import to_protocol_result, to_protocol_error, to_protocol_invalid_param
+from extensions.mcp.protocol import to_protocol_result, to_protocol_error, to_protocol_invalid_param
 
 
 class MCPToolAdapter(Tool):

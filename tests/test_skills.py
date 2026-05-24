@@ -1,6 +1,6 @@
 """Skill system tests."""
 
-from core.skills.skill_loader import SkillLoader
+from extensions.skills.loader import SkillLoader
 from tools.builtin.skill import SkillTool
 from tests.utils.test_helpers import parse_response
 
