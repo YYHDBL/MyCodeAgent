@@ -11,7 +11,7 @@ Final convergence result:
 - canonical user entrypoint is `main.py`
 - `runtime/` is the only runtime center
 - `agents/` has been removed
-- `scripts/chat_test_agent.py` remains only as a thin historical launcher
+- `scripts/chat_test_agent.py` and the `scripts/` package were removed
 - `core/` is limited to infrastructure: config, env, base agent abstraction, exceptions, and LLM client
 - MCP, skills, and tracing live under `extensions/`
 - team runtime lives under `experimental/teams/`

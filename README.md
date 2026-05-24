@@ -61,7 +61,6 @@ tools/               tool registry, executor, and built-in tools
 extensions/          optional MCP / skills / tracing layers
 experimental/        non-canonical runtime systems
 core/                shared config, env, LLM, and base infrastructure
-scripts/             developer helpers and historical compatibility launchers
 tests/runtime/       runtime-focused tests
 tests/tools/         tool boundary tests
 tests/extensions/    optional extension tests
@@ -116,8 +115,6 @@ Examples:
 python main.py --show-raw
 python main.py --provider zhipu --model GLM-4.7
 ```
-
-`scripts/chat_test_agent.py` remains only as a compatibility launcher for old commands.
 
 ## Verification
 

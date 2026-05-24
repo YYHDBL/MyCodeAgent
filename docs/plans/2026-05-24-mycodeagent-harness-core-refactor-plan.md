@@ -21,7 +21,7 @@ Important final decisions:
 - MCP moved from `tools/mcp` to `extensions/mcp`
 - skills moved from `core/skills` to `extensions/skills`
 - tracing moved from `core/context_engine` to `extensions/tracing`
-- `scripts/chat_test_agent.py` is only a historical launcher, not the product entrypoint
+- `scripts/chat_test_agent.py` and the `scripts/` package were removed
 
 The sections below document the migration plan and source locations used during the refactor; they are not the current architecture map.
 

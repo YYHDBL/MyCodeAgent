@@ -19,7 +19,8 @@ main.py -> app/ -> runtime/ -> tools/
 - User-facing entrypoint: `main.py`
 - CLI implementation: `app/cli.py`
 - Dependency wiring: `app/bootstrap.py`
-- Historical launcher: `scripts/chat_test_agent.py`, kept only to forward old commands to `app.cli.main`
+
+There is no supported `scripts/` launcher path.
 
 ## Runtime Center
 
