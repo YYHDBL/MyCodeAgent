@@ -1,6 +1,13 @@
 from argparse import Namespace
 
 
+def test_root_entrypoint_delegates_to_app_cli():
+    import app.cli
+    import main
+
+    assert main.main is app.cli.main
+
+
 def test_build_runtime_constructs_dependencies(tmp_path):
     from app.bootstrap import build_runtime
 

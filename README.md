@@ -23,7 +23,7 @@ flowchart LR
 - The default single-agent bootstrap path is `app -> runtime -> tools`.
 - `extensions/` are optional and can be disabled without breaking the core loop.
 - `experimental/teams` exists, but it is intentionally outside the canonical runtime story.
-- `agents/codeAgent.py` is a compatibility import; the real host now lives in `runtime/agent_host.py`.
+- The default host implementation lives in `runtime/agent_host.py`.
 
 ## What The Core Harness Does
 
@@ -55,12 +55,12 @@ This layer is off by default. Enabling it should be an explicit choice, not part
 
 ```text
 app/                 bootstrap and CLI entrypoints
+main.py              canonical root CLI entrypoint
 runtime/             canonical single-agent runtime
 tools/               tool registry, executor, and built-in tools
 extensions/          optional MCP / skills / tracing layers
 experimental/        non-canonical runtime systems
-agents/              compatibility imports for legacy paths
-core/                compatibility wrappers and lower-level shared pieces
+core/                shared lower-level modules and remaining support code
 tests/runtime/       runtime-focused tests
 tests/tools/         tool boundary tests
 tests/extensions/    optional extension tests
@@ -106,15 +106,17 @@ export TRACE_ENABLED="true"
 ### Run The CLI
 
 ```bash
-python scripts/chat_test_agent.py
+python main.py
 ```
 
 Examples:
 
 ```bash
-python scripts/chat_test_agent.py --show-raw
-python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
+python main.py --show-raw
+python main.py --provider zhipu --model GLM-4.7
 ```
+
+`scripts/chat_test_agent.py` remains only as a compatibility launcher for old commands.
 
 ## Verification
 
@@ -134,7 +136,6 @@ pytest tests/test_protocol_compliance.py tests/test_bash_tool.py -q
 ## Design Constraints
 
 - Keep one canonical single-agent loop.
-- Prefer thin compatibility wrappers over broad rewrites.
 - Keep optional systems behind explicit boundaries.
 - Do not let experimental runtime shape the default bootstrap path.
 - Borrow ideas from larger agents, but do not import their complexity.
