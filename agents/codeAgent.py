@@ -11,7 +11,6 @@ from core.llm import HelloAgentsLLM
 from core.message import Message
 from core.config import Config
 from core.context_engine.context_builder import ContextBuilder
-from core.context_engine.trace_logger import create_trace_logger
 from core.env import load_env
 
 load_env()
@@ -33,10 +32,11 @@ from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
 from tools.builtin.task import TaskTool
-from tools.mcp.loader import register_mcp_servers, format_mcp_tools_prompt
+from extensions.mcp import register_mcp_servers, format_mcp_tools_prompt
+from extensions.skills import SkillLoader
+from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
 from utils import setup_logger
-from core.skills.skill_loader import SkillLoader
 from runtime.runner import RuntimeRunner
 
 
@@ -75,6 +75,9 @@ class CodeAgent(Agent):
         project_root: str,
         system_prompt: Optional[str] = None,
         config: Optional[Config] = None,
+        enable_mcp: bool = True,
+        enable_skills: bool = True,
+        enable_tracing: bool = True,
         logger=None,
     ):
         super().__init__(name, llm, system_prompt=system_prompt, config=config)
@@ -89,6 +92,9 @@ class CodeAgent(Agent):
         self.verbose = bool(self.config.debug)
         self.console_verbose = bool(self.config.show_react_steps)
         self.console_progress = bool(self.config.show_progress)
+        self.enable_mcp = bool(enable_mcp)
+        self.enable_skills = bool(enable_skills)
+        self.enable_tracing = bool(enable_tracing)
         self.interactive = os.getenv("AGENT_INTERACTIVE", "true").lower() in {"1", "true", "yes", "y", "on"}
         self.enable_agent_teams = bool(getattr(self.config, "enable_agent_teams", False))
         self.team_store_dir = str(getattr(self.config, "agent_teams_store_dir", ".teams") or ".teams")
@@ -137,15 +143,16 @@ class CodeAgent(Agent):
         )
         
         # Skills
-        self._skill_loader = SkillLoader(self.project_root)
         self._skills_prompt = ""
+        self._skill_loader = SkillLoader(self.project_root) if self.enable_skills else None
         self._refresh_skills_prompt()
 
         # 注册工具
         self._register_builtin_tools()
         self._mcp_clients = []
         self._mcp_tools_prompt = ""
-        self._register_mcp_tools()
+        if self.enable_mcp:
+            self._register_mcp_tools()
         
         # 上下文构建器
         self.context_builder = ContextBuilder(
@@ -157,7 +164,7 @@ class CodeAgent(Agent):
         )
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
-        self.trace_logger = create_trace_logger()
+        self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
         self._system_messages_logged = False
         self._run_id = 0
         self._system_messages_override: Optional[List[dict]] = None
@@ -179,9 +186,10 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(EditTool(project_root=self.project_root))
         self.tool_registry.register_tool(MultiEditTool(project_root=self.project_root))
         self.tool_registry.register_tool(TodoWriteTool(project_root=self.project_root))
-        self.tool_registry.register_tool(
-            SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
-        )
+        if self._skill_loader is not None:
+            self.tool_registry.register_tool(
+                SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
+            )
         self.tool_registry.register_tool(BashTool(project_root=self.project_root))
         self.tool_registry.register_tool(
             AskUserTool(project_root=self.project_root, interactive=self.interactive)
@@ -232,6 +240,9 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(TeamTaskListTool(project_root=self.project_root, team_manager=self.team_manager))
 
     def _refresh_skills_prompt(self) -> None:
+        if not self.enable_skills or self._skill_loader is None:
+            self._skills_prompt = ""
+            return
         refresh = os.getenv("SKILLS_REFRESH_ON_CALL", "true").lower() in {"1", "true", "yes", "y", "on"}
         if refresh:
             self._skill_loader.refresh_if_stale()

@@ -29,6 +29,7 @@ def build_runtime(
     args: Any,
     *,
     project_root: Optional[str] = None,
+    extension_flags: Optional[dict[str, bool]] = None,
     config_class: type[Config] = Config,
     llm_class: type[HelloAgentsLLM] = HelloAgentsLLM,
     tool_registry_factory: Callable[[], ToolRegistry] = ToolRegistry,
@@ -69,6 +70,13 @@ def build_runtime(
         "system_prompt": getattr(args, "system", None),
         "config": config,
     }
+    if extension_flags:
+        if "mcp" in extension_flags:
+            agent_kwargs["enable_mcp"] = bool(extension_flags["mcp"])
+        if "skills" in extension_flags:
+            agent_kwargs["enable_skills"] = bool(extension_flags["skills"])
+        if "tracing" in extension_flags:
+            agent_kwargs["enable_tracing"] = bool(extension_flags["tracing"])
     if agent_kwargs_factory is not None:
         agent_kwargs.update(agent_kwargs_factory(config, llm, resolved_project_root))
 
@@ -81,4 +89,3 @@ def build_runtime(
         agent=agent,
         project_root=resolved_project_root,
     )
-
