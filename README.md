@@ -60,7 +60,8 @@ runtime/             canonical single-agent runtime
 tools/               tool registry, executor, and built-in tools
 extensions/          optional MCP / skills / tracing layers
 experimental/        non-canonical runtime systems
-core/                shared lower-level modules and remaining support code
+core/                shared config, env, LLM, and base infrastructure
+scripts/             developer helpers and historical compatibility launchers
 tests/runtime/       runtime-focused tests
 tests/tools/         tool boundary tests
 tests/extensions/    optional extension tests

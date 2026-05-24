@@ -269,7 +269,7 @@ def check_code_law_exists(project_root: str) -> bool:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Chat with CodeAgent")
+    parser = argparse.ArgumentParser(description="Run the MyCodeAgent local coding harness")
     parser.add_argument("--name", default="code", help="agent name")
     parser.add_argument("--system", default=None, help="system prompt")
     parser.add_argument("--provider", default=None, help="llm provider (override LLM_PROVIDER)")
