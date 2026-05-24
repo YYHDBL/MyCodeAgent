@@ -1,6 +1,6 @@
 import logging
 
-from agents.codeAgent import CodeAgent
+from runtime.agent_host import CodeAgent
 
 
 class _FakeTraceLogger:
