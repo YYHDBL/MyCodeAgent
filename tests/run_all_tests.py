@@ -20,6 +20,22 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Canonical single-agent baseline for the harness-core refactor.
+# This deliberately excludes team/tmux-heavy tests so the core runtime
+# can be verified independently while modules are being reshaped.
+CORE_RUNTIME_BASELINE_TESTS = [
+    "tests/test_context_builder.py",
+    "tests/test_context_engineering.py",
+    "tests/test_protocol_compliance.py",
+    "tests/test_bash_tool.py",
+    "tests/test_read_tool.py",
+    "tests/test_write_tool.py",
+    "tests/test_edit_tool.py",
+    "tests/test_todo_write_tool.py",
+]
+
+CORE_RUNTIME_BASELINE_CMD = "pytest " + " ".join(CORE_RUNTIME_BASELINE_TESTS) + " -q"
+
 
 def run_tests(verbosity: int = 2, quick_mode: bool = False) -> bool:
     """
