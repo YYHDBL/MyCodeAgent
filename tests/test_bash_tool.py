@@ -1,4 +1,6 @@
 import os
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,8 +30,11 @@ def _extract_error(result: str) -> dict:
     return json.loads(result).get("error") or {}
 
 
+PYTHON = shlex.quote(sys.executable)
+
+
 def test_basic_command_success(bash_tool, tmp_path):
-    result = bash_tool.run({"command": "python -V"})
+    result = bash_tool.run({"command": f"{PYTHON} -V"})
     assert _extract_status(result) == ToolStatus.SUCCESS
     data = _extract_data(result)
     assert data["exit_code"] == 0
@@ -88,14 +93,14 @@ def test_network_tool_blocked_by_default(bash_tool):
 
 
 def test_exit_code_nonzero_is_partial(bash_tool):
-    result = bash_tool.run({"command": "python -c \"import sys; sys.exit(2)\""})
+    result = bash_tool.run({"command": f"{PYTHON} -c \"import sys; sys.exit(2)\""})
     assert _extract_status(result) == ToolStatus.PARTIAL
     data = _extract_data(result)
     assert data["exit_code"] == 2
 
 
 def test_timeout_no_output_error(bash_tool):
-    result = bash_tool.run({"command": "python -c \"import time; time.sleep(2)\"", "timeout_ms": 500})
+    result = bash_tool.run({"command": f"{PYTHON} -c \"import time; time.sleep(2)\"", "timeout_ms": 500})
     status = _extract_status(result)
     # Should be error when no output before timeout
     assert status == ToolStatus.ERROR
@@ -104,7 +109,7 @@ def test_timeout_no_output_error(bash_tool):
 def test_timeout_with_output_partial(bash_tool):
     # Use -u to disable Python's stdout buffering so output is available at timeout
     result = bash_tool.run({
-        "command": "python -u -c \"import time; print('hi'); time.sleep(2)\"",
+        "command": f"{PYTHON} -u -c \"import time; print('hi'); time.sleep(2)\"",
         "timeout_ms": 500
     })
     status = _extract_status(result)
