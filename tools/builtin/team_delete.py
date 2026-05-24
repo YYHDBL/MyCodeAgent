@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.team_engine.manager import TeamManager, TeamManagerError
+from experimental.teams.manager import TeamManager, TeamManagerError
 from prompts.tools_prompts.team_delete_prompt import team_delete_prompt
 from ..base import ErrorCode, Tool, ToolParameter
 
@@ -78,4 +78,3 @@ class TeamDeleteTool(Tool):
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
-

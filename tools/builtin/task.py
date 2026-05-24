@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm import HelloAgentsLLM
 from core.message import Message
-from core.team_engine.turn_executor import TurnExecutor
+from experimental.teams.turn_executor import TurnExecutor
 from tools.registry import ToolRegistry
 from core.context_engine.observation_truncator import truncate_observation
 from prompts.tools_prompts.task_prompt import task_prompt
@@ -26,7 +26,7 @@ from ..base import Tool, ToolParameter, ErrorCode
 from core.env import load_env
 
 try:
-    from core.team_engine.manager import TeamManagerError
+    from experimental.teams.manager import TeamManagerError
 except Exception:  # pragma: no cover
     TeamManagerError = Exception
 

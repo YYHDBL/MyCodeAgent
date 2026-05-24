@@ -18,7 +18,6 @@ from core.context_engine.history_manager import HistoryManager
 from core.context_engine.input_preprocessor import preprocess_input
 from core.context_engine.summary_compressor import create_summary_generator
 from core.session_store import build_session_snapshot, save_session_snapshot, load_session_snapshot
-from core.team_engine.display_mode import resolve_teammate_mode
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -31,13 +30,19 @@ from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
-from tools.builtin.task import TaskTool
 from extensions.mcp import register_mcp_servers, format_mcp_tools_prompt
 from extensions.skills import SkillLoader
 from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
 from utils import setup_logger
 from runtime.runner import RuntimeRunner
+
+
+def resolve_teammate_mode(requested_mode: Optional[str]):
+    """Lazy bridge so the default bootstrap path does not import experimental runtime eagerly."""
+    from experimental.teams.display_mode import resolve_teammate_mode as _resolve_teammate_mode
+
+    return _resolve_teammate_mode(requested_mode)
 
 
 class CodeAgent(Agent):
@@ -100,14 +105,17 @@ class CodeAgent(Agent):
         self.team_store_dir = str(getattr(self.config, "agent_teams_store_dir", ".teams") or ".teams")
         self.task_store_dir = str(getattr(self.config, "agent_tasks_store_dir", ".tasks") or ".tasks")
         self.teammate_mode = str(getattr(self.config, "teammate_mode", "auto") or "auto")
-        self.teammate_runtime_mode, self.teammate_mode_warning = resolve_teammate_mode(self.teammate_mode)
+        if self.enable_agent_teams:
+            self.teammate_runtime_mode, self.teammate_mode_warning = resolve_teammate_mode(self.teammate_mode)
+        else:
+            self.teammate_runtime_mode, self.teammate_mode_warning = "disabled", None
         self.delegate_mode = bool(getattr(self.config, "delegate_mode", False))
         if self.teammate_mode_warning:
             self.logger.warning(self.teammate_mode_warning)
         self.team_manager = None
         if self.enable_agent_teams:
             try:
-                from core.team_engine.manager import TeamManager
+                from experimental.teams.manager import TeamManager
                 self.team_manager = TeamManager(
                     project_root=self.project_root,
                     team_store_dir=self.team_store_dir,
@@ -194,16 +202,17 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(
             AskUserTool(project_root=self.project_root, interactive=self.interactive)
         )
-        # Task tool for subagent delegation
-        self.tool_registry.register_tool(
-            TaskTool(
-                project_root=self.project_root,
-                main_llm=self.llm,
-                tool_registry=self.tool_registry,
-                team_manager=self.team_manager,
-            )
-        )
         if self.enable_agent_teams:
+            from tools.builtin.task import TaskTool
+
+            self.tool_registry.register_tool(
+                TaskTool(
+                    project_root=self.project_root,
+                    main_llm=self.llm,
+                    tool_registry=self.tool_registry,
+                    team_manager=self.team_manager,
+                )
+            )
             self._register_agent_teams_tools()
 
     def _register_agent_teams_tools(self) -> None:

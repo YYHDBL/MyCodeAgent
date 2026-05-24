@@ -32,14 +32,6 @@ except ImportError:
 
 from agents.codeAgent import CodeAgent
 from app.bootstrap import PROJECT_ROOT, build_runtime
-from core.team_engine.cli_commands import (
-    DELEGATE_USAGE,
-    TEAM_MSG_USAGE,
-    TEAM_WATCH_USAGE,
-    parse_delegate_command,
-    parse_team_message_command,
-    parse_team_watch_command,
-)
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
 from utils.ui_components import EnhancedUI, ToolCallTree
 
@@ -58,6 +50,26 @@ custom_theme = Theme(
 )
 
 console = Console(theme=custom_theme)
+
+
+def _load_team_cli_commands():
+    from experimental.teams.cli_commands import (
+        DELEGATE_USAGE,
+        TEAM_MSG_USAGE,
+        TEAM_WATCH_USAGE,
+        parse_delegate_command,
+        parse_team_message_command,
+        parse_team_watch_command,
+    )
+
+    return {
+        "DELEGATE_USAGE": DELEGATE_USAGE,
+        "TEAM_MSG_USAGE": TEAM_MSG_USAGE,
+        "TEAM_WATCH_USAGE": TEAM_WATCH_USAGE,
+        "parse_delegate_command": parse_delegate_command,
+        "parse_team_message_command": parse_team_message_command,
+        "parse_team_watch_command": parse_team_watch_command,
+    }
 
 
 class RichConsoleCodeAgent(CodeAgent):
@@ -363,8 +375,9 @@ def main() -> None:
                     if not agent.enable_agent_teams or agent.team_manager is None:
                         console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
                         continue
+                    team_cli = _load_team_cli_commands()
                     try:
-                        payload = parse_team_message_command(user_input, from_member=agent.name)
+                        payload = team_cli["parse_team_message_command"](user_input, from_member=agent.name)
                     except ValueError as exc:
                         console.print(f"[bold red]✗ {exc}[/bold red]")
                         continue
@@ -389,8 +402,9 @@ def main() -> None:
                     if not agent.enable_agent_teams or agent.team_manager is None:
                         console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
                         continue
+                    team_cli = _load_team_cli_commands()
                     try:
-                        cmd = parse_team_watch_command(user_input)
+                        cmd = team_cli["parse_team_watch_command"](user_input)
                     except ValueError as exc:
                         console.print(f"[bold red]✗ {exc}[/bold red]")
                         continue
@@ -426,8 +440,12 @@ def main() -> None:
                         time.sleep(1.0)
                     continue
                 if user_input.lower().startswith("/delegate"):
+                    if not agent.enable_agent_teams:
+                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
+                        continue
+                    team_cli = _load_team_cli_commands()
                     try:
-                        cmd = parse_delegate_command(user_input)
+                        cmd = team_cli["parse_delegate_command"](user_input)
                     except ValueError as exc:
                         console.print(f"[bold red]✗ {exc}[/bold red]")
                         continue
@@ -445,15 +463,21 @@ def main() -> None:
                     )
                     continue
                 if user_input.lower() == "/help":
+                    team_help = ""
+                    if agent.enable_agent_teams:
+                        team_cli = _load_team_cli_commands()
+                        team_help = (
+                            f"{team_cli['TEAM_MSG_USAGE']}\n"
+                            f"{team_cli['TEAM_WATCH_USAGE']}\n"
+                            f"{team_cli['DELEGATE_USAGE']}\n"
+                        )
                     console.print(
                         Panel(
                             "[bold]Available Commands:[/bold]\n"
                             "/model, /info - Show model and usage info\n"
                             "/save [path] - Save session snapshot\n"
                             "/load [path] - Load session snapshot\n"
-                            f"{TEAM_MSG_USAGE}\n"
-                            f"{TEAM_WATCH_USAGE}\n"
-                            f"{DELEGATE_USAGE}\n"
+                            f"{team_help}"
                             "/help - Show this help\n"
                             "exit, quit, q - Exit the chat\n"
                             "init - Generate code_law.md",
@@ -535,4 +559,3 @@ def main() -> None:
     finally:
         _maybe_save_session(agent, auto_save_path, auto_save_flag, "finalize")
         agent.close()
-

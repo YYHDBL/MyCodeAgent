@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.team_engine.manager import TeamManager, TeamManagerError
+from experimental.teams.manager import TeamManager, TeamManagerError
 from prompts.tools_prompts.team_approve_plan_prompt import team_approve_plan_prompt
 from ..base import ErrorCode, Tool, ToolParameter
 

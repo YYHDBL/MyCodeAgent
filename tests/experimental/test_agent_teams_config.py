@@ -70,7 +70,7 @@ class TestAgentTeamsConfig(unittest.TestCase):
             self.assertEqual(agent.teammate_mode, "auto")
             self.assertFalse(agent.delegate_mode)
 
-    def test_code_agent_resolves_runtime_teammate_mode(self):
+    def test_code_agent_skips_runtime_teammate_mode_when_disabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             cfg = Config(enable_agent_teams=False, teammate_mode="tmux")
             with patch("agents.codeAgent.resolve_teammate_mode", return_value=("in-process", "tmux unavailable")):
@@ -82,8 +82,8 @@ class TestAgentTeamsConfig(unittest.TestCase):
                     config=cfg,
                 )
             self.assertEqual(agent.teammate_mode, "tmux")
-            self.assertEqual(agent.teammate_runtime_mode, "in-process")
-            self.assertEqual(agent.teammate_mode_warning, "tmux unavailable")
+            self.assertEqual(agent.teammate_runtime_mode, "disabled")
+            self.assertIsNone(agent.teammate_mode_warning)
 
     def test_code_agent_registers_team_tools_when_enabled(self):
         with tempfile.TemporaryDirectory() as temp_dir:
