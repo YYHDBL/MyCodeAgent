@@ -1,7 +1,7 @@
 import pytest
 
-from core.team_engine.manager import TeamManager, TeamManagerError
-from core.team_engine.protocol import (
+from experimental.teams.manager import TeamManager, TeamManagerError
+from experimental.teams.protocol import (
     MESSAGE_STATUS_DELIVERED,
     MESSAGE_STATUS_PROCESSED,
 )

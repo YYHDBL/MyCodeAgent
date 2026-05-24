@@ -1,7 +1,7 @@
 import json
 
-from core.session_store import build_session_snapshot, load_session_snapshot, save_session_snapshot
-from core.team_engine.manager import TeamManager
+from runtime.session import build_session_snapshot, load_session_snapshot, save_session_snapshot
+from experimental.teams.manager import TeamManager
 
 
 def test_snapshot_includes_team_fields(tmp_path):

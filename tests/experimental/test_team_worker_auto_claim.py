@@ -1,6 +1,6 @@
 import time
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def test_worker_auto_claims_and_completes_board_task(tmp_path):

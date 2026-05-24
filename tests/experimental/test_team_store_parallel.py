@@ -1,8 +1,8 @@
 import threading
 from pathlib import Path
 
-from core.team_engine.protocol import WORK_ITEM_STATUS_RUNNING
-from core.team_engine.store import TeamStore
+from experimental.teams.protocol import WORK_ITEM_STATUS_RUNNING
+from experimental.teams.store import TeamStore
 
 
 def test_create_and_update_work_item(tmp_path: Path):

@@ -575,8 +575,6 @@ class HistoryManager:
         
         return messages
     
-    # 兼容旧接口已移除，请使用 to_messages()
-    
     def get_rounds_count(self) -> int:
         """获取当前轮次数"""
         return len(self._identify_rounds())

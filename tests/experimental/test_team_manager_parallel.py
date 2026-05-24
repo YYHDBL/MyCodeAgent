@@ -1,5 +1,5 @@
-from core.team_engine.manager import TeamManager
-from core.team_engine.protocol import EVENT_WORK_ITEM_ASSIGNED
+from experimental.teams.manager import TeamManager
+from experimental.teams.protocol import EVENT_WORK_ITEM_ASSIGNED
 
 
 def test_fanout_creates_work_items_and_assign_events(tmp_path):

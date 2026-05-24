@@ -1,4 +1,4 @@
-from core.team_engine.progress_view import build_team_progress_rows
+from experimental.teams.progress_view import build_team_progress_rows
 
 
 def test_build_team_progress_rows_basic():

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.context_engine.observation_truncator import (
+from runtime.context import (
     ObservationTruncator,
     truncate_observation,
     _get_max_lines,
@@ -222,7 +222,7 @@ class TestObservationTruncatorConfig:
         # 确保没有环境变量干扰
         with patch.dict(os.environ, {}, clear=True):
             # 重新导入以获取默认值
-            from core.context_engine.observation_truncator import (
+            from runtime.context import (
                 _get_max_lines, _get_max_bytes
             )
             # 使用默认值断言（考虑可能已设置的环境变量）
@@ -290,13 +290,12 @@ class TestConvenienceFunction:
         assert parsed["status"] == "success"
 
 
-class TestBackwardCompatibility:
-    """向后兼容性测试"""
+class TestCompressToolResult:
+    """compress_tool_result 便捷入口测试"""
     
     def test_compress_tool_result_import(self):
-        """旧的 compress_tool_result 导入仍可用"""
-        from core.context_engine.tool_result_compressor import compress_tool_result
-        
+        from runtime.context import compress_tool_result
+
         result = {
             "status": "success",
             "data": {"message": "test"},

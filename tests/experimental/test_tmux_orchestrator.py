@@ -1,4 +1,4 @@
-from core.team_engine.tmux_orchestrator import TmuxOrchestrator
+from experimental.teams.tmux_orchestrator import TmuxOrchestrator
 
 
 class DummyRunner:

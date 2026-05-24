@@ -1,6 +1,6 @@
 import json
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 from tools.builtin.team_collect import TeamCollectTool
 from tools.builtin.team_fanout import TeamFanoutTool
 

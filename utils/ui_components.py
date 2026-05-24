@@ -16,7 +16,7 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.tree import Tree
 from rich.markdown import Markdown
-from core.team_engine.progress_view import build_team_progress_rows
+from experimental.teams.progress_view import build_team_progress_rows
 
 
 class ThinkingTimer:

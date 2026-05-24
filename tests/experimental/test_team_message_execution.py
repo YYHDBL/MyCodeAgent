@@ -1,6 +1,6 @@
 import time
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def _wait_succeeded(manager: TeamManager, team_name: str, expected: int, timeout_s: float = 3.0) -> dict:

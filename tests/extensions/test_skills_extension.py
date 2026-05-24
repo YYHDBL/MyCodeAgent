@@ -1,4 +1,4 @@
-from agents.codeAgent import CodeAgent
+from runtime.agent_host import CodeAgent
 from tools.registry import ToolRegistry
 
 
@@ -20,4 +20,3 @@ def test_codeagent_can_disable_skills_extension(tmp_path):
 
     assert agent._skill_loader is None
     assert "Skill" not in agent.tool_registry.list_tools()
-

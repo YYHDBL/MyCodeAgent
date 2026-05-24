@@ -17,10 +17,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm import HelloAgentsLLM
-from core.message import Message
 from experimental.teams.turn_executor import TurnExecutor
+from runtime.messages import Message
+from runtime.context import truncate_observation
 from tools.registry import ToolRegistry
-from core.context_engine.observation_truncator import truncate_observation
 from prompts.tools_prompts.task_prompt import task_prompt
 from ..base import Tool, ToolParameter, ErrorCode
 from core.env import load_env

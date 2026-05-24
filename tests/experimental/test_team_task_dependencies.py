@@ -1,4 +1,4 @@
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def test_completed_task_unblocks_dependents(tmp_path):

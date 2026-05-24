@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def _prepare_manager(tmp_path):

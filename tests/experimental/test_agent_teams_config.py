@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.codeAgent import CodeAgent
 from core.config import Config
+from runtime.agent_host import CodeAgent
 from tools.registry import ToolRegistry
 
 

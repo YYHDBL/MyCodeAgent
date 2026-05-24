@@ -1,7 +1,7 @@
 import json
 from unittest.mock import Mock
 
-from core.team_engine.turn_executor import TurnExecutor
+from experimental.teams.turn_executor import TurnExecutor
 from tools.registry import ToolRegistry
 
 

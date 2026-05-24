@@ -7,11 +7,11 @@ import traceback as tb
 import uuid
 from typing import Any
 
-from core.context_engine.input_preprocessor import preprocess_input
+from runtime.context import preprocess_input
 
 
 class RuntimeRunner:
-    """Canonical single-agent turn loop with a compatibility host boundary."""
+    """Canonical single-agent turn loop."""
 
     def __init__(self, host: Any):
         self.host = host

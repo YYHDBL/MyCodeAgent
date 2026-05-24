@@ -11,11 +11,10 @@ import json
 import pytest
 from unittest.mock import MagicMock, patch
 
-from core.context_engine.tool_result_compressor import compress_tool_result
-from core.context_engine.input_preprocessor import preprocess_input, extract_file_mentions
-from core.context_engine.history_manager import HistoryManager
 from core.config import Config
-from agents.codeAgent import CodeAgent
+from runtime.agent_host import CodeAgent
+from runtime.context import compress_tool_result, preprocess_input, extract_file_mentions
+from runtime.messages import HistoryManager
 
 
 class TestToolOutputTruncation:

@@ -46,7 +46,7 @@ class Config(BaseModel):
         """从环境变量创建配置"""
         enable_agent_teams_raw = os.getenv("ENABLE_AGENT_TEAMS")
         if enable_agent_teams_raw is None:
-            # Claude Code compatibility env flag
+            # Alternate experimental-teams env flag
             enable_agent_teams_raw = os.getenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "false")
         teammate_mode_raw = (os.getenv("TEAMMATE_MODE", "auto") or "auto").strip().lower()
         if teammate_mode_raw not in {"auto", "in-process", "tmux"}:

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from core.team_engine.protocol import TEAM_CONFIG_VERSION
-from core.team_engine.store import TeamStore
+from experimental.teams.protocol import TEAM_CONFIG_VERSION
+from experimental.teams.store import TeamStore
 
 
 def test_create_team_writes_versioned_config(tmp_path: Path):

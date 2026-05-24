@@ -1,6 +1,6 @@
 from core.config import Config
-from core.context_engine.context_builder import ContextBuilder
-from core.context_engine.history_manager import HistoryManager
+from runtime.prompt import ContextBuilder
+from runtime.messages import HistoryManager
 from tools.registry import ToolRegistry
 
 

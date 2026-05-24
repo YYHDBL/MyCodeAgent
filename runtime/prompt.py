@@ -211,4 +211,3 @@ class ContextBuilder:
             return self._cached_code_law
         return ""
     
-    # 兼容旧接口已移除，请使用 build_messages()

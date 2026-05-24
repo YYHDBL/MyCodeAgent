@@ -1,6 +1,6 @@
 import json
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 from tools.builtin.team_task_create import TeamTaskCreateTool
 from tools.builtin.team_task_get import TeamTaskGetTool
 from tools.builtin.team_task_list import TeamTaskListTool

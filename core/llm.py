@@ -315,7 +315,7 @@ class HelloAgentsLLM:
 
     @staticmethod
     def _compact_request_kwargs(kwargs: dict) -> dict:
-        """Drop None-valued fields for provider compatibility."""
+        """Drop None-valued fields before provider request dispatch."""
         return {k: v for k, v in kwargs.items() if v is not None}
 
     def _is_minimax_backend(self) -> bool:

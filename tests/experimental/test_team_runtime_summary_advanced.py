@@ -1,7 +1,7 @@
 import time
 
-from agents.codeAgent import CodeAgent
-from core.team_engine.manager import TeamManager
+from runtime.agent_host import CodeAgent
+from experimental.teams.manager import TeamManager
 
 
 def test_runtime_block_includes_idle_approvals_and_blocked_tasks():

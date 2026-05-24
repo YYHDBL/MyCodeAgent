@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from core.context_engine.observation_truncator import truncate_observation
+from runtime.context import truncate_observation
 from tools.registry import ToolRegistry
 
 
@@ -166,4 +166,3 @@ class TurnExecutor:
             return json.loads(s), None
         except Exception as exc:
             return None, str(exc)
-

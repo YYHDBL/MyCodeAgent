@@ -3,7 +3,7 @@
 import time
 import unittest
 
-from core.context_engine.context_builder import ContextBuilder
+from runtime.prompt import ContextBuilder
 from tests.utils.test_helpers import create_temp_project
 
 

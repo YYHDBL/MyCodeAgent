@@ -1,6 +1,6 @@
 import pytest
 
-from core.team_engine.manager import TeamManager, TeamManagerError
+from experimental.teams.manager import TeamManager, TeamManagerError
 
 
 def test_send_message_supports_broadcast(tmp_path):

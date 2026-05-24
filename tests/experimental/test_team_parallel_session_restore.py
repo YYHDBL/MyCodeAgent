@@ -1,6 +1,6 @@
-from core.team_engine.manager import TeamManager
-from core.team_engine.protocol import WORK_ITEM_STATUS_QUEUED, WORK_ITEM_STATUS_RUNNING
-from core.session_store import build_session_snapshot, load_session_snapshot, save_session_snapshot
+from experimental.teams.manager import TeamManager
+from experimental.teams.protocol import WORK_ITEM_STATUS_QUEUED, WORK_ITEM_STATUS_RUNNING
+from runtime.session import build_session_snapshot, load_session_snapshot, save_session_snapshot
 
 
 def test_restore_requeues_running_work_items(tmp_path):

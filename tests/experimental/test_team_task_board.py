@@ -1,4 +1,4 @@
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def test_team_task_board_crud(tmp_path):

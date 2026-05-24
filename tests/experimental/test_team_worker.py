@@ -1,7 +1,7 @@
 import time
 
-from core.team_engine.manager import TeamManager
-from core.team_engine.worker import TeammateWorker
+from experimental.teams.manager import TeamManager
+from experimental.teams.worker import TeammateWorker
 
 
 def test_worker_does_not_exit_when_running_normally():

@@ -1,7 +1,7 @@
 import json
 import time
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 from tools.builtin.team_approve_plan import TeamApprovePlanTool
 from tools.builtin.team_approvals import TeamApprovalsTool
 

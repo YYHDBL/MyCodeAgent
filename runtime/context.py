@@ -670,22 +670,9 @@ def truncate_observation(
     return truncator.truncate(tool_name, raw_result)
 
 
-# =============================================================================
-# 兼容旧接口（过渡期）
-# =============================================================================
-
 def compress_tool_result(tool_name: str, raw_result: str) -> str:
     """
-    兼容旧的 ToolResultCompressor 接口
-    
-    此函数保持旧接口兼容性，内部使用新的截断策略。
-    
-    Args:
-        tool_name: 工具名称
-        raw_result: 原始 JSON 结果字符串
-        
-    Returns:
-        处理后的 JSON 字符串
+    Convenience alias for the runtime observation truncation path.
     """
     return truncate_observation(tool_name, raw_result)
 

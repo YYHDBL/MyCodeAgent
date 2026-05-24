@@ -1,6 +1,6 @@
 import pytest
 
-from core.team_engine.cli_commands import (
+from experimental.teams.cli_commands import (
     parse_delegate_command,
     parse_team_message_command,
     parse_team_watch_command,

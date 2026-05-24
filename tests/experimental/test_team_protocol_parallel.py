@@ -1,4 +1,4 @@
-from core.team_engine.protocol import (
+from experimental.teams.protocol import (
     EVENT_TYPES,
     EVENT_WORK_ITEM_ASSIGNED,
     EVENT_WORK_ITEM_COMPLETED,

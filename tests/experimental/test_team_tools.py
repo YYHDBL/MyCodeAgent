@@ -1,6 +1,6 @@
 import json
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 from tools.builtin.send_message import SendMessageTool
 from tools.builtin.team_create import TeamCreateTool
 from tools.builtin.team_delete import TeamDeleteTool

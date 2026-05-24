@@ -1,6 +1,6 @@
 import threading
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def test_team_task_claim_is_atomic_under_threads(tmp_path):

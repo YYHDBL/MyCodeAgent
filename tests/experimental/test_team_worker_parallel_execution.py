@@ -1,8 +1,8 @@
 import re
 import time
 
-from core.team_engine.manager import TeamManager
-from core.team_engine.turn_executor import TurnExecutor
+from experimental.teams.manager import TeamManager
+from experimental.teams.turn_executor import TurnExecutor
 from tools.registry import ToolRegistry
 
 

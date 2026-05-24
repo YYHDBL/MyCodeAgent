@@ -8,16 +8,14 @@ from typing import Any, Optional, List, Tuple
 
 from core.agent import Agent
 from core.llm import HelloAgentsLLM
-from core.message import Message
 from core.config import Config
-from core.context_engine.context_builder import ContextBuilder
 from core.env import load_env
 
 load_env()
-from core.context_engine.history_manager import HistoryManager
-from core.context_engine.input_preprocessor import preprocess_input
-from core.context_engine.summary_compressor import create_summary_generator
-from core.session_store import build_session_snapshot, save_session_snapshot, load_session_snapshot
+from runtime.messages import HistoryManager, Message
+from runtime.prompt import ContextBuilder
+from runtime.context import preprocess_input, create_summary_generator
+from runtime.session import build_session_snapshot, save_session_snapshot, load_session_snapshot
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -724,11 +722,11 @@ class CodeAgent(Agent):
         return {"raw": str(raw_response)}
     
     # =========================================================================
-    # 兼容 Agent 基类接口（使用 HistoryManager）
+    # Agent base-history hooks backed by HistoryManager
     # =========================================================================
     
     def add_message(self, message: Message):
-        """兼容旧接口：添加消息到历史"""
+        """Add a message to the managed runtime history."""
         if message.role == "user":
             self.history_manager.append_user(message.content, message.metadata)
         elif message.role == "assistant":
@@ -746,9 +744,9 @@ class CodeAgent(Agent):
             self.history_manager.append_summary(message.content)
     
     def clear_history(self):
-        """兼容旧接口：清空历史"""
+        """Clear managed runtime history."""
         self.history_manager.clear()
     
     def get_history(self) -> List[Message]:
-        """兼容旧接口：获取历史"""
+        """Return managed runtime history."""
         return self.history_manager.get_messages()

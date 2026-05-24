@@ -1,6 +1,6 @@
 import time
 
-from core.team_engine.manager import TeamManager
+from experimental.teams.manager import TeamManager
 
 
 def test_plan_required_teammate_waits_for_approval(tmp_path):
