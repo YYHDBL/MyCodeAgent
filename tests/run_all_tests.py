@@ -1,29 +1,16 @@
 #!/usr/bin/env python3
-"""一键运行所有协议合规性测试
+"""Run the default harness-core verification suite."""
 
-傻瓜式自动化测试脚本，直接运行即可。
+from __future__ import annotations
 
-使用方式：
-    python tests/run_all_tests.py
-    python tests/run_all_tests.py -v          # 详细输出
-    python tests/run_all_tests.py --quick     # 快速模式（跳过慢测试）
-"""
-
-import sys
-import os
-import unittest
 import argparse
-import time
+import subprocess
+import sys
 from pathlib import Path
 
-# 确保项目根目录在 Python 路径中
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Canonical single-agent baseline for the harness-core refactor.
-# This deliberately excludes team/tmux-heavy tests so the core runtime
-# can be verified independently while modules are being reshaped.
-CORE_RUNTIME_BASELINE_TESTS = [
+DEFAULT_TESTS = [
     "tests/test_context_builder.py",
     "tests/test_context_engineering.py",
     "tests/test_protocol_compliance.py",
@@ -32,108 +19,45 @@ CORE_RUNTIME_BASELINE_TESTS = [
     "tests/test_write_tool.py",
     "tests/test_edit_tool.py",
     "tests/test_todo_write_tool.py",
+    "tests/test_app_bootstrap.py",
+    "tests/runtime/test_runner.py",
+    "tests/runtime/test_context.py",
+    "tests/runtime/test_prompt.py",
+    "tests/runtime/test_session.py",
+    "tests/tools/test_executor.py",
+    "tests/extensions",
 ]
 
-CORE_RUNTIME_BASELINE_CMD = "pytest " + " ".join(CORE_RUNTIME_BASELINE_TESTS) + " -q"
+QUICK_TESTS = [
+    "tests/test_protocol_compliance.py",
+    "tests/test_app_bootstrap.py",
+    "tests/runtime/test_runner.py",
+    "tests/tools/test_executor.py",
+]
 
-
-def run_tests(verbosity: int = 2, quick_mode: bool = False) -> bool:
-    """
-    运行所有测试
-    
-    Args:
-        verbosity: 输出详细程度 (0=静默, 1=简洁, 2=详细)
-        quick_mode: 是否快速模式（跳过慢测试）
-    
-    Returns:
-        bool: 是否全部通过
-    """
-    print("=" * 60)
-    print("🔍 通用工具响应协议合规性测试")
-    print("=" * 60)
-    print()
-    
-    start_time = time.time()
-    
-    # 发现并加载测试
-    loader = unittest.TestLoader()
-    suite = unittest.TestSuite()
-    
-    # 加载测试模块
-    test_modules = [
-        "tests.test_protocol_compliance",
-    ]
-    
-    for module_name in test_modules:
-        try:
-            tests = loader.loadTestsFromName(module_name)
-            suite.addTests(tests)
-            print(f"✅ 加载测试模块: {module_name}")
-        except Exception as e:
-            print(f"❌ 加载失败 {module_name}: {e}")
-    
-    print()
-    print("-" * 60)
-    print()
-    
-    # 运行测试
-    runner = unittest.TextTestRunner(verbosity=verbosity)
-    result = runner.run(suite)
-    
-    # 统计结果
-    elapsed = time.time() - start_time
-    
-    print()
-    print("=" * 60)
-    print("📊 测试结果汇总")
-    print("=" * 60)
-    print(f"运行测试: {result.testsRun}")
-    print(f"成功: {result.testsRun - len(result.failures) - len(result.errors)}")
-    print(f"失败: {len(result.failures)}")
-    print(f"错误: {len(result.errors)}")
-    print(f"跳过: {len(result.skipped)}")
-    print(f"耗时: {elapsed:.2f}s")
-    print()
-    
-    if result.wasSuccessful():
-        print("🎉 所有测试通过！协议合规性验证成功。")
-        return True
+def build_pytest_command(verbose: bool, quiet: bool, quick: bool) -> list[str]:
+    cmd = [sys.executable, "-m", "pytest"]
+    cmd.extend(QUICK_TESTS if quick else DEFAULT_TESTS)
+    if quiet:
+        cmd.append("-q")
+    elif verbose:
+        cmd.append("-vv")
     else:
-        print("❌ 测试未通过，请检查上述错误。")
-        return False
+        cmd.append("-q")
+    return cmd
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="运行通用工具响应协议合规性测试",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  python tests/run_all_tests.py           # 运行所有测试
-  python tests/run_all_tests.py -v        # 详细输出
-  python tests/run_all_tests.py -q        # 静默模式
-  python tests/run_all_tests.py --quick   # 快速模式
-        """
-    )
-    parser.add_argument("-v", "--verbose", action="store_true", help="详细输出")
-    parser.add_argument("-q", "--quiet", action="store_true", help="静默模式")
-    parser.add_argument("--quick", action="store_true", help="快速模式（跳过慢测试）")
-    
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the default harness-core test suite")
+    parser.add_argument("-v", "--verbose", action="store_true", help="verbose pytest output")
+    parser.add_argument("-q", "--quiet", action="store_true", help="quiet pytest output")
+    parser.add_argument("--quick", action="store_true", help="run a smaller smoke suite")
     args = parser.parse_args()
-    
-    # 确定详细程度
-    if args.quiet:
-        verbosity = 0
-    elif args.verbose:
-        verbosity = 2
-    else:
-        verbosity = 1
-    
-    # 运行测试
-    success = run_tests(verbosity=verbosity, quick_mode=args.quick)
-    
-    sys.exit(0 if success else 1)
+
+    cmd = build_pytest_command(args.verbose, args.quiet, args.quick)
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    return result.returncode
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

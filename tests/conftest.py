@@ -1,10 +1,17 @@
-"""Pytest 配置和共享 fixtures
+"""Pytest 配置和共享 fixtures.
 
-提供测试所需的共享 fixtures，支持 pytest 运行。
+Keep pytest runnable from the repository root without requiring callers to
+manually export ``PYTHONPATH``.
 """
 
-import pytest
+import sys
 from pathlib import Path
+
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.utils.test_helpers import create_temp_project, TempProject
 

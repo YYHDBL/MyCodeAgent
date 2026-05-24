@@ -1,4 +1,4 @@
-"""Runtime runner extracted from CodeAgent's legacy turn loop."""
+"""Runtime runner for the canonical single-agent turn loop."""
 
 from __future__ import annotations
 

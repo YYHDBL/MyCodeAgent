@@ -1,4 +1,4 @@
-"""CLI entrypoint extracted from the legacy chat_test_agent script."""
+"""CLI entrypoint for the canonical local chat harness."""
 
 from __future__ import annotations
 
