@@ -1,6 +1,6 @@
 import time
 
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from experimental.teams.manager import TeamManager
 
 

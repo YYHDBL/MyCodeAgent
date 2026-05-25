@@ -19,7 +19,7 @@ def test_bootstrap_imports_canonical_runtime_host():
     source = open("app/bootstrap.py", encoding="utf-8").read()
 
     assert "from runtime.host import CodeAgent" in source
-    assert "runtime.agent_host" not in source
+    assert "runtime." + "agent_host" not in source
 
 
 def test_build_runtime_constructs_dependencies(tmp_path):

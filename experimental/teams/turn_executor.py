@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from runtime.context import truncate_observation
+from runtime.observation_store import truncate_observation
 from tools.registry import ToolRegistry
 
 

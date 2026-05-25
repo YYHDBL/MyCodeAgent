@@ -14,7 +14,7 @@ def test_history_module_owns_message_public_objects():
 
     assert "class Message" in source
     assert "class HistoryManager" in source
-    assert "runtime.messages" not in source
+    assert "runtime." + "messages" not in source
 
 
 def test_message_to_dict_returns_openai_shape():

@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from .llm import HelloAgentsLLM
 from .config import Config
-from runtime.messages import Message
+from runtime.history import Message
 
 class Agent(ABC):
     """Agent基类"""

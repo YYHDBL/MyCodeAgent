@@ -1,4 +1,4 @@
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 
 
 def test_parallel_runtime_block_summarizes_progress():

@@ -1,5 +1,8 @@
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from tools.registry import ToolRegistry
+import warnings
+
+from extensions.tracing.logger import TraceLogger
 
 
 class _DummyLLM:
@@ -19,3 +22,13 @@ def test_codeagent_uses_null_trace_logger_when_tracing_disabled(tmp_path):
     )
 
     assert agent.trace_logger.enabled is False
+
+
+def test_trace_logger_init_emits_no_datetime_deprecation_warning(tmp_path):
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        logger = TraceLogger("test-session", tmp_path, enabled=True)
+        logger.finalize()
+
+    deprecations = [w for w in captured if issubclass(w.category, DeprecationWarning)]
+    assert deprecations == []

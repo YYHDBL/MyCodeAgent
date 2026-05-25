@@ -26,11 +26,14 @@ There is no supported `scripts/` launcher path.
 
 `runtime/` is the only runtime center:
 
-- `runtime/agent_host.py`: default host implementation
-- `runtime/runner.py`: ReAct-style single-agent loop
-- `runtime/messages.py`: message model and history manager
-- `runtime/context.py`: input preprocessing, observation truncation, summary helpers, context policy helpers
-- `runtime/prompt.py`: system prompt and message assembly
+- `runtime/host.py`: default host implementation
+- `runtime/loop.py`: ReAct-style single-agent loop
+- `runtime/history.py`: message model and history manager
+- `runtime/input_preprocess.py`: user input preprocessing
+- `runtime/observation_store.py`: observation truncation and storage
+- `runtime/summary.py`: summary generation helpers
+- `runtime/context_provider.py`: context provider facade
+- `runtime/prompt_builder.py`: system prompt and message assembly
 - `runtime/session.py`: session snapshot persistence
 
 There is no `agents/` package and no `core/context_engine` runtime tree.
@@ -47,9 +50,9 @@ There is no `agents/` package and no `core/context_engine` runtime tree.
 ## Execution Flow
 
 1. `main.py` delegates to `app.cli.main`.
-2. `app.bootstrap.build_runtime` assembles config, LLM, tool registry, and `runtime.agent_host.CodeAgent`.
-3. `runtime.runner.RuntimeRunner` drives the single-agent turn loop.
-4. Context and prompt construction come from `runtime.context`, `runtime.messages`, and `runtime.prompt`.
+2. `app.bootstrap.build_runtime` assembles config, LLM, tool registry, and `runtime.host.CodeAgent`.
+3. `runtime.loop.RuntimeRunner` drives the single-agent turn loop.
+4. Context and prompt construction come from `runtime.input_preprocess`, `runtime.history`, `runtime.prompt_builder`, `runtime.observation_store`, and `runtime.summary`.
 5. Tool calls go through `tools.executor.ToolExecutor` and `tools.registry.ToolRegistry`.
 6. Optional MCP, skills, and tracing are loaded through `extensions/`.
 7. Team runtime code is imported only when experimental team features are enabled.

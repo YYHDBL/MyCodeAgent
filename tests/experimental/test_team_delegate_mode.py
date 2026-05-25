@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from core.config import Config
 from tools.registry import ToolRegistry
 

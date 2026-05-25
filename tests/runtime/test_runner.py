@@ -13,7 +13,7 @@ def test_runtime_host_imports_canonical_loop():
     source = open("runtime/host.py", encoding="utf-8").read()
 
     assert "from runtime.loop import RuntimeRunner" in source
-    assert "runtime.runner" not in source
+    assert "runtime." + "runner" not in source
 
 
 class _FakeTraceLogger:
@@ -69,7 +69,7 @@ class _FakeHost:
     def __init__(self):
         self.console_progress = False
         self.console_verbose = False
-        self.logger = logging.getLogger("test.runtime.runner")
+        self.logger = logging.getLogger("test.runtime.loop")
         self._skills_prompt = ""
         self.context_builder = _FakeContextBuilder()
         self.trace_logger = _FakeTraceLogger()

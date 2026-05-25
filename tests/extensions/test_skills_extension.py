@@ -1,4 +1,4 @@
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from tools.registry import ToolRegistry
 
 

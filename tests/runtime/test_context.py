@@ -1,6 +1,6 @@
 from runtime.context_provider import ContextManager
 from runtime.history import HistoryManager
-from runtime.prompt import ContextBuilder
+from runtime.prompt_builder import ContextBuilder
 from runtime.session import build_session_snapshot
 
 
