@@ -1,4 +1,5 @@
 from core.config import Config
+from runtime.agent_host import CodeAgent
 from runtime.prompt import ContextBuilder
 from runtime.messages import HistoryManager
 from tools.registry import ToolRegistry
@@ -26,3 +27,29 @@ def test_runtime_notifications_do_not_create_user_rounds():
 
     after = hm.get_rounds_count()
     assert before == after
+
+
+class _DummyLLM:
+    provider = "openai"
+    model = "dummy-model"
+
+
+def test_single_agent_boot_does_not_register_team_tools_by_default(tmp_path):
+    config = Config()
+    config.enable_agent_teams = False
+
+    agent = CodeAgent(
+        name="code",
+        llm=_DummyLLM(),
+        tool_registry=ToolRegistry(),
+        project_root=str(tmp_path),
+        config=config,
+        enable_mcp=False,
+        enable_skills=False,
+        enable_tracing=False,
+    )
+
+    tools = agent.tool_registry.list_tools()
+    assert "Task" not in tools
+    assert "TeamCreate" not in tools
+    assert agent.team_manager is None

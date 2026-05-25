@@ -1,6 +1,7 @@
 from runtime.context import ContextManager
 from runtime.messages import HistoryManager
 from runtime.prompt import ContextBuilder
+from runtime.session import build_session_snapshot
 
 
 class _DummyToolRegistry:
@@ -26,3 +27,26 @@ def test_context_manager_builds_messages_from_preprocessed_history(tmp_path):
     assert messages[-1]["role"] == "user"
     assert "@src/main.py" in messages[-1]["content"]
 
+
+def test_history_prompt_context_and_session_snapshot_remain_integrated(tmp_path):
+    history = HistoryManager()
+    history.append_user("hello")
+    history.append_assistant("hi")
+
+    builder = ContextBuilder(
+        tool_registry=_DummyToolRegistry(),
+        project_root=str(tmp_path),
+        system_prompt_override="base system",
+    )
+    messages = builder.build_messages(history.to_messages())
+    snapshot = build_session_snapshot(
+        system_messages=builder.get_system_messages(),
+        history_messages=history.serialize_messages(),
+        tool_schema=[],
+        project_root=str(tmp_path),
+    )
+
+    assert messages[0] == {"role": "system", "content": "base system"}
+    assert messages[-1]["role"] == "assistant"
+    assert snapshot["history_messages"][0]["content"] == "hello"
+    assert snapshot["project_root"] == str(tmp_path)

@@ -46,3 +46,18 @@ def test_tool_executor_enforces_permission_boundary_without_affecting_schema():
     assert result["status"] == ToolStatus.ERROR.value
     assert result["error"]["code"] == "PERMISSION_DENIED"
     assert any(item["function"]["name"] == "Echo" for item in schemas)
+
+
+def test_tool_executor_preserves_registered_function_schema_path():
+    from tools.executor import ToolExecutor
+
+    registry = ToolRegistry()
+    registry.register_function("Upper", "upper-case input", lambda value: str(value).upper())
+    executor = ToolExecutor(registry)
+
+    result = json.loads(executor.execute("Upper", {"input": "hello"}))
+    schemas = registry.get_openai_tools()
+
+    assert result["status"] == ToolStatus.ERROR.value
+    assert result["error"]["code"] == "INTERNAL_ERROR"
+    assert any(item["function"]["name"] == "Upper" for item in schemas)

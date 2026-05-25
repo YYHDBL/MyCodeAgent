@@ -20,3 +20,20 @@ def test_codeagent_can_disable_skills_extension(tmp_path):
 
     assert agent._skill_loader is None
     assert "Skill" not in agent.tool_registry.list_tools()
+
+
+def test_skills_extension_scans_project_skills_for_prompt(tmp_path):
+    from extensions.skills import SkillLoader
+
+    skill_dir = tmp_path / "skills" / "demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: demo description\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    loader = SkillLoader(str(tmp_path))
+    skills = loader.scan()
+
+    assert [skill.name for skill in skills] == ["demo-skill"]
+    assert "- demo-skill: demo description" in loader.format_skills_for_prompt(1000)

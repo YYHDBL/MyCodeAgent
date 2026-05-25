@@ -8,6 +8,13 @@ def test_root_entrypoint_delegates_to_app_cli():
     assert main.main is app.cli.main
 
 
+def test_bootstrap_defaults_to_codeagent_runtime_host():
+    import app.bootstrap
+    from runtime.agent_host import CodeAgent
+
+    assert app.bootstrap.build_runtime.__kwdefaults__["agent_class"] is CodeAgent
+
+
 def test_build_runtime_constructs_dependencies(tmp_path):
     from app.bootstrap import build_runtime
 
@@ -58,3 +65,4 @@ def test_build_runtime_constructs_dependencies(tmp_path):
     assert captured["agent_kwargs"]["config"] is runtime.config
     assert captured["agent_kwargs"]["tool_registry"] is runtime.tool_registry
     assert captured["agent_kwargs"]["llm"] is runtime.llm
+    assert runtime.agent is not None

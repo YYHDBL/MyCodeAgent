@@ -150,6 +150,19 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     assert any(event[0] == "finish" for event in host.trace_logger.events)
 
 
+def test_runtime_runner_preprocesses_file_mentions_before_history_append():
+    from runtime.runner import RuntimeRunner
+
+    host = _FakeHost()
+    runner = RuntimeRunner(host)
+
+    runner.run("inspect @src/main.py", show_raw=False)
+
+    user_content = host.history_manager.messages[0]["content"]
+    assert "@src/main.py" in user_content
+    assert "<system-reminder>" in user_content
+
+
 def test_codeagent_run_delegates_to_runtime_runner():
     class _DummyRunner:
         def __init__(self):

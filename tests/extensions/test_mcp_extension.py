@@ -43,3 +43,23 @@ def test_bootstrap_can_disable_optional_extensions(tmp_path):
     assert captured["enable_skills"] is False
     assert captured["enable_tracing"] is False
 
+
+def test_mcp_extension_formats_tools_for_runtime_prompt():
+    from extensions.mcp import format_mcp_tools_prompt
+
+    prompt = format_mcp_tools_prompt(
+        [
+            {
+                "name": "fs_read",
+                "description": "read a file",
+                "schema": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string", "description": "file path"}},
+                    "required": ["path"],
+                },
+            }
+        ]
+    )
+
+    assert "- fs_read: read a file" in prompt
+    assert "path: string required - file path" in prompt
