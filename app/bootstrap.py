@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from core.config import Config
 from core.llm import HelloAgentsLLM
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from tools.registry import ToolRegistry
 
 PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)

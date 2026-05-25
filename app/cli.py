@@ -32,7 +32,7 @@ except ImportError:
 
 from app.bootstrap import PROJECT_ROOT, build_runtime
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 from utils.ui_components import EnhancedUI, ToolCallTree
 
 custom_theme = Theme(

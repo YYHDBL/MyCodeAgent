@@ -1,10 +1,17 @@
-from runtime.prompt import ContextBuilder
+from runtime.prompt_builder import ContextBuilder
 
 
 def test_runtime_prompt_builder_module_exposes_context_builder():
     from runtime.prompt_builder import ContextBuilder as CanonicalContextBuilder
 
     assert CanonicalContextBuilder is ContextBuilder
+
+
+def test_prompt_builder_module_owns_context_builder():
+    source = open("runtime/prompt_builder.py", encoding="utf-8").read()
+
+    assert "class ContextBuilder" in source
+    assert "runtime.prompt import" not in source
 
 
 class _DummyToolRegistry:

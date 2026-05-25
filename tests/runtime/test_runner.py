@@ -1,12 +1,19 @@
 import logging
 
-from runtime.agent_host import CodeAgent
+from runtime.host import CodeAgent
 
 
 def test_runtime_loop_module_exposes_runner():
     from runtime.loop import RuntimeRunner
 
     assert RuntimeRunner.__name__ == "RuntimeRunner"
+
+
+def test_runtime_host_imports_canonical_loop():
+    source = open("runtime/host.py", encoding="utf-8").read()
+
+    assert "from runtime.loop import RuntimeRunner" in source
+    assert "runtime.runner" not in source
 
 
 class _FakeTraceLogger:
@@ -141,7 +148,7 @@ class _FakeHost:
 
 
 def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
-    from runtime.runner import RuntimeRunner
+    from runtime.loop import RuntimeRunner
 
     host = _FakeHost()
     runner = RuntimeRunner(host)
@@ -157,7 +164,7 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
 
 
 def test_runtime_runner_preprocesses_file_mentions_before_history_append():
-    from runtime.runner import RuntimeRunner
+    from runtime.loop import RuntimeRunner
 
     host = _FakeHost()
     runner = RuntimeRunner(host)

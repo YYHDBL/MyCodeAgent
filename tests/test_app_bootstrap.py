@@ -10,9 +10,16 @@ def test_root_entrypoint_delegates_to_app_cli():
 
 def test_bootstrap_defaults_to_codeagent_runtime_host():
     import app.bootstrap
-    from runtime.agent_host import CodeAgent
+    from runtime.host import CodeAgent
 
     assert app.bootstrap.build_runtime.__kwdefaults__["agent_class"] is CodeAgent
+
+
+def test_bootstrap_imports_canonical_runtime_host():
+    source = open("app/bootstrap.py", encoding="utf-8").read()
+
+    assert "from runtime.host import CodeAgent" in source
+    assert "runtime.agent_host" not in source
 
 
 def test_build_runtime_constructs_dependencies(tmp_path):

@@ -1,4 +1,4 @@
-from runtime.messages import HistoryManager, Message
+from runtime.history import HistoryManager, Message
 
 
 def test_runtime_history_module_exposes_history_public_objects():
@@ -7,6 +7,14 @@ def test_runtime_history_module_exposes_history_public_objects():
 
     assert CanonicalHistoryManager is HistoryManager
     assert CanonicalMessage is Message
+
+
+def test_history_module_owns_message_public_objects():
+    source = open("runtime/history.py", encoding="utf-8").read()
+
+    assert "class Message" in source
+    assert "class HistoryManager" in source
+    assert "runtime.messages" not in source
 
 
 def test_message_to_dict_returns_openai_shape():
