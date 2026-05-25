@@ -112,7 +112,7 @@ Budget control:
 - Stop listing when budget exceeded
 
 ### 4) Tool Registration
-**Modify**: `agents/codeAgent.py`
+**Modify**: `runtime/host.py`
 
 - Import `SkillTool` and register in `_register_builtin_tools()`.
 - Ensure Skill tool is included in the tool registry before context building.
@@ -171,7 +171,7 @@ MVP does not support skill invoking skill. If this is added later:
 - `core/skills/skill_loader.py` (new)
 - `tools/builtin/skill.py` (new)
 - `prompts/tools_prompts/skill_prompt.py` (new)
-- `agents/codeAgent.py` (modify)
+- `runtime/host.py` (modify)
 
 ## Testing Plan
 - `tests/test_skills.py` (new)

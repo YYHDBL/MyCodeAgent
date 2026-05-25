@@ -1,16 +1,16 @@
 # MyCodeAgent
 
-MyCodeAgent is a small local coding-agent harness for studying one canonical loop:
+MyCodeAgent 是一个轻量级的本地编码 Agent 框架，用于研究一个标准循环：
 
-- `app/` wires config, LLM, registry, and CLI
-- `runtime/` owns the single-agent turn loop and session/context services
-- `tools/` provides the tool boundary and built-in tools
-- `extensions/` contains optional integrations such as MCP, skills, and tracing
-- `experimental/` contains non-canonical systems such as the team runtime
+- `app/` — 配置、LLM、注册中心和 CLI 的组装
+- `runtime/` — 单 Agent 的回合循环及会话/上下文服务
+- `tools/` — 工具边界与内置工具集
+- `extensions/` — 可选集成模块，如 MCP、技能（skills）和链路追踪（tracing）
+- `experimental/` — 非标准系统，如团队运行环境
 
-The project goal is not platform breadth. It is a readable, hackable harness that keeps the default path small.
+本项目目标并非追求平台广度，而是一个可读、可修改的框架，保持默认路径简洁小巧。
 
-## Canonical Architecture
+## 标准架构
 
 ```mermaid
 flowchart LR
@@ -20,75 +20,75 @@ flowchart LR
     A --> E["experimental"]
 ```
 
-- The default single-agent bootstrap path is `app -> runtime -> tools`.
-- `extensions/` are optional and can be disabled without breaking the core loop.
-- `experimental/teams` exists, but it is intentionally outside the canonical runtime story.
-- The default host implementation lives in `runtime/agent_host.py`.
+- 默认的单 Agent 启动路径为 `app -> runtime -> tools`。
+- `extensions/` 为可选模块，可在不破坏核心循环的情况下禁用。
+- `experimental/teams` 虽然存在，但有意被置于标准运行时体系之外。
+- 默认宿主实现位于 `runtime/host.py`。
 
-## What The Core Harness Does
+## 核心框架功能
 
-- Runs a ReAct-style single-agent loop through `runtime/runner.py`
-- Builds prompts and context through `runtime/prompt.py` and `runtime/context.py`
-- Persists and restores sessions through `runtime/session.py`
-- Executes tools through `tools/executor.py`
-- Supports built-in file/code tools, bash, todos, and ask-user interactions
+- 通过 `runtime/loop.py` 运行 ReAct 风格的单 Agent 循环
+- 通过 `runtime/prompt_builder.py`、`runtime/input_preprocess.py`、`runtime/observation_store.py` 和 `runtime/summary.py` 构建提示词和上下文服务
+- 通过 `runtime/session.py` 持久化和恢复会话
+- 通过 `tools/executor.py` 执行工具
+- 支持内置的文件/代码工具、Bash、任务列表及 ask-user 交互
 
-## Optional Extensions
+## 可选扩展
 
-- `extensions/mcp/`: MCP server registration and prompt shaping
-- `extensions/skills/`: local skill discovery and prompt injection
-- `extensions/tracing/`: trace logging and null tracing fallback
+- `extensions/mcp/`：MCP 服务器注册与提示词整形
+- `extensions/skills/`：本地技能发现与提示词注入
+- `extensions/tracing/`：链路追踪日志记录及空追踪回退
 
-These are optional layers. The harness should still run with them disabled.
+这些均为可选层，框架在它们被禁用时仍应正常运行。
 
-## Experimental Runtime
+## 实验性运行环境
 
-`experimental/teams/` contains the multi-agent and teammate runtime:
+`experimental/teams/` 包含多 Agent 及队友运行环境：
 
-- `Task` delegation modes that depend on the team runtime
-- team orchestration, routing, work collection, approvals, and persistence
-- CLI helpers for `/team ...` and `/delegate`
+- 依赖团队运行环境的 `Task`（任务）委托模式
+- 团队编排、路由、工作收集、审批及持久化
+- CLI 辅助命令 `/team ...` 和 `/delegate`
 
-This layer is off by default. Enabling it should be an explicit choice, not part of the base narrative.
+该层默认关闭，启用它应是一个明确的选择，而非基础叙述的一部分。
 
-## Repository Map
+## 仓库目录结构
 
 ```text
-app/                 bootstrap and CLI entrypoints
-main.py              canonical root CLI entrypoint
-runtime/             canonical single-agent runtime
-tools/               tool registry, executor, and built-in tools
-extensions/          optional MCP / skills / tracing layers
-experimental/        non-canonical runtime systems
-core/                shared config, env, LLM, and base infrastructure
-tests/runtime/       runtime-focused tests
-tests/tools/         tool boundary tests
-tests/extensions/    optional extension tests
-tests/experimental/  team runtime tests
+app/                 bootstrap 及 CLI 入口
+main.py              标准根 CLI 入口点
+runtime/             标准单 Agent 运行环境
+tools/               工具注册中心、执行器及内置工具
+extensions/          可选 MCP / 技能 / 链路追踪层
+experimental/        非标准运行环境系统
+core/                共享配置、环境变量、LLM 及基础基础设施
+tests/runtime/       运行时相关测试
+tests/tools/         工具边界测试
+tests/extensions/    可选扩展测试
+tests/experimental/  团队运行时测试
 ```
 
-## Quick Start
+## 快速开始
 
-### Requirements
+### 环境要求
 
 - Python 3.10+
-- `uv` recommended
+- 推荐使用 `uv`
 
-### Setup
+### 安装
 
 ```bash
-git clone <repository-url>
+git clone <仓库地址>
 cd MyCodeAgent
 uv venv
 source .venv/bin/activate
 uv pip install -r requirements.txt
 ```
 
-### Environment
+### 环境变量
 
-Set the LLM settings your provider requires. The exact variable names depend on `core/config.py` and your chosen provider.
+设置你的 LLM 提供商所需的配置。具体变量名取决于 `core/config.py` 及你选择的提供商。
 
-Common examples:
+常见示例：
 
 ```bash
 export LLM_PROVIDER="openai"
@@ -96,44 +96,44 @@ export LLM_MODEL_ID="gpt-4.1"
 export LLM_API_KEY="..."
 ```
 
-Optional flags:
+可选配置项：
 
 ```bash
-export ENABLE_AGENT_TEAMS="true"   # experimental, off by default
+export ENABLE_AGENT_TEAMS="true"   # 实验性功能，默认关闭
 export TRACE_ENABLED="true"
 ```
 
-### Run The CLI
+### 运行 CLI
 
 ```bash
 python main.py
 ```
 
-Examples:
+示例：
 
 ```bash
 python main.py --show-raw
 python main.py --provider zhipu --model GLM-4.7
 ```
 
-## Verification
+## 验证测试
 
-Recommended tiered checks:
+推荐的分层检查：
 
 ```bash
 pytest tests/runtime tests/tools tests/extensions -q
 pytest tests/experimental -q
 ```
 
-Core-only smoke checks:
+核心冒烟测试：
 
 ```bash
 pytest tests/test_protocol_compliance.py tests/test_bash_tool.py -q
 ```
 
-## Design Constraints
+## 设计原则
 
-- Keep one canonical single-agent loop.
-- Keep optional systems behind explicit boundaries.
-- Do not let experimental runtime shape the default bootstrap path.
-- Borrow ideas from larger agents, but do not import their complexity.
+- 保持单一的标准单 Agent 循环
+- 将可选系统置于显式边界之后
+- 不允许实验性运行环境影响默认的启动路径
+- 借鉴大型 Agent 的设计思路，但绝不引入它们的复杂性

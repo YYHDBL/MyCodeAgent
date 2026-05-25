@@ -294,7 +294,7 @@ class TestCompressToolResult:
     """compress_tool_result 便捷入口测试"""
     
     def test_compress_tool_result_import(self):
-        from runtime.context import compress_tool_result
+        from runtime.observation_store import compress_tool_result
 
         result = {
             "status": "success",
