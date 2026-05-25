@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel
 
 from core.config import Config
-from runtime.context import truncate_observation
+import runtime.observation_store as observation_store
 
 MessageRole = Literal["user", "assistant", "summary", "tool"]
 
@@ -145,7 +145,7 @@ class HistoryManager:
             创建的 Message 对象（content 为截断后的 JSON）
         """
         # 使用 ObservationTruncator 截断工具结果
-        truncated_result = truncate_observation(tool_name, raw_result, project_root)
+        truncated_result = observation_store.truncate_observation(tool_name, raw_result, project_root)
         
         # 注意：先展开 metadata，再写 tool_name，确保 tool_name 不被覆盖
         msg = Message(

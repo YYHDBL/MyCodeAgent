@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from core.config import Config
-from runtime.messages import HistoryManager, Message
+from runtime.history import HistoryManager, Message
 
 
 class TestHistoryManager(unittest.TestCase):
@@ -18,7 +18,7 @@ class TestHistoryManager(unittest.TestCase):
 
     def test_append_tool_calls_truncator(self):
         hm = HistoryManager()
-        with patch("runtime.messages.truncate_observation", return_value="TRUNCATED") as mock_truncate:
+        with patch("runtime.observation_store.truncate_observation", return_value="TRUNCATED") as mock_truncate:
             msg = hm.append_tool("LS", "{\"status\":\"success\"}")
         mock_truncate.assert_called_once()
         self.assertEqual(msg.role, "tool")

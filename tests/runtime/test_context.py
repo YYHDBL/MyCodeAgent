@@ -1,5 +1,5 @@
-from runtime.context import ContextManager
-from runtime.messages import HistoryManager
+from runtime.context_provider import ContextManager
+from runtime.history import HistoryManager
 from runtime.prompt import ContextBuilder
 from runtime.session import build_session_snapshot
 

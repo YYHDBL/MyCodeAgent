@@ -12,7 +12,7 @@ from unittest.mock import patch
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from runtime.context import (
+from runtime.observation_store import (
     ObservationTruncator,
     truncate_observation,
     _get_max_lines,
@@ -222,7 +222,7 @@ class TestObservationTruncatorConfig:
         # 确保没有环境变量干扰
         with patch.dict(os.environ, {}, clear=True):
             # 重新导入以获取默认值
-            from runtime.context import (
+            from runtime.observation_store import (
                 _get_max_lines, _get_max_bytes
             )
             # 使用默认值断言（考虑可能已设置的环境变量）

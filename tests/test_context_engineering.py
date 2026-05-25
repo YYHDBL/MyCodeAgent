@@ -13,8 +13,9 @@ from unittest.mock import MagicMock, patch
 
 from core.config import Config
 from runtime.agent_host import CodeAgent
-from runtime.context import compress_tool_result, preprocess_input, extract_file_mentions
-from runtime.messages import HistoryManager
+from runtime.history import HistoryManager
+from runtime.input_preprocess import extract_file_mentions, preprocess_input
+from runtime.observation_store import compress_tool_result
 
 
 class TestToolOutputTruncation:

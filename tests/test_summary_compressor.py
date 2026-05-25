@@ -4,13 +4,13 @@ import concurrent.futures
 import unittest
 from unittest.mock import patch
 
-from runtime.context import (
+from runtime.summary import (
     create_summary_generator,
     _serialize_messages_for_summary,
     _build_summary_prompt,
 )
 from core.config import Config
-from runtime.messages import Message
+from runtime.history import Message
 
 
 class DummyLLM:
@@ -73,7 +73,7 @@ class TestSummaryCompressor(unittest.TestCase):
         config = Config(summary_timeout=1)
         gen = create_summary_generator(DummyLLM(), config=config)
         msg = Message(content="hi", role="user")
-        with patch("runtime.context.concurrent.futures.ThreadPoolExecutor", DummyExecutor):
+        with patch("runtime.summary.concurrent.futures.ThreadPoolExecutor", DummyExecutor):
             result = gen([msg])
         self.assertIsNone(result)
 
@@ -82,7 +82,7 @@ class TestSummaryCompressor(unittest.TestCase):
         gen = create_summary_generator(DummyLLM(), config=config)
         msg = Message(content="hi", role="user")
         executor = DummyExecutor()
-        with patch("runtime.context.concurrent.futures.ThreadPoolExecutor", return_value=executor):
+        with patch("runtime.summary.concurrent.futures.ThreadPoolExecutor", return_value=executor):
             result = gen([msg])
         self.assertIsNone(result)
         self.assertTrue(executor.future.cancelled)
