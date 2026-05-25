@@ -1,6 +1,12 @@
 from runtime.prompt import ContextBuilder
 
 
+def test_runtime_prompt_builder_module_exposes_context_builder():
+    from runtime.prompt_builder import ContextBuilder as CanonicalContextBuilder
+
+    assert CanonicalContextBuilder is ContextBuilder
+
+
 class _DummyToolRegistry:
     def get_disabled_tools(self):
         return []
@@ -29,4 +35,3 @@ def test_context_builder_injects_skill_prompt_and_runtime_blocks(tmp_path):
 
     assert "skill-a" in messages[0]["content"]
     assert messages[-1]["content"] == "runtime block"
-

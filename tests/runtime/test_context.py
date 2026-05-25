@@ -4,6 +4,18 @@ from runtime.prompt import ContextBuilder
 from runtime.session import build_session_snapshot
 
 
+def test_target_runtime_modules_expose_context_services():
+    from runtime.host import CodeAgent
+    from runtime.input_preprocess import preprocess_input
+    from runtime.observation_store import truncate_observation
+    from runtime.summary import create_summary_generator
+
+    assert CodeAgent.__name__ == "CodeAgent"
+    assert callable(preprocess_input)
+    assert callable(create_summary_generator)
+    assert callable(truncate_observation)
+
+
 class _DummyToolRegistry:
     def get_disabled_tools(self):
         return []

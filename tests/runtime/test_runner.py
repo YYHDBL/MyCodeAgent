@@ -3,6 +3,12 @@ import logging
 from runtime.agent_host import CodeAgent
 
 
+def test_runtime_loop_module_exposes_runner():
+    from runtime.loop import RuntimeRunner
+
+    assert RuntimeRunner.__name__ == "RuntimeRunner"
+
+
 class _FakeTraceLogger:
     def __init__(self):
         self.events = []
