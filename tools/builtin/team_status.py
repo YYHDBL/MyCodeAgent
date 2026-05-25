@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from experimental.teams.manager import TeamManager, TeamManagerError
 from prompts.tools_prompts.team_status_prompt import team_status_prompt
 from ..base import ErrorCode, Tool, ToolParameter
 
@@ -27,7 +26,7 @@ class TeamStatusTool(Tool):
         name: str = "TeamStatus",
         project_root: Optional[Path] = None,
         working_dir: Optional[Path] = None,
-        team_manager: Optional[TeamManager] = None,
+        team_manager: Optional[Any] = None,
     ):
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -71,17 +70,17 @@ class TeamStatusTool(Tool):
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
-        except TeamManagerError as exc:
+        except Exception as exc:
+            if not hasattr(exc, "code") or not hasattr(exc, "message"):
+                return self.create_error_response(
+                    error_code=ErrorCode.INTERNAL_ERROR,
+                    message=f"TeamStatus failed: {exc}",
+                    params_input=params_input,
+                    time_ms=int((time.monotonic() - start_time) * 1000),
+                )
             return self.create_error_response(
                 error_code=_map_error_code(exc.code),
                 message=exc.message,
-                params_input=params_input,
-                time_ms=int((time.monotonic() - start_time) * 1000),
-            )
-        except Exception as exc:  # pragma: no cover
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"TeamStatus failed: {exc}",
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )

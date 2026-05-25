@@ -17,18 +17,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm import HelloAgentsLLM
-from experimental.teams.turn_executor import TurnExecutor
-from runtime.messages import Message
-from runtime.context import truncate_observation
+from runtime.observation_store import truncate_observation
 from tools.registry import ToolRegistry
 from prompts.tools_prompts.task_prompt import task_prompt
 from ..base import Tool, ToolParameter, ErrorCode
 from core.env import load_env
-
-try:
-    from experimental.teams.manager import TeamManagerError
-except Exception:  # pragma: no cover
-    TeamManagerError = Exception
 
 load_env()
 
@@ -55,6 +48,18 @@ VALID_SUBAGENT_TYPES = frozenset({"general", "explore", "summary", "plan"})
 
 # Model choices
 VALID_MODELS = frozenset({"main", "light"})
+
+
+def _map_team_manager_error_code(code: str) -> ErrorCode:
+    if code == "INVALID_PARAM":
+        return ErrorCode.INVALID_PARAM
+    if code == "NOT_FOUND":
+        return ErrorCode.NOT_FOUND
+    if code == "TIMEOUT":
+        return ErrorCode.TIMEOUT
+    if code == "CONFLICT":
+        return ErrorCode.CONFLICT
+    return ErrorCode.INTERNAL_ERROR
 
 
 # =============================================================================
@@ -180,6 +185,8 @@ class SubagentRunner:
             {"role": "user", "content": task_prompt}
         ]
         
+        from experimental.teams.turn_executor import TurnExecutor
+
         executor = TurnExecutor(
             llm=self.llm,
             tool_registry=self.tool_registry,
@@ -600,27 +607,19 @@ class TaskTool(Tool):
                 time_ms=elapsed_ms,
                 extra_stats={"tool_calls": 0, "model": model_choice},
             )
-        except TeamManagerError as exc:
+        except Exception as exc:
             code = str(getattr(exc, "code", "INTERNAL_ERROR"))
-            mapped = ErrorCode.INTERNAL_ERROR
-            if code == "INVALID_PARAM":
-                mapped = ErrorCode.INVALID_PARAM
-            elif code == "NOT_FOUND":
-                mapped = ErrorCode.NOT_FOUND
-            elif code == "TIMEOUT":
-                mapped = ErrorCode.TIMEOUT
-            elif code == "CONFLICT":
-                mapped = ErrorCode.CONFLICT
+            mapped = _map_team_manager_error_code(code)
+            if mapped == ErrorCode.INTERNAL_ERROR and not hasattr(exc, "message"):
+                return self.create_error_response(
+                    error_code=ErrorCode.INTERNAL_ERROR,
+                    message=f"Persistent teammate spawn failed: {exc}",
+                    params_input=params_input,
+                    time_ms=int((time.monotonic() - start_time) * 1000),
+                )
             return self.create_error_response(
                 error_code=mapped,
                 message=str(getattr(exc, "message", str(exc))),
-                params_input=params_input,
-                time_ms=int((time.monotonic() - start_time) * 1000),
-            )
-        except Exception as exc:
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Persistent teammate spawn failed: {exc}",
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
@@ -677,27 +676,19 @@ class TaskTool(Tool):
                 time_ms=elapsed_ms,
                 extra_stats={"tool_calls": 0, "model": model_choice},
             )
-        except TeamManagerError as exc:
+        except Exception as exc:
             code = str(getattr(exc, "code", "INTERNAL_ERROR"))
-            mapped = ErrorCode.INTERNAL_ERROR
-            if code == "INVALID_PARAM":
-                mapped = ErrorCode.INVALID_PARAM
-            elif code == "NOT_FOUND":
-                mapped = ErrorCode.NOT_FOUND
-            elif code == "TIMEOUT":
-                mapped = ErrorCode.TIMEOUT
-            elif code == "CONFLICT":
-                mapped = ErrorCode.CONFLICT
+            mapped = _map_team_manager_error_code(code)
+            if mapped == ErrorCode.INTERNAL_ERROR and not hasattr(exc, "message"):
+                return self.create_error_response(
+                    error_code=ErrorCode.INTERNAL_ERROR,
+                    message=f"Parallel fanout failed: {exc}",
+                    params_input=params_input,
+                    time_ms=int((time.monotonic() - start_time) * 1000),
+                )
             return self.create_error_response(
                 error_code=mapped,
                 message=str(getattr(exc, "message", str(exc))),
-                params_input=params_input,
-                time_ms=int((time.monotonic() - start_time) * 1000),
-            )
-        except Exception as exc:
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Parallel fanout failed: {exc}",
                 params_input=params_input,
                 time_ms=int((time.monotonic() - start_time) * 1000),
             )
