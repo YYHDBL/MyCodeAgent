@@ -33,6 +33,7 @@ from extensions.mcp import register_mcp_servers, format_mcp_tools_prompt
 from extensions.skills import SkillLoader
 from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
+from tools.context import ToolExecutionContext
 from utils import setup_logger
 from runtime.loop import RuntimeRunner
 
@@ -177,7 +178,10 @@ class CodeAgent(Agent):
         self._system_messages_override: Optional[List[dict]] = None
         self.tool_executor = ToolExecutor(
             self.tool_registry,
-            permission_checker=self._is_tool_allowed_in_delegate_mode,
+            context=ToolExecutionContext(
+                permission_checker=self._is_tool_allowed_in_delegate_mode,
+                project_root=self.project_root,
+            ),
         )
         self.runner = RuntimeRunner(self)
     

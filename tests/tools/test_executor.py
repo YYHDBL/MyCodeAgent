@@ -1,4 +1,5 @@
 import json
+import inspect
 
 from tools.base import Tool, ToolParameter, ToolStatus
 from tools.registry import ToolRegistry
@@ -61,3 +62,26 @@ def test_tool_executor_preserves_registered_function_schema_path():
     assert result["status"] == ToolStatus.ERROR.value
     assert result["error"]["code"] == "INTERNAL_ERROR"
     assert any(item["function"]["name"] == "Upper" for item in schemas)
+
+
+def test_tool_executor_uses_public_registry_boundary():
+    import tools.executor
+
+    source = inspect.getsource(tools.executor.ToolExecutor)
+
+    assert "registry._" not in source
+
+
+def test_tool_execution_context_carries_permission_checker():
+    from tools.context import ToolExecutionContext
+    from tools.executor import ToolExecutor
+
+    registry = ToolRegistry()
+    registry.register_tool(EchoTool())
+    context = ToolExecutionContext(permission_checker=lambda name: name != "Echo")
+    executor = ToolExecutor(registry, context=context)
+
+    result = json.loads(executor.execute("Echo", {"value": "hello"}))
+
+    assert result["status"] == ToolStatus.ERROR.value
+    assert result["error"]["code"] == "PERMISSION_DENIED"

@@ -243,6 +243,18 @@ class ToolRegistry:
         """Persist optimistic-lock metadata from Read outputs."""
         self._cache_read_meta(result, params_input)
 
+    def inject_optimistic_lock_params(self, tool_name: str, parameters: dict) -> dict:
+        """Inject optimistic-lock parameters for write-like tools when available."""
+        return self._inject_optimistic_lock_params(tool_name, parameters)
+
+    def normalize_result(self, tool_name: str, result: Any, params_input: Any) -> dict:
+        """Normalize a raw tool return value to the common tool response protocol."""
+        return self._normalize_result(tool_name, result, params_input)
+
+    def create_internal_error_payload(self, name: str, message: str, params_input: dict) -> dict:
+        """Create a common internal-error payload."""
+        return self._create_internal_error_payload(name, message, params_input)
+
     def execute_tool(self, name: str, input_text) -> str:
         """
         执行工具

@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable, Optional
 
 from .base import ErrorCode, ToolStatus
+from .context import ToolExecutionContext
 
 
 class ToolExecutor:
@@ -15,14 +16,17 @@ class ToolExecutor:
         self,
         registry,
         permission_checker: Optional[Callable[[str], bool]] = None,
+        context: Optional[ToolExecutionContext] = None,
     ):
         self.registry = registry
-        self.permission_checker = permission_checker or (lambda _name: True)
+        self.context = context or ToolExecutionContext(
+            permission_checker=permission_checker or (lambda _name: True)
+        )
 
     def execute(self, name: str, input_text: Any) -> str:
         parameters = self.registry.prepare_parameters(input_text)
 
-        if not self.permission_checker(name):
+        if not self.context.permission_checker(name):
             payload = {
                 "status": ToolStatus.ERROR.value,
                 "data": {},
@@ -37,7 +41,7 @@ class ToolExecutor:
             return json.dumps(payload, ensure_ascii=False, indent=2)
 
         if name in {"Write", "Edit", "MultiEdit"}:
-            parameters = self.registry._inject_optimistic_lock_params(name, parameters)
+            parameters = self.registry.inject_optimistic_lock_params(name, parameters)
 
         if not self.registry.is_available(name):
             return self.registry.create_circuit_open_response(name, parameters)
@@ -49,9 +53,9 @@ class ToolExecutor:
         if tool is not None:
             try:
                 result = tool.run(parameters)
-                result_payload = self.registry._normalize_result(name, result, parameters)
+                result_payload = self.registry.normalize_result(name, result, parameters)
             except Exception as exc:
-                result_payload = self.registry._create_internal_error_payload(
+                result_payload = self.registry.create_internal_error_payload(
                     name=name,
                     message=f"执行工具 '{name}' 时发生异常: {str(exc)}",
                     params_input=parameters,
@@ -60,15 +64,15 @@ class ToolExecutor:
             try:
                 raw_input = input_text if not isinstance(input_text, dict) else input_text.get("input", input_text)
                 result = func(raw_input)
-                result_payload = self.registry._normalize_result(name, result, parameters)
+                result_payload = self.registry.normalize_result(name, result, parameters)
             except Exception as exc:
-                result_payload = self.registry._create_internal_error_payload(
+                result_payload = self.registry.create_internal_error_payload(
                     name=name,
                     message=f"执行工具 '{name}' 时发生异常: {str(exc)}",
                     params_input=parameters,
                 )
         else:
-            result_payload = self.registry._create_internal_error_payload(
+            result_payload = self.registry.create_internal_error_payload(
                 name=name,
                 message=f"未找到名为 '{name}' 的工具。",
                 params_input={},
