@@ -24,6 +24,7 @@ def test_codeagent_can_disable_skills_extension(tmp_path):
 
 def test_skills_extension_scans_project_skills_for_prompt(tmp_path):
     from extensions.skills import SkillLoader
+    from extensions.skills.prompt import format_skills_for_prompt
 
     skill_dir = tmp_path / "skills" / "demo"
     skill_dir.mkdir(parents=True)
@@ -36,4 +37,13 @@ def test_skills_extension_scans_project_skills_for_prompt(tmp_path):
     skills = loader.scan()
 
     assert [skill.name for skill in skills] == ["demo-skill"]
-    assert "- demo-skill: demo description" in loader.format_skills_for_prompt(1000)
+    assert "- demo-skill: demo description" in format_skills_for_prompt(skills, 1000)
+
+
+def test_skills_extension_exports_loader_and_prompt_surfaces():
+    from extensions.skills import SkillLoader, format_skills_for_prompt
+    from extensions.skills.loader import SkillLoader as LoaderClass
+    from extensions.skills.prompt import format_skills_for_prompt as prompt_format
+
+    assert SkillLoader is LoaderClass
+    assert format_skills_for_prompt is prompt_format

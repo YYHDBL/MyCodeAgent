@@ -80,23 +80,9 @@ class SkillLoader:
         return self._skills.get(name)
 
     def format_skills_for_prompt(self, char_budget: int) -> str:
-        skills = self.list_skills(refresh=False)
-        if not skills:
-            return "(none)"
+        from extensions.skills.prompt import format_skills_for_prompt
 
-        lines: List[str] = []
-        used = 0
-        for skill in skills:
-            line = f"- {skill.name}: {skill.description}"
-            line_len = len(line) + 1
-            if used + line_len > char_budget and lines:
-                break
-            if used + line_len > char_budget and not lines:
-                break
-            lines.append(line)
-            used += line_len
-
-        return "\n".join(lines) if lines else "(none)"
+        return format_skills_for_prompt(self.list_skills(refresh=False), char_budget)
 
     def _iter_skill_files(self) -> List[Path]:
         if not self._skills_dir.exists():

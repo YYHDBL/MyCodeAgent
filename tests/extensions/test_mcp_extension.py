@@ -45,7 +45,7 @@ def test_bootstrap_can_disable_optional_extensions(tmp_path):
 
 
 def test_mcp_extension_formats_tools_for_runtime_prompt():
-    from extensions.mcp import format_mcp_tools_prompt
+    from extensions.mcp.prompt import format_mcp_tools_prompt
 
     prompt = format_mcp_tools_prompt(
         [
@@ -63,3 +63,12 @@ def test_mcp_extension_formats_tools_for_runtime_prompt():
 
     assert "- fs_read: read a file" in prompt
     assert "path: string required - file path" in prompt
+
+
+def test_mcp_extension_exports_split_bootstrap_and_prompt_surfaces():
+    from extensions.mcp import format_mcp_tools_prompt, register_mcp_servers
+    from extensions.mcp.bootstrap import register_mcp_servers as bootstrap_register
+    from extensions.mcp.prompt import format_mcp_tools_prompt as prompt_format
+
+    assert register_mcp_servers is bootstrap_register
+    assert format_mcp_tools_prompt is prompt_format

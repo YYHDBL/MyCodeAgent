@@ -29,8 +29,10 @@ from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
-from extensions.mcp import register_mcp_servers, format_mcp_tools_prompt
+from extensions.mcp.bootstrap import register_mcp_servers
+from extensions.mcp.prompt import format_mcp_tools_prompt
 from extensions.skills import SkillLoader
+from extensions.skills.prompt import format_skills_for_prompt
 from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
 from tools.context import ToolExecutionContext
@@ -261,7 +263,7 @@ class CodeAgent(Agent):
         elif not self._skills_prompt:
             self._skill_loader.scan()
         budget = int(os.getenv("SKILLS_PROMPT_CHAR_BUDGET", "12000"))
-        self._skills_prompt = self._skill_loader.format_skills_for_prompt(budget)
+        self._skills_prompt = format_skills_for_prompt(self._skill_loader.list_skills(refresh=False), budget)
 
     def _register_mcp_tools(self) -> None:
         """可选：注册 MCP 工具（基于 MCP_SERVERS 配置）"""
