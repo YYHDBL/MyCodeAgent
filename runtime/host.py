@@ -41,7 +41,7 @@ from runtime.loop import RuntimeRunner
 
 
 def resolve_teammate_mode(requested_mode: Optional[str]):
-    """Lazy bridge so the default bootstrap path does not import experimental runtime eagerly."""
+    """Resolve teammate mode without importing experimental runtime on default boot."""
     from experimental.teams.display_mode import resolve_teammate_mode as _resolve_teammate_mode
 
     return _resolve_teammate_mode(requested_mode)

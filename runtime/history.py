@@ -483,7 +483,7 @@ class HistoryManager:
             OpenAI messages 格式的列表
         """
         logger = logging.getLogger(__name__)
-        # Function-calling mode only (no compat format)
+        # Function-calling mode only.
         strict_mode = True
         messages: List[Dict[str, Any]] = []
         
@@ -525,7 +525,7 @@ class HistoryManager:
                         except Exception as exc:
                             logger.warning("Failed to build tool_calls metadata: %s", exc)
                     else:
-                        # 兼容旧结构（单 tool）
+                        # Legacy single-tool metadata shape.
                         tool_name = (msg.metadata or {}).get("tool_name")
                         tool_call_id = (msg.metadata or {}).get("tool_call_id")
                         tool_args = (msg.metadata or {}).get("tool_args")
@@ -556,7 +556,7 @@ class HistoryManager:
                             "content": msg.content,
                         })
                     else:
-                        logger.warning("Strict tool mode active but missing tool_call_id; falling back to compat")
+                        logger.warning("Strict tool mode active but missing tool_call_id; using user observation fallback")
                         messages.append({
                             "role": "user",
                             "content": f"Observation ({tool_name}): {msg.content}",

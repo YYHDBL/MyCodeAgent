@@ -5,7 +5,7 @@
 - L1/L2 用 role=system 放在 messages 头部
 - L3 就是 messages 中的 user/assistant/tool
 - L4 当前用户输入以 role=user 追加
-- Todo recap 作为观察消息进入上下文（strict 时为 tool，compat 时为 user）
+- Todo recap 作为观察消息进入上下文（strict 时为 tool，否则为 user observation）
 
 Messages 格式：
 [
