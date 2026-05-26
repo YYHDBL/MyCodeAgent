@@ -50,6 +50,7 @@ class ContextBuilder:
     _mcp_tools_prompt: str = field(default="", init=False)
     _skills_prompt: str = field(default="", init=False)
     _runtime_system_blocks: List[str] = field(default_factory=list, init=False)
+    _cached_disabled_tools: frozenset = field(default_factory=frozenset, init=False)
 
     def build_messages(
         self,
@@ -81,7 +82,7 @@ class ContextBuilder:
         return [dict(m) for m in system_messages]
     
     def _get_system_messages(self) -> List[Dict[str, Any]]:
-        """获取系统消息（带缓存）"""
+        """获取系统消息（带缓存，熔断器状态变化时自动失效）"""
         # 检查 CODE_LAW 是否更新
         code_law = self._load_code_law()
 
@@ -90,11 +91,15 @@ class ContextBuilder:
         if self._skills_prompt == "" and self.skills_prompt:
             self._skills_prompt = self.skills_prompt
 
-        # 如果缓存有效且 CODE_LAW 未变，直接返回
+        current_disabled = self._get_disabled_tool_names()
+
+        # 如果缓存有效且 CODE_LAW 未变且熔断器状态未变，直接返回
         if self._cached_system_messages is not None:
             # 检查 CODE_LAW 是否需要更新
             has_code_law_msg = len(self._cached_system_messages) > 1
-            if (code_law and has_code_law_msg) or (not code_law and not has_code_law_msg):
+            code_law_ok = (code_law and has_code_law_msg) or (not code_law and not has_code_law_msg)
+            disabled_ok = self._cached_disabled_tools == current_disabled
+            if code_law_ok and disabled_ok:
                 return self._with_runtime_system_blocks(self._cached_system_messages)
         
         # 重新构建
@@ -126,6 +131,7 @@ class ContextBuilder:
             })
         
         self._cached_system_messages = messages
+        self._cached_disabled_tools = current_disabled
         return self._with_runtime_system_blocks(messages)
 
     def set_mcp_tools_prompt(self, prompt: str) -> None:
@@ -137,6 +143,15 @@ class ContextBuilder:
         """更新 Skills 提示，并清空 system cache。"""
         self._skills_prompt = prompt or ""
         self._cached_system_messages = None
+
+    def _get_disabled_tool_names(self) -> frozenset:
+        """获取当前被熔断禁用的工具名称集合（用于缓存失效检测）"""
+        if hasattr(self.tool_registry, "get_disabled_tools"):
+            try:
+                return frozenset(self.tool_registry.get_disabled_tools())
+            except Exception:
+                pass
+        return frozenset()
 
     def set_runtime_system_blocks(self, blocks: List[str]) -> None:
         """设置 runtime 通知块（注入 system，不污染 user 轮次）。"""
