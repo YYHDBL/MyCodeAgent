@@ -1,7 +1,13 @@
 import json
 import time
 
-from tools.orchestrator import ToolBatch, ToolCallPlan, ToolObservation, ToolOrchestrator
+from tools.orchestrator import (
+    ToolBatch,
+    ToolCallPlan,
+    ToolObservation,
+    ToolOrchestrator,
+    ToolResultBudget,
+)
 
 
 def test_tool_orchestrator_exports_v1_types():
@@ -29,6 +35,26 @@ def test_tool_orchestrator_exports_v1_types():
 
     assert batch.concurrency_safe is True
     assert batch.calls == [plan]
+
+
+def test_tool_observation_accepts_budget_metadata():
+    obs = ToolObservation(
+        tool_name="Read",
+        tool_call_id="call_1",
+        observation='{"status":"partial"}',
+        raw_observation='{"status":"success"}',
+        metadata={"budgeted": True, "replaced": True},
+    )
+
+    assert obs.raw_observation == '{"status":"success"}'
+    assert obs.metadata["budgeted"] is True
+
+
+def test_tool_result_budget_config_type():
+    budget = ToolResultBudget(max_tool_bytes=100, max_message_bytes=300)
+
+    assert budget.max_tool_bytes == 100
+    assert budget.max_message_bytes == 300
 
 
 class _TraceLogger:
@@ -73,6 +99,30 @@ class _MixedFailureHost(_TimedHost):
         if tool_input.get("explode"):
             raise RuntimeError("boom")
         return json.dumps({"status": "success", "data": {"tool": tool_name}})
+
+
+class _EmptyHost(_Host):
+    def _execute_tool(self, tool_name, tool_input):
+        return ""
+
+
+class _LargeHost(_Host):
+    def _execute_tool(self, tool_name, tool_input):
+        return json.dumps({
+            "status": "success",
+            "data": {"content": "x" * 2000},
+            "text": "large",
+        })
+
+
+class _SizedHost(_Host):
+    def _execute_tool(self, tool_name, tool_input):
+        size = tool_input["size"]
+        return json.dumps({
+            "status": "success",
+            "data": {"content": "x" * size},
+            "text": f"size {size}",
+        })
 
 
 def test_run_serial_executes_one_tool_and_returns_observation():
@@ -246,3 +296,89 @@ def test_run_keeps_other_safe_tools_running_when_one_fails():
     assert payloads[0]["error"]["code"] == "EXECUTION_ERROR"
     assert payloads[1]["status"] == "success"
     assert len(host.calls) == 2
+
+
+def test_run_fills_empty_tool_result_with_placeholder():
+    host = _EmptyHost()
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run(
+        [{"id": "call_1", "name": "Read", "arguments": "{}"}],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    payload = json.loads(result[0].observation)
+
+    assert payload["status"] == "success"
+    assert "completed with no output" in payload["text"]
+    assert result[0].metadata["reason"] == "empty_result"
+
+
+def test_run_applies_single_tool_result_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", "200")
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", "10000")
+
+    host = _LargeHost()
+    host.project_root = str(tmp_path)
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run(
+        [{"id": "call_1", "name": "Read", "arguments": "{}"}],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    payload = json.loads(result[0].observation)
+
+    assert payload["status"] == "partial"
+    assert payload["data"]["truncated"] is True
+    assert result[0].raw_observation is not None
+    assert result[0].metadata["replaced"] is True
+    assert result[0].metadata["reason"] == "single_tool_budget"
+
+
+def test_run_applies_aggregate_message_budget_largest_first(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", "5000")
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", "1200")
+
+    host = _SizedHost()
+    host.project_root = str(tmp_path)
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run(
+        [
+            {"id": "call_1", "name": "Read", "arguments": '{"size": 300}'},
+            {"id": "call_2", "name": "Grep", "arguments": '{"size": 1500}'},
+            {"id": "call_3", "name": "Glob", "arguments": '{"size": 400}'},
+        ],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    assert [obs.tool_call_id for obs in result] == ["call_1", "call_2", "call_3"]
+    assert result[1].metadata["reason"] == "aggregate_message_budget"
+    assert result[1].metadata["replaced"] is True
+
+
+def test_budget_does_not_restore_or_reprocess_replaced_result(tmp_path, monkeypatch):
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", "600")
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", "500")
+
+    host = _SizedHost()
+    host.project_root = str(tmp_path)
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run(
+        [
+            {"id": "call_1", "name": "Read", "arguments": '{"size": 1500}'},
+            {"id": "call_2", "name": "Grep", "arguments": '{"size": 300}'},
+        ],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    assert result[0].metadata["reason"] == "single_tool_budget"
+    assert result[0].metadata["replaced"] is True
+    assert result[0].raw_observation is not None
+    assert result[1].metadata["reason"] == "aggregate_message_budget"

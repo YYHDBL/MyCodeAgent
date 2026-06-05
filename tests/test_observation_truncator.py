@@ -230,6 +230,24 @@ class TestObservationTruncatorConfig:
             assert _get_max_bytes() >= 10000  # 至少 10KB
 
 
+def test_force_truncate_observation_persists_and_replaces_small_output(tmp_path):
+    from runtime.observation_store import force_truncate_observation
+
+    raw = json.dumps({
+        "status": "success",
+        "data": {"content": "x" * 1000},
+        "text": "small but selected by aggregate budget",
+    })
+
+    output = force_truncate_observation("Read", raw, str(tmp_path), max_preview_bytes=120)
+    parsed = json.loads(output)
+
+    assert parsed["status"] == "partial"
+    assert parsed["data"]["truncated"] is True
+    assert "full_output_path" in parsed["data"]["truncation"]
+    assert len(output.encode("utf-8")) < len(raw.encode("utf-8"))
+
+
 class TestObservationTruncatorEdgeCases:
     """边界情况测试"""
     

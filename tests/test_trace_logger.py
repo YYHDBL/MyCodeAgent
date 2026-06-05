@@ -125,7 +125,7 @@ def test_trace_logger_enabled():
     print(f"\n✅ Enabled mode test passed")
     print(f"✅ Trace saved to: {logger._filepath}")
     
-    return logger._filepath
+    assert logger._filepath is not None
 
 
 def test_trace_logger_with_error():
@@ -157,7 +157,7 @@ def test_trace_logger_with_error():
     print(f"✅ Error test passed")
     print(f"✅ Trace saved to: {logger._filepath}")
     
-    return logger._filepath
+    assert logger._filepath is not None
 
 
 def verify_jsonl_file(filepath: Path):

@@ -10,12 +10,19 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
-
 @dataclass(frozen=True)
 class ToolObservation:
     tool_name: str
     tool_call_id: str
     observation: str
+    raw_observation: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ToolResultBudget:
+    max_tool_bytes: int
+    max_message_bytes: int
 
 
 @dataclass(frozen=True)
@@ -65,7 +72,8 @@ class ToolOrchestrator:
             self._log_batch_end(trace_logger, step, batch_index, batch, batch_observations)
             observations.extend(batch_observations)
 
-        return observations
+        observations = [self._normalize_empty_result(obs) for obs in observations]
+        return self._apply_result_budget(observations, step=step, trace_logger=trace_logger)
 
     def run_serial(
         self,
@@ -252,6 +260,207 @@ class ToolOrchestrator:
             return max(1, int(raw_value))
         except ValueError:
             return 4
+
+    def _get_result_budget(self) -> ToolResultBudget:
+        def _read_env(name: str, default: int) -> int:
+            try:
+                return max(1, int(os.getenv(name, str(default))))
+            except ValueError:
+                return default
+
+        return ToolResultBudget(
+            max_tool_bytes=_read_env("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", 50000),
+            max_message_bytes=_read_env("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", 200000),
+        )
+
+    def _byte_len(self, text: str) -> int:
+        return len((text or "").encode("utf-8"))
+
+    def _apply_result_budget(
+        self,
+        observations: list[ToolObservation],
+        *,
+        step: int,
+        trace_logger,
+    ) -> list[ToolObservation]:
+        budget = self._get_result_budget()
+        trace_logger.log_event(
+            "tool_result_budget_start",
+            {
+                "tool_count": len(observations),
+                "max_tool_bytes": budget.max_tool_bytes,
+                "max_message_bytes": budget.max_message_bytes,
+            },
+            step=step,
+        )
+        budgeted: list[ToolObservation] = []
+        replaced_count = 0
+        raw_total_bytes = 0
+        visible_total_bytes = 0
+
+        for obs in observations:
+            raw_text = obs.raw_observation if obs.raw_observation is not None else obs.observation
+            raw_bytes = self._byte_len(raw_text)
+            raw_total_bytes += raw_bytes
+            next_obs = obs
+            if raw_bytes > budget.max_tool_bytes:
+                from runtime.observation_store import force_truncate_observation
+
+                compressed = force_truncate_observation(
+                    obs.tool_name,
+                    raw_text,
+                    self.host.project_root,
+                )
+                visible_bytes = self._byte_len(compressed)
+                metadata = {
+                    **(obs.metadata or {}),
+                    "budgeted": True,
+                    "replaced": True,
+                    "reason": "single_tool_budget",
+                    "raw_bytes": raw_bytes,
+                    "visible_bytes": visible_bytes,
+                }
+                try:
+                    parsed = json.loads(compressed)
+                    full_output_path = (
+                        parsed.get("data", {})
+                        .get("truncation", {})
+                        .get("full_output_path")
+                    )
+                    if full_output_path:
+                        metadata["full_output_path"] = full_output_path
+                except json.JSONDecodeError:
+                    pass
+                next_obs = ToolObservation(
+                    tool_name=obs.tool_name,
+                    tool_call_id=obs.tool_call_id,
+                    observation=compressed,
+                    raw_observation=raw_text,
+                    metadata=metadata,
+                )
+                replaced_count += 1
+                trace_logger.log_event(
+                    "tool_result_budget_item",
+                    {
+                        "tool_call_id": obs.tool_call_id,
+                        "reason": "single_tool_budget",
+                        "replaced": True,
+                        "raw_bytes": raw_bytes,
+                        "visible_bytes": visible_bytes,
+                    },
+                    step=step,
+                )
+            budgeted.append(next_obs)
+            visible_total_bytes += self._byte_len(next_obs.observation)
+
+        if visible_total_bytes > budget.max_message_bytes:
+            indexed = list(enumerate(budgeted))
+            indexed.sort(key=lambda item: self._byte_len(item[1].observation), reverse=True)
+            for idx, obs in indexed:
+                if visible_total_bytes <= budget.max_message_bytes:
+                    break
+                if (obs.metadata or {}).get("replaced") is True:
+                    continue
+                from runtime.observation_store import force_truncate_observation
+
+                source_text = obs.raw_observation if obs.raw_observation is not None else obs.observation
+                previous_visible = self._byte_len(obs.observation)
+                compressed = force_truncate_observation(
+                    obs.tool_name,
+                    source_text,
+                    self.host.project_root,
+                )
+                visible_bytes = self._byte_len(compressed)
+                metadata = {
+                    **(obs.metadata or {}),
+                    "budgeted": True,
+                    "replaced": True,
+                    "reason": "aggregate_message_budget",
+                    "raw_bytes": self._byte_len(source_text),
+                    "visible_bytes": visible_bytes,
+                }
+                try:
+                    parsed = json.loads(compressed)
+                    full_output_path = (
+                        parsed.get("data", {})
+                        .get("truncation", {})
+                        .get("full_output_path")
+                    )
+                    if full_output_path:
+                        metadata["full_output_path"] = full_output_path
+                except json.JSONDecodeError:
+                    pass
+                budgeted[idx] = ToolObservation(
+                    tool_name=obs.tool_name,
+                    tool_call_id=obs.tool_call_id,
+                    observation=compressed,
+                    raw_observation=source_text,
+                    metadata=metadata,
+                )
+                visible_total_bytes = visible_total_bytes - previous_visible + visible_bytes
+                replaced_count += 1
+                trace_logger.log_event(
+                    "tool_result_budget_item",
+                    {
+                        "tool_call_id": obs.tool_call_id,
+                        "reason": "aggregate_message_budget",
+                        "replaced": True,
+                        "raw_bytes": self._byte_len(source_text),
+                        "visible_bytes": visible_bytes,
+                    },
+                    step=step,
+                )
+
+        trace_logger.log_event(
+            "tool_result_budget_end",
+            {
+                "tool_count": len(observations),
+                "max_tool_bytes": budget.max_tool_bytes,
+                "max_message_bytes": budget.max_message_bytes,
+                "raw_total_bytes": raw_total_bytes,
+                "visible_total_bytes": visible_total_bytes,
+                "replaced_count": replaced_count,
+            },
+            step=step,
+        )
+        return budgeted
+
+    def _normalize_empty_result(self, obs: ToolObservation) -> ToolObservation:
+        if not self._is_empty_observation(obs.observation):
+            return obs
+
+        payload = {
+            "status": "success",
+            "data": {},
+            "text": f"{obs.tool_name} completed with no output.",
+        }
+        metadata = {**(obs.metadata or {}), "budgeted": True, "reason": "empty_result", "replaced": False}
+        return ToolObservation(
+            tool_name=obs.tool_name,
+            tool_call_id=obs.tool_call_id,
+            observation=json.dumps(payload, ensure_ascii=False),
+            raw_observation=obs.observation,
+            metadata=metadata,
+        )
+
+    def _is_empty_observation(self, text: str) -> bool:
+        if not text or not str(text).strip():
+            return True
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(parsed, dict):
+            return False
+        if parsed.get("error"):
+            return False
+        payload_text = parsed.get("text")
+        payload_data = parsed.get("data")
+        if isinstance(payload_text, str) and payload_text.strip():
+            return False
+        if payload_data:
+            return False
+        return True
 
     def _log_plan(self, trace_logger, step: int, batches: list[ToolBatch]) -> None:
         trace_logger.log_event(

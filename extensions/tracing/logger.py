@@ -14,7 +14,7 @@ import logging
 import os
 import threading
 import traceback
-from datetime import datetime
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -24,6 +24,11 @@ from core.env import load_env
 load_env()
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return a timezone-aware UTC timestamp."""
+    return datetime.now(UTC)
 
 
 class TraceLogger:
@@ -124,7 +129,7 @@ class TraceLogger:
             safe_payload = self._sanitizer.sanitize(payload)
             # 构建事件对象
             event_obj = {
-                "ts": datetime.utcnow().isoformat() + "Z",
+                "ts": _utc_now().isoformat().replace("+00:00", "Z"),
                 "session_id": self.session_id,
                 "step": step,
                 "event": event,
@@ -221,7 +226,7 @@ class TraceLogger:
     def _write_html_header(self):
         if not self._html_handle:
             return
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = _utc_now().strftime("%Y-%m-%d %H:%M:%S UTC")
         title = f"Trace Session: {self.session_id}"
         self._html_handle.write("""<!doctype html>
 <html lang="en">

@@ -95,6 +95,33 @@ class ObservationTruncator:
 
         # 执行截断
         return self._do_truncate(tool_name, raw_result, preview_source, parsed, content_size)
+
+    def force_truncate(
+        self,
+        tool_name: str,
+        raw_result: str,
+        max_preview_bytes: int | None = None,
+    ) -> str:
+        """强制压缩并落盘，即使单条结果未超默认阈值。"""
+        parsed = None
+        try:
+            parsed = json.loads(raw_result)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse tool result as JSON; treating as plain text")
+
+        preview_source = self._normalize_text(raw_result)
+        original_size = self._get_content_size(preview_source)
+        preview_bytes = max_preview_bytes if max_preview_bytes is not None else min(512, _get_max_bytes())
+        preview_bytes = max(preview_bytes, 64)
+        return self._do_truncate(
+            tool_name,
+            raw_result,
+            preview_source,
+            parsed,
+            original_size,
+            force_max_lines=min(original_size["lines"], _get_head_tail_lines()),
+            force_max_bytes=preview_bytes,
+        )
     
     def _should_skip(self, result: Dict[str, Any]) -> bool:
         """检查是否应跳过截断"""
@@ -123,6 +150,8 @@ class ObservationTruncator:
         preview_source: str,
         parsed_result: Optional[Dict[str, Any]],
         original_size: Dict[str, int],
+        force_max_lines: Optional[int] = None,
+        force_max_bytes: Optional[int] = None,
     ) -> str:
         """
         执行截断操作
@@ -131,8 +160,8 @@ class ObservationTruncator:
         2. 截断内容
         3. 构建新的响应
         """
-        max_lines = _get_max_lines()
-        max_bytes = _get_max_bytes()
+        max_lines = force_max_lines if force_max_lines is not None else _get_max_lines()
+        max_bytes = force_max_bytes if force_max_bytes is not None else _get_max_bytes()
         direction = _get_truncate_direction()
         head_tail_lines = _get_head_tail_lines()
         
@@ -367,6 +396,17 @@ def truncate_observation(
     return truncator.truncate(tool_name, raw_result)
 
 
+def force_truncate_observation(
+    tool_name: str,
+    raw_result: str,
+    project_root: Optional[str] = None,
+    max_preview_bytes: Optional[int] = None,
+) -> str:
+    """强制压缩工具输出的便捷函数。"""
+    truncator = get_truncator(project_root)
+    return truncator.force_truncate(tool_name, raw_result, max_preview_bytes)
+
+
 def compress_tool_result(tool_name: str, raw_result: str) -> str:
     """
     Convenience alias for the runtime observation truncation path.
@@ -378,6 +418,7 @@ def compress_tool_result(tool_name: str, raw_result: str) -> str:
 __all__ = [
     "ObservationTruncator",
     "compress_tool_result",
+    "force_truncate_observation",
     "get_truncator",
     "truncate_observation",
 ]

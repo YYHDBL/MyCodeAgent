@@ -382,6 +382,21 @@ class _RecordingOrchestrator:
         raise AssertionError("runtime should use run(), not run_serial()")
 
 
+class _BudgetedOrchestrator:
+    def run(self, tool_calls, *, step, trace_logger):
+        from tools.orchestrator import ToolObservation
+
+        return [
+            ToolObservation(
+                tool_name="Read",
+                tool_call_id="call_1",
+                observation='{"status":"partial"}',
+                raw_observation='{"status":"success"}',
+                metadata={"budgeted": True, "reason": "single_tool_budget"},
+            )
+        ]
+
+
 def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     from runtime.loop import RuntimeRunner
 
@@ -567,6 +582,21 @@ def test_runtime_runner_preserves_execution_error_tool_observation():
         event[0] == "error" and event[2]["stage"] == "tool_execution"
         for event in host.trace_logger.events
     )
+
+
+def test_runtime_runner_passes_budget_metadata_to_history():
+    from runtime.loop import RuntimeRunner
+
+    host = _ToolThenFinalHost()
+    host.tool_orchestrator = _BudgetedOrchestrator()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("hello world", show_raw=False)
+
+    assert result == "tool done"
+    tool_message = host.history_manager.messages[-2]
+    assert tool_message["metadata"]["budgeted"] is True
+    assert tool_message["metadata"]["reason"] == "single_tool_budget"
 
 
 def test_runtime_runner_emits_max_steps_terminal():

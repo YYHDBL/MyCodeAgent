@@ -25,6 +25,20 @@ class TestHistoryManager(unittest.TestCase):
         self.assertEqual(msg.content, "TRUNCATED")
         self.assertEqual(msg.metadata.get("tool_name"), "LS")
 
+    def test_append_tool_skips_truncation_when_observation_already_budgeted(self):
+        hm = HistoryManager()
+
+        with patch("runtime.observation_store.truncate_observation", return_value="TRUNCATED") as mock_truncate:
+            msg = hm.append_tool(
+                "Read",
+                '{"status":"partial"}',
+                metadata={"tool_call_id": "call_1", "budgeted": True},
+                project_root=".",
+            )
+
+        self.assertEqual(msg.content, '{"status":"partial"}')
+        mock_truncate.assert_not_called()
+
     def test_append_summary(self):
         hm = HistoryManager()
         msg = hm.append_summary("summary text")

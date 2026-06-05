@@ -411,10 +411,15 @@ class RuntimeRunner:
                         trace_logger=trace_logger,
                     )
                 for obs in observations:
+                    obs_metadata = getattr(obs, "metadata", None) or {}
                     host.history_manager.append_tool(
                         tool_name=obs.tool_name,
                         raw_result=obs.observation,
-                        metadata={"step": step, "tool_call_id": obs.tool_call_id},
+                        metadata={
+                            "step": step,
+                            "tool_call_id": obs.tool_call_id,
+                            **obs_metadata,
+                        },
                         project_root=host.project_root,
                     )
                     host._log_message_write(

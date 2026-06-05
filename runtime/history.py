@@ -144,15 +144,18 @@ class HistoryManager:
         Returns:
             创建的 Message 对象（content 为截断后的 JSON）
         """
-        # 使用 ObservationTruncator 截断工具结果
-        truncated_result = observation_store.truncate_observation(tool_name, raw_result, project_root)
+        metadata = metadata or {}
+        if metadata.get("budgeted") is True:
+            truncated_result = raw_result
+        else:
+            truncated_result = observation_store.truncate_observation(tool_name, raw_result, project_root)
         
         # 注意：先展开 metadata，再写 tool_name，确保 tool_name 不被覆盖
         msg = Message(
             content=truncated_result,
             role="tool",
             metadata={
-                **(metadata or {}),
+                **metadata,
                 "tool_name": tool_name,
             },
         )
