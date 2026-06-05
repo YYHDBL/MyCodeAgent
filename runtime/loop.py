@@ -390,15 +390,22 @@ class RuntimeRunner:
                     step,
                 )
                 if getattr(host, "tool_orchestrator", None) is not None:
-                    observations = host.tool_orchestrator.run_serial(
-                        tool_calls,
-                        step=step,
-                        trace_logger=trace_logger,
-                    )
+                    if hasattr(host.tool_orchestrator, "run"):
+                        observations = host.tool_orchestrator.run(
+                            tool_calls,
+                            step=step,
+                            trace_logger=trace_logger,
+                        )
+                    else:
+                        observations = host.tool_orchestrator.run_serial(
+                            tool_calls,
+                            step=step,
+                            trace_logger=trace_logger,
+                        )
                 else:
                     from tools.orchestrator import ToolOrchestrator
 
-                    observations = ToolOrchestrator(host).run_serial(
+                    observations = ToolOrchestrator(host).run(
                         tool_calls,
                         step=step,
                         trace_logger=trace_logger,

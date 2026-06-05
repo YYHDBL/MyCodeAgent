@@ -364,8 +364,8 @@ class _RecordingOrchestrator:
     def __init__(self):
         self.calls = []
 
-    def run_serial(self, tool_calls, *, step, trace_logger):
-        self.calls.append((tool_calls, step))
+    def run(self, tool_calls, *, step, trace_logger):
+        self.calls.append(("run", tool_calls, step))
         return [
             type(
                 "Obs",
@@ -377,6 +377,9 @@ class _RecordingOrchestrator:
                 },
             )()
         ]
+
+    def run_serial(self, tool_calls, *, step, trace_logger):
+        raise AssertionError("runtime should use run(), not run_serial()")
 
 
 def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
@@ -523,6 +526,7 @@ def test_runtime_runner_delegates_tool_execution_to_orchestrator():
 
     assert result == "tool done"
     assert host.tool_orchestrator.calls
+    assert host.tool_orchestrator.calls[0][0] == "run"
     assert host.history_manager.messages[-2]["role"] == "tool"
 
 
