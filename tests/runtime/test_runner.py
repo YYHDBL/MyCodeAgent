@@ -52,6 +52,18 @@ class _FakeHistoryManager:
     def should_compress(self, pending_input):
         return False
 
+    def get_messages(self):
+        from runtime.history import Message
+
+        return [
+            Message(
+                content=message["content"],
+                role=message["role"],
+                metadata=message.get("metadata", {}),
+            )
+            for message in self.messages
+        ]
+
     def to_messages(self):
         return list(self.messages)
 
@@ -82,12 +94,16 @@ class _FakeContextBuilder:
     def set_skills_prompt(self, prompt):
         self.skills_prompt = prompt
 
+    def get_system_messages(self):
+        return [{"role": "system", "content": "system"}]
+
     def build_messages(self, history_messages):
         return [{"role": "system", "content": "system"}] + list(history_messages)
 
 
 class _FakeHost:
     def __init__(self):
+        from runtime.context import ContextEngine
         from tools.orchestrator import ToolOrchestrator
 
         self.console_progress = False
@@ -95,6 +111,7 @@ class _FakeHost:
         self.logger = logging.getLogger("test.runtime.loop")
         self._skills_prompt = ""
         self.context_builder = _FakeContextBuilder()
+        self.context_engine = ContextEngine(self.context_builder)
         self.trace_logger = _FakeTraceLogger()
         self.history_manager = _FakeHistoryManager()
         self._run_id = 0
@@ -417,6 +434,19 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
         event[0] == "terminal" and event[2]["reason"] == "completed"
         for event in host.trace_logger.events
     )
+
+
+def test_runtime_runner_builds_model_view_through_context_engine():
+    from runtime.loop import RuntimeRunner
+
+    host = _FakeHost()
+    runner = RuntimeRunner(host)
+
+    runner.run("hello world", show_raw=False)
+
+    assert any(event[0] == "model_view_build" for event in host.trace_logger.events)
+    assert host.llm_calls[0]["messages"][0] == {"role": "system", "content": "system"}
+    assert host.llm_calls[0]["messages"][1]["role"] == "user"
 
 
 def test_runtime_runner_preprocesses_file_mentions_before_history_append():

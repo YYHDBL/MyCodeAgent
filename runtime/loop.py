@@ -228,8 +228,12 @@ class RuntimeRunner:
                         step=step,
                     )
 
-                    compressed_history = host.history_manager.to_messages()
-                    final_context = host.context_builder.build_messages(compressed_history)
+                    final_context = host.context_engine.build_model_view(
+                        history_manager=host.history_manager,
+                        pending_input=pending_input,
+                        step=step,
+                        trace_logger=trace_logger,
+                    ).messages
                     trace_logger.log_event(
                         "history_compression_final_context",
                         {"message_count": len(final_context), "messages": final_context},
@@ -243,14 +247,24 @@ class RuntimeRunner:
                         host.logger.debug("压缩完成，当前轮次数: %d", rounds_after)
                         host._print_context_preview(final_context)
 
-            history_messages = host.history_manager.to_messages()
-            messages = host._build_messages(history_messages)
+            model_view = host.context_engine.build_model_view(
+                history_manager=host.history_manager,
+                pending_input=pending_input,
+                step=step,
+                trace_logger=trace_logger,
+            )
+            messages = model_view.messages
             base_messages = messages
             state = state.update(step=step, messages=messages)
 
             trace_logger.log_event(
                 "context_build",
-                {"message_count": len(messages), "history_count": len(history_messages)},
+                {
+                    "message_count": len(messages),
+                    "history_count": model_view.history_message_count,
+                    "source_message_count": model_view.source_message_count,
+                    "projection_mode": model_view.projection_mode,
+                },
                 step=step,
             )
 

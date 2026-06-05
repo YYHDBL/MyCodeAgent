@@ -12,6 +12,7 @@ from core.config import Config
 from core.env import load_env
 
 load_env()
+from runtime.context import ContextEngine
 from runtime.history import HistoryManager, Message
 from runtime.prompt_builder import ContextBuilder
 from runtime.input_preprocess import preprocess_input
@@ -173,6 +174,7 @@ class CodeAgent(Agent):
             mcp_tools_prompt=self._mcp_tools_prompt,
             skills_prompt=self._skills_prompt,
         )
+        self.context_engine = ContextEngine(self.context_builder)
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
         self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
