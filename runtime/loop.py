@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import traceback as tb
 import uuid
 from typing import Any
 
 from runtime.input_preprocess import preprocess_input
+from runtime.state import LoopState, TerminalReason, TransitionReason
 
 
 class RuntimeRunner:
@@ -15,6 +14,51 @@ class RuntimeRunner:
 
     def __init__(self, host: Any):
         self.host = host
+
+    def _transition(
+        self,
+        state: LoopState,
+        reason: TransitionReason,
+        trace_logger,
+        *,
+        step: int | None = None,
+        details: dict[str, Any] | None = None,
+        **changes: Any,
+    ) -> LoopState:
+        next_step = step if step is not None else state.step
+        state_field_names = set(LoopState.__dataclass_fields__)
+        state_changes = {key: value for key, value in changes.items() if key in state_field_names}
+        detail_changes = {key: value for key, value in changes.items() if key not in state_field_names}
+        payload_details = details if details is not None else detail_changes
+        next_state = state.next(reason, step=next_step, details=payload_details, **state_changes)
+        if trace_logger:
+            trace_logger.log_event(
+                "state_transition",
+                {
+                    "step": next_state.step,
+                    "turn_count": next_state.turn_count,
+                    "reason": reason.value,
+                    "message_count": len(next_state.messages),
+                    "details": payload_details,
+                },
+                step=step if step is not None else next_state.step,
+            )
+        return next_state
+
+    def _terminal(
+        self,
+        reason: TerminalReason,
+        trace_logger,
+        *,
+        step: int = 0,
+        **details: Any,
+    ) -> None:
+        if trace_logger:
+            trace_logger.log_event(
+                "terminal",
+                {"reason": reason.value, "details": details},
+                step=step,
+            )
 
     def run(self, input_text: str, **kwargs) -> str:
         host = self.host
@@ -96,6 +140,19 @@ class RuntimeRunner:
     def _react_loop(self, pending_input: str, show_raw: bool, trace_logger) -> str:
         host = self.host
         tool_choice = "auto"
+        state = LoopState(
+            messages=[],
+            step=1,
+            turn_count=1,
+            tool_choice=tool_choice,
+        )
+        state = self._transition(
+            state,
+            TransitionReason.USER_INPUT,
+            trace_logger,
+            step=0,
+            pending_input_len=len(pending_input or ""),
+        )
 
         for step in range(1, host.max_steps + 1):
             tools_schema = host._get_openai_tools_for_current_mode()
@@ -147,6 +204,17 @@ class RuntimeRunner:
                 if compressed:
                     rounds_after = host.history_manager.get_rounds_count()
                     messages_after = host.history_manager.get_message_count()
+                    state = self._transition(
+                        state,
+                        TransitionReason.CONTEXT_COMPACTED,
+                        trace_logger,
+                        step=step,
+                        compact_attempted=True,
+                        details={
+                            "messages_before": messages_before,
+                            "messages_after": messages_after,
+                        },
+                    )
 
                     trace_logger.log_event(
                         "history_compression_completed",
@@ -178,6 +246,7 @@ class RuntimeRunner:
             history_messages = host.history_manager.to_messages()
             messages = host._build_messages(history_messages)
             base_messages = messages
+            state = state.update(step=step, messages=messages)
 
             trace_logger.log_event(
                 "context_build",
@@ -232,6 +301,15 @@ class RuntimeRunner:
                     empty_retry_used = True
                     hint = "上次 content 为空且未返回 tool_calls，请在 content 中回复最终答案，或使用工具调用。"
                     messages = base_messages + [{"role": "user", "content": hint}]
+                    state = self._transition(
+                        state,
+                        TransitionReason.MODEL_EMPTY_RETRY,
+                        trace_logger,
+                        step=step,
+                        empty_response_retry_used=True,
+                        last_response_meta=response_meta,
+                        details={"finish_reason": response_meta.get("finish_reason")},
+                    )
                     trace_logger.log_event(
                         "empty_response_retry",
                         {
@@ -252,6 +330,20 @@ class RuntimeRunner:
                     host._console("❌ LLM返回空响应")
                 else:
                     host.logger.error("LLM返回空响应")
+                state = self._transition(
+                    state,
+                    TransitionReason.MODEL_EMPTY_FAILED,
+                    trace_logger,
+                    step=step,
+                    last_response_meta=response_meta,
+                    details={"finish_reason": response_meta.get("finish_reason")},
+                )
+                self._terminal(
+                    TerminalReason.EMPTY_RESPONSE_FAILED,
+                    trace_logger,
+                    step=step,
+                    finish_reason=response_meta.get("finish_reason"),
+                )
                 trace_logger.log_event(
                     "error",
                     {
@@ -262,12 +354,21 @@ class RuntimeRunner:
                     },
                     step=step,
                 )
-                break
+                return "抱歉，我无法在限定步数内完成这个任务。"
 
             if not tool_calls and (not response_text or not str(response_text).strip()):
                 break
 
             if tool_calls:
+                state = self._transition(
+                    state,
+                    TransitionReason.MODEL_RETURNED_TOOL_CALLS,
+                    trace_logger,
+                    step=step,
+                    last_tool_calls=tool_calls,
+                    last_response_meta=response_meta,
+                    details={"tool_count": len(tool_calls)},
+                )
                 for call in tool_calls:
                     if not call.get("id"):
                         call["id"] = f"call_{uuid.uuid4().hex}"
@@ -288,100 +389,53 @@ class RuntimeRunner:
                     {"action_type": "tool_call", "tool_calls": tool_calls},
                     step,
                 )
+                if getattr(host, "tool_orchestrator", None) is not None:
+                    observations = host.tool_orchestrator.run_serial(
+                        tool_calls,
+                        step=step,
+                        trace_logger=trace_logger,
+                    )
+                else:
+                    from tools.orchestrator import ToolOrchestrator
 
-                for call in tool_calls:
-                    tool_name = call.get("name") or "unknown_tool"
-                    tool_call_id = call.get("id") or f"call_{uuid.uuid4().hex}"
-                    raw_args = call.get("arguments") or {}
-                    tool_input, parse_err = host._ensure_json_input(raw_args)
-                    if parse_err:
-                        error_result = {
-                            "status": "error",
-                            "error": {
-                                "code": "INVALID_PARAM",
-                                "message": f"Tool arguments parse error: {parse_err}",
-                            },
-                            "data": {},
-                        }
-                        observation = json.dumps(error_result, ensure_ascii=False)
-                        trace_logger.log_event(
-                            "error",
-                            {
-                                "stage": "tool_call_parse",
-                                "error_code": "INVALID_PARAM",
-                                "message": str(parse_err),
-                                "tool": tool_name,
-                                "tool_call_id": tool_call_id,
-                            },
-                            step=step,
-                        )
-                    else:
-                        trace_logger.log_event(
-                            "tool_call",
-                            {"tool": tool_name, "args": tool_input, "tool_call_id": tool_call_id},
-                            step=step,
-                        )
-                        if host.console_verbose:
-                            host._console(f"\n🎬 Action: {tool_name}[{tool_input}]\n")
-                        elif host.logger.isEnabledFor(10):
-                            host.logger.debug("Action: %s %s", tool_name, tool_input)
-                        try:
-                            if hasattr(host, "tool_executor") and host.tool_executor is not None:
-                                observation = host.tool_executor.execute(tool_name, tool_input)
-                            else:
-                                observation = host._execute_tool(tool_name, tool_input)
-                            try:
-                                result_obj = json.loads(observation)
-                                trace_logger.log_event(
-                                    "tool_result",
-                                    {"tool": tool_name, "result": result_obj},
-                                    step=step,
-                                )
-                            except json.JSONDecodeError:
-                                trace_logger.log_event(
-                                    "tool_result",
-                                    {"tool": tool_name, "result": {"text": observation}},
-                                    step=step,
-                                )
-                        except Exception as exc:
-                            error_result = {
-                                "status": "error",
-                                "error": {"code": "EXECUTION_ERROR", "message": str(exc)},
-                                "data": {},
-                            }
-                            observation = json.dumps(error_result, ensure_ascii=False)
-                            trace_logger.log_event(
-                                "error",
-                                {
-                                    "stage": "tool_execution",
-                                    "error_code": "EXECUTION_ERROR",
-                                    "message": str(exc),
-                                    "tool": tool_name,
-                                    "traceback": tb.format_exc(),
-                                },
-                                step=step,
-                            )
-
+                    observations = ToolOrchestrator(host).run_serial(
+                        tool_calls,
+                        step=step,
+                        trace_logger=trace_logger,
+                    )
+                for obs in observations:
                     host.history_manager.append_tool(
-                        tool_name=tool_name,
-                        raw_result=observation,
-                        metadata={"step": step, "tool_call_id": tool_call_id},
+                        tool_name=obs.tool_name,
+                        raw_result=obs.observation,
+                        metadata={"step": step, "tool_call_id": obs.tool_call_id},
                         project_root=host.project_root,
                     )
                     host._log_message_write(
                         trace_logger,
                         "tool",
-                        observation,
-                        {"tool_name": tool_name, "tool_call_id": tool_call_id},
+                        obs.observation,
+                        {"tool_name": obs.tool_name, "tool_call_id": obs.tool_call_id},
                         step,
                     )
 
                     if host.console_verbose:
-                        display_obs = observation[:300] + "..." if len(observation) > 300 else observation
+                        display_obs = (
+                            obs.observation[:300] + "..." if len(obs.observation) > 300 else obs.observation
+                        )
                         host._console(f"\n👀 Observation: {display_obs}\n")
                     elif host.logger.isEnabledFor(10):
-                        display_obs = observation[:300] + "..." if len(observation) > 300 else observation
+                        display_obs = (
+                            obs.observation[:300] + "..." if len(obs.observation) > 300 else obs.observation
+                        )
                         host.logger.debug("Observation: %s", display_obs)
+                state = self._transition(
+                    state,
+                    TransitionReason.TOOLS_EXECUTED,
+                    trace_logger,
+                    step=step,
+                    last_tool_calls=tool_calls,
+                    details={"tool_count": len(tool_calls)},
+                )
                 continue
 
             final_text = str(response_text).strip()
@@ -397,7 +451,34 @@ class RuntimeRunner:
                 {"action_type": "final"},
                 step,
             )
+            state = self._transition(
+                state,
+                TransitionReason.MODEL_RETURNED_FINAL,
+                trace_logger,
+                step=step,
+                last_response_meta={"final_length": len(final_text)},
+                details={"final_length": len(final_text)},
+            )
+            self._terminal(
+                TerminalReason.COMPLETED,
+                trace_logger,
+                step=step,
+                final_length=len(final_text),
+            )
             trace_logger.log_event("finish", {"final": final_text}, step=step)
             return final_text
 
+        state = self._transition(
+            state,
+            TransitionReason.MAX_STEPS_EXCEEDED,
+            trace_logger,
+            step=host.max_steps,
+            details={"max_steps": host.max_steps},
+        )
+        self._terminal(
+            TerminalReason.MAX_STEPS,
+            trace_logger,
+            step=host.max_steps,
+            max_steps=host.max_steps,
+        )
         return "抱歉，我无法在限定步数内完成这个任务。"

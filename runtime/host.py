@@ -35,6 +35,7 @@ from extensions.skills import SkillLoader
 from extensions.skills.prompt import format_skills_for_prompt
 from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
+from tools.orchestrator import ToolOrchestrator
 from tools.context import ToolExecutionContext
 from utils import setup_logger
 from runtime.loop import RuntimeRunner
@@ -185,6 +186,7 @@ class CodeAgent(Agent):
                 project_root=self.project_root,
             ),
         )
+        self.tool_orchestrator = ToolOrchestrator(self)
         self.runner = RuntimeRunner(self)
     
     def _register_builtin_tools(self):
