@@ -1,3 +1,5 @@
+import json
+
 from runtime.context import RoundSegmenter
 from runtime.history import Message
 
@@ -128,3 +130,44 @@ def test_projection_uses_active_compact_checkpoint_without_mutating_source():
     assert projected.messages[0].role == "summary"
     assert projected.messages[0].content == "summary text"
     assert projected.messages[1:] == source[4:]
+
+
+def test_compact_projection_preserves_recent_tool_pairs():
+    history = HistoryManager()
+    for idx in range(6):
+        history.append_user(f"Question {idx}")
+        history.append_assistant(
+            "",
+            metadata={
+                "action_type": "tool_call",
+                "tool_calls": [
+                    {"id": f"call_{idx}", "name": "Read", "arguments": {"path": "a.py"}}
+                ],
+            },
+        )
+        history.append_tool(
+            "Read",
+            json.dumps({"status": "success", "data": {"round": idx}}),
+            metadata={"tool_call_id": f"call_{idx}"},
+        )
+        history.append_assistant(f"Answer {idx}")
+
+    store = CompactStore()
+    compactor = ContextCompactor(
+        config=Config(min_retain_rounds=2),
+        compact_store=store,
+        summary_generator=lambda messages: f"summary({len(messages)})",
+    )
+
+    info = compactor.compact(history.get_messages())
+    projected = ProjectionBuilder(store).project(history.get_messages())
+
+    assert info["compacted"] is True
+    assert history.get_rounds_count() == 6
+    assert projected.messages[0].role == "summary"
+    recent_tools = [message for message in projected.messages if message.role == "tool"]
+    assert len(recent_tools) == 2
+    assert [message.metadata["tool_call_id"] for message in recent_tools] == [
+        "call_4",
+        "call_5",
+    ]

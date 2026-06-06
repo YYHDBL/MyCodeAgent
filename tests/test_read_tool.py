@@ -690,6 +690,34 @@ class TestReadTool(unittest.TestCase):
             parsed = self._validate_and_assert(response, "success")
             self.assertIn("content", parsed["data"]["content"])
 
+    def test_detects_file_modified_between_reads(self):
+        """Read: 连续读取之间的外部修改会被标记。"""
+        import time
+
+        with create_temp_project() as project:
+            project.create_file("changed.txt", "original content")
+            tool = ReadTool(project_root=project.root)
+
+            first = parse_response(tool.run({"path": "changed.txt"}))
+            time.sleep(0.01)
+            project.path("changed.txt").write_text("modified content")
+            second = parse_response(tool.run({"path": "changed.txt"}))
+
+            self.assertNotIn("modified_externally", first["data"])
+            self.assertTrue(second["data"]["modified_externally"])
+            self.assertIn("was modified externally", second["text"])
+
+    def test_does_not_mark_unchanged_file_as_modified(self):
+        """Read: 文件未变化时不产生外部修改警告。"""
+        with create_temp_project() as project:
+            project.create_file("stable.txt", "stable content")
+            tool = ReadTool(project_root=project.root)
+
+            tool.run({"path": "stable.txt"})
+            second = parse_response(tool.run({"path": "stable.txt"}))
+
+            self.assertIsNot(second["data"].get("modified_externally"), True)
+
     # ========================================================================
     # 性能与统计测试
     # ========================================================================

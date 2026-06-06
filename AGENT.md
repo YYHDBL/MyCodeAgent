@@ -1,72 +1,92 @@
-# MyCodeAgent Architecture Notes
+# MyCodeAgent Agent Guide
 
-Last updated: 2026-05-24
+Last updated: 2026-06-06
 
-## Purpose
+## Project Goal
 
-`MyCodeAgent` is a compact Python coding-agent harness. The repository now centers one canonical single-agent runtime path and keeps optional or experimental systems behind explicit directories.
+MyCodeAgent is a learning-oriented Python code-agent harness. Keep the default single-agent runtime small while preserving the important harness boundaries: explicit loop state, controlled tool execution, and model-facing context projection.
 
-The main story is:
+Do not turn this repository into an enterprise platform. Prefer a clear implementation that demonstrates the design principle.
+
+## Canonical Runtime
 
 ```text
-main.py -> app/ -> runtime/ -> tools/
-                         -> extensions/
-                         -> experimental/ (explicit opt-in only)
+main.py
+  -> app.cli
+  -> app.bootstrap
+  -> runtime.host.CodeAgent
+  -> runtime.loop.RuntimeRunner
 ```
 
-## Canonical Entrypoint
+There is one canonical single-agent loop: `runtime/loop.py`.
 
-- User-facing entrypoint: `main.py`
-- CLI implementation: `app/cli.py`
-- Dependency wiring: `app/bootstrap.py`
+## Runtime Responsibilities
 
-There is no supported `scripts/` launcher path.
-
-## Runtime Center
-
-`runtime/` is the only runtime center:
-
-- `runtime/host.py`: default host implementation
-- `runtime/loop.py`: ReAct-style single-agent loop
-- `runtime/history.py`: message model and history manager
-- `runtime/input_preprocess.py`: user input preprocessing
-- `runtime/observation_store.py`: observation truncation and storage
-- `runtime/summary.py`: summary generation helpers
-- `runtime/context_provider.py`: context provider facade
-- `runtime/prompt_builder.py`: system prompt and message assembly
+- `runtime/host.py`: dependency wiring and host adapters
+- `runtime/loop.py`: loop stages and state transitions
+- `runtime/state.py`: `LoopState`, transition reasons, terminal reasons
+- `runtime/history.py`: complete runtime message log only
+- `runtime/context/`: context budget, compact checkpoint, projection, normalization, and `ModelView`
+- `runtime/prompt_builder.py`: stable system prompt construction
+- `runtime/input_preprocess.py`: user input and `@file` preprocessing
+- `runtime/observation_store.py`: large tool-output persistence and truncation
 - `runtime/session.py`: session snapshot persistence
+- `runtime/summary.py`: summary generation helper used by context compaction
 
-There is no `agents/` package and no `core/context_engine` runtime tree.
+Do not move context decisions back into `HistoryManager`. It must not own token budgets, model-message serialization, or destructive compaction.
 
-## Supporting Layers
+## Tool Responsibilities
 
-- `tools/`: tool abstraction, registry, executor, and built-in tools
-- `extensions/mcp/`: optional MCP loading, client, adapter, and protocol conversion
-- `extensions/skills/`: optional local skill loader
-- `extensions/tracing/`: optional trace logger and sanitizer
-- `experimental/teams/`: non-canonical team runtime, enabled only by explicit configuration
-- `core/`: shared infrastructure only: config, environment loading, base agent abstraction, exceptions, and LLM client
+- `tools/executor.py`: one validated tool execution lifecycle
+- `tools/orchestrator.py`: tool planning, safe batching, ordered observations, and result budgets
+- `tools/registry.py`: tool registration and read/write metadata
+- `tools/builtin/`: concrete tools
 
-## Execution Flow
+Concurrency is opt-in. Only explicitly safe read-only calls may run concurrently. Unknown or side-effecting tools stay serial.
 
-1. `main.py` delegates to `app.cli.main`.
-2. `app.bootstrap.build_runtime` assembles config, LLM, tool registry, and `runtime.host.CodeAgent`.
-3. `runtime.loop.RuntimeRunner` drives the single-agent turn loop.
-4. Context and prompt construction come from `runtime.input_preprocess`, `runtime.history`, `runtime.prompt_builder`, `runtime.observation_store`, and `runtime.summary`.
-5. Tool calls go through `tools.executor.ToolExecutor` and `tools.registry.ToolRegistry`.
-6. Optional MCP, skills, and tracing are loaded through `extensions/`.
-7. Team runtime code is imported only when experimental team features are enabled.
+Tool output is a context resource. Preserve full oversized output on disk and send the model a bounded view.
 
-## Tests
+## Context Invariants
 
-- Runtime: `tests/runtime/`
-- Tool boundary: `tests/tools/` plus focused root tool tests
-- Extensions: `tests/extensions/`
-- Experimental teams: `tests/experimental/`
+- Full history remains available in `HistoryManager`.
+- `ContextEngine.build_model_view()` is the model request boundary.
+- Compact creates a checkpoint; it does not delete old history.
+- `ProjectionBuilder` applies the checkpoint at read time.
+- Clearing history or loading a session must reset context checkpoint and usage state.
+- A current checkpoint must not be regenerated for unchanged history.
 
-Recommended checks:
+## Optional Systems
+
+- `extensions/mcp/`: MCP integration
+- `extensions/skills/`: local skill discovery
+- `extensions/tracing/`: trace logging and sanitization
+- `experimental/teams/`: opt-in multi-agent runtime
+
+Experimental team code must not become a dependency of the default runtime path.
+
+## Editing Rules
+
+- Preserve the canonical boundaries above.
+- Avoid compatibility wrappers and duplicate runtime centers.
+- Add tests beside the owning subsystem.
+- Do not add broad abstractions for hypothetical future features.
+- Keep trace events and transition reasons when adding recovery paths.
+- Never make context compaction destructive.
+
+## Verification
+
+Run the full suite before completion:
 
 ```bash
-.venv/bin/pytest tests/runtime tests/tools tests/extensions -q
-.venv/bin/pytest tests/experimental -q
+.venv/bin/python -m pytest -q
 ```
+
+Useful focused suites:
+
+```bash
+.venv/bin/python -m pytest tests/runtime tests/tools -q
+.venv/bin/python -m pytest tests/extensions -q
+.venv/bin/python -m pytest tests/experimental -q
+```
+
+Current harness design: `docs/HARNESS.md`.
