@@ -1,10 +1,8 @@
 """HistoryManager tests."""
 
-import json
 import unittest
 from unittest.mock import patch
 
-from core.config import Config
 from runtime.history import HistoryManager, Message
 
 
@@ -65,125 +63,6 @@ class TestHistoryManager(unittest.TestCase):
         hm.append_user("q1")
         hm.append_user("q2")
         self.assertEqual(hm.get_rounds_count(), 2)
-
-    def test_should_compress_threshold(self):
-        config = Config(context_window=1000, compression_threshold=0.8)
-        hm = HistoryManager(config=config)
-        hm.append_user("q")
-        hm.append_assistant("a")
-        hm.append_user("q2")
-        hm.update_last_usage(800)
-        self.assertTrue(hm.should_compress("more"))
-
-    def test_should_compress_requires_min_messages(self):
-        config = Config(context_window=1000, compression_threshold=0.1)
-        hm = HistoryManager(config=config)
-        hm.append_user("q")
-        hm.append_assistant("a")
-        self.assertFalse(hm.should_compress("input"))
-
-    def _append_round(self, hm: HistoryManager, idx: int):
-        hm.append_user(f"q{idx}")
-        hm.append_assistant(f"a{idx}")
-
-    def test_compact_rounds_not_enough(self):
-        config = Config(min_retain_rounds=3)
-        hm = HistoryManager(config=config)
-        for i in range(2):
-            self._append_round(hm, i)
-        info = hm.compact(return_info=True)
-        self.assertFalse(info.get("compressed"))
-        self.assertEqual(info.get("reason"), "rounds_not_enough")
-
-    def test_compact_with_summary(self):
-        config = Config(min_retain_rounds=2)
-        hm = HistoryManager(config=config, summary_generator=lambda msgs: f"summary({len(msgs)})")
-        for i in range(5):
-            self._append_round(hm, i)
-        info = hm.compact(return_info=True)
-        self.assertTrue(info.get("compressed"))
-        summaries = [m for m in hm.get_messages() if m.role == "summary"]
-        self.assertEqual(len(summaries), 1)
-        self.assertIn("summary(", summaries[0].content)
-        self.assertEqual(hm.get_rounds_count(), 2)
-
-    def test_compact_without_summary_generator(self):
-        config = Config(min_retain_rounds=1)
-        hm = HistoryManager(config=config)
-        for i in range(3):
-            self._append_round(hm, i)
-        result = hm.compact()
-        self.assertTrue(result)
-        summaries = [m for m in hm.get_messages() if m.role == "summary"]
-        self.assertEqual(len(summaries), 0)
-
-    def test_compact_preserves_existing_summaries(self):
-        config = Config(min_retain_rounds=1)
-        hm = HistoryManager(config=config, summary_generator=lambda msgs: "new summary")
-        hm.append_summary("old summary")
-        for i in range(3):
-            self._append_round(hm, i)
-        hm.compact()
-        summaries = [m for m in hm.get_messages() if m.role == "summary"]
-        self.assertGreaterEqual(len(summaries), 2)
-        contents = [m.content for m in summaries]
-        self.assertIn("old summary", contents)
-
-    def test_compact_emits_events(self):
-        config = Config(min_retain_rounds=1)
-        hm = HistoryManager(config=config, summary_generator=lambda msgs: "summary")
-        for i in range(3):
-            self._append_round(hm, i)
-        events = []
-
-        def on_event(name, payload):
-            events.append(name)
-
-        hm.compact(on_event=on_event)
-        self.assertIn("history_compression_plan", events)
-        self.assertIn("history_compression_context", events)
-
-    def test_to_messages_forces_strict_tool_format(self):
-        config = Config(tool_message_format="compat")
-        hm = HistoryManager(config=config)
-        hm.append_user("q")
-        hm.append_tool("LS", json.dumps({"status": "success"}), metadata={"tool_call_id": "call_1"})
-        messages = hm.to_messages()
-        self.assertEqual(messages[1]["role"], "tool")
-        self.assertEqual(messages[1]["tool_call_id"], "call_1")
-
-    def test_to_messages_strict_tool_format_missing_call_id(self):
-        config = Config(tool_message_format="strict")
-        hm = HistoryManager(config=config)
-        hm.append_tool("LS", json.dumps({"status": "success"}))
-        messages = hm.to_messages()
-        self.assertEqual(messages[0]["role"], "user")
-        self.assertIn("Observation (LS)", messages[0]["content"])
-
-    def test_to_messages_strict_tool_call_metadata(self):
-        config = Config(tool_message_format="strict")
-        hm = HistoryManager(config=config)
-        hm.append_assistant(
-            "",
-            metadata={
-                "action_type": "tool_call",
-                "tool_calls": [
-                    {"id": "call_1", "name": "LS", "arguments": {"path": "."}}
-                ],
-            },
-        )
-        messages = hm.to_messages()
-        self.assertEqual(messages[0]["role"], "assistant")
-        self.assertIn("tool_calls", messages[0])
-
-    def test_tool_message_format_case_insensitive(self):
-        config = Config(tool_message_format="STRICT")
-        hm = HistoryManager(config=config)
-        hm.append_tool("LS", json.dumps({"status": "success"}), metadata={"tool_call_id": "call_1"})
-        messages = hm.to_messages()
-        self.assertEqual(messages[0]["role"], "tool")
-        self.assertEqual(messages[0]["tool_call_id"], "call_1")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 from core.config import Config
+from runtime.context import ContextEngine
 from runtime.history import HistoryManager
 from runtime.host import CodeAgent
 from runtime.prompt_builder import ContextBuilder
@@ -23,7 +24,7 @@ def test_runtime_notifications_do_not_create_user_rounds():
 
     builder = ContextBuilder(tool_registry=ToolRegistry(), project_root=".", system_prompt_override="base")
     builder.set_runtime_system_blocks(["[Team Runtime]\n- ack"])
-    _ = builder.build_messages(hm.to_messages())
+    _ = ContextEngine(builder).build_model_view(history_manager=hm).messages
 
     after = hm.get_rounds_count()
     assert before == after

@@ -16,6 +16,7 @@ class ModelView:
     source_message_count: int
     estimated_chars: int
     projection_mode: str = "full_history"
+    compact_checkpoint_id: str | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     @property

@@ -149,10 +149,7 @@ class CodeAgent(Agent):
         )
         
         # 历史管理器（替代 Agent._history）
-        self.history_manager = HistoryManager(
-            config=self.config,
-            summary_generator=summary_generator,
-        )
+        self.history_manager = HistoryManager(config=self.config)
         
         # Skills
         self._skills_prompt = ""
@@ -174,7 +171,11 @@ class CodeAgent(Agent):
             mcp_tools_prompt=self._mcp_tools_prompt,
             skills_prompt=self._skills_prompt,
         )
-        self.context_engine = ContextEngine(self.context_builder)
+        self.context_engine = ContextEngine(
+            self.context_builder,
+            config=self.config,
+            summary_generator=summary_generator,
+        )
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
         self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
@@ -371,6 +372,7 @@ class CodeAgent(Agent):
     def load_session(self, path: str) -> None:
         """从快照恢复会话（scheme B）。"""
         snapshot = load_session_snapshot(path)
+        self.context_engine.reset()
         self._system_messages_override = snapshot.get("system_messages") or []
         history_items = snapshot.get("history_messages") or []
         self.history_manager.load_messages(history_items)
@@ -757,6 +759,7 @@ class CodeAgent(Agent):
     def clear_history(self):
         """Clear managed runtime history."""
         self.history_manager.clear()
+        self.context_engine.reset()
     
     def get_history(self) -> List[Message]:
         """Return managed runtime history."""

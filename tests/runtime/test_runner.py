@@ -38,7 +38,6 @@ class _FakeTraceLogger:
 class _FakeHistoryManager:
     def __init__(self):
         self.messages = []
-        self.last_usage = None
 
     def append_user(self, content):
         self.messages.append({"role": "user", "content": content})
@@ -48,9 +47,6 @@ class _FakeHistoryManager:
 
     def append_tool(self, tool_name, raw_result, metadata=None, project_root=None):
         self.messages.append({"role": "tool", "content": raw_result, "metadata": metadata or {}})
-
-    def should_compress(self, pending_input):
-        return False
 
     def get_messages(self):
         from runtime.history import Message
@@ -64,27 +60,11 @@ class _FakeHistoryManager:
             for message in self.messages
         ]
 
-    def to_messages(self):
-        return list(self.messages)
-
-    def update_last_usage(self, total_tokens):
-        self.last_usage = total_tokens
-
     def get_message_count(self):
         return len(self.messages)
 
     def get_rounds_count(self):
         return 1
-
-    def estimate_context_tokens(self, pending_input):
-        return 0
-
-    def get_total_usage_tokens(self):
-        return 0
-
-    def compact(self, on_event=None, return_info=False):
-        info = {"compressed": False}
-        return info if return_info else None
 
 
 class _FakeContextBuilder:
@@ -110,15 +90,23 @@ class _FakeHost:
         self.console_verbose = False
         self.logger = logging.getLogger("test.runtime.loop")
         self._skills_prompt = ""
+        self.config = type(
+            "Config",
+            (),
+            {"context_window": 128000, "compression_threshold": 0.8, "min_retain_rounds": 2},
+        )()
         self.context_builder = _FakeContextBuilder()
-        self.context_engine = ContextEngine(self.context_builder)
+        self.context_engine = ContextEngine(
+            self.context_builder,
+            config=self.config,
+            summary_generator=lambda messages: f"summary({len(messages)})",
+        )
         self.trace_logger = _FakeTraceLogger()
         self.history_manager = _FakeHistoryManager()
         self._run_id = 0
         self.max_steps = 3
         self.enable_agent_teams = False
         self.team_manager = None
-        self.config = type("Config", (), {"context_window": 128000, "compression_threshold": 0.8})()
         self.project_root = "."
         self.last_response_raw = None
         self.logged_messages = []
@@ -323,27 +311,33 @@ class _AlwaysEmptyHost(_FakeHost):
 class _CompressingHistoryManager(_FakeHistoryManager):
     def __init__(self):
         super().__init__()
-        self.compacted = False
-
-    def should_compress(self, pending_input):
-        return not self.compacted
-
-    def estimate_context_tokens(self, pending_input):
-        return 200
-
-    def get_total_usage_tokens(self):
-        return 100
-
-    def compact(self, on_event=None, return_info=False):
-        self.compacted = True
-        info = {"compressed": True, "summary_generated": True}
-        return info if return_info else None
 
 
 class _CompressingHost(_FakeHost):
     def __init__(self):
         super().__init__()
+        self.config = type(
+            "Config",
+            (),
+            {
+                "context_window": 1000,
+                "compression_threshold": 0.1,
+                "min_retain_rounds": 1,
+            },
+        )()
+        from runtime.context import ContextEngine
+
         self.history_manager = _CompressingHistoryManager()
+        self.context_engine = ContextEngine(
+            self.context_builder,
+            config=self.config,
+            summary_generator=lambda messages: f"summary({len(messages)})",
+        )
+        self.context_engine.record_usage(900)
+        self.history_manager.append_user("old q")
+        self.history_manager.append_assistant("old a")
+        self.history_manager.append_user("older q")
+        self.history_manager.append_assistant("older a")
 
 
 class _InvalidArgsToolHost(_ToolThenFinalHost):
@@ -425,7 +419,7 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     assert result == "runner final answer"
     assert host.history_manager.messages[0]["role"] == "user"
     assert host.history_manager.messages[-1]["role"] == "assistant"
-    assert host.history_manager.last_usage == 12
+    assert host.context_engine.last_usage_tokens == 12
     assert host.llm_calls
     assert any(event[0] == "finish" for event in host.trace_logger.events)
     transitions = [event for event in host.trace_logger.events if event[0] == "state_transition"]

@@ -173,79 +173,45 @@ class RuntimeRunner:
             elif host.logger.isEnabledFor(10):
                 host.logger.debug("Step %d/%d", step, host.max_steps)
 
-            if host.history_manager.should_compress(pending_input):
-                estimated_tokens = host.history_manager.estimate_context_tokens(pending_input)
-                threshold = int(host.config.context_window * host.config.compression_threshold)
-                trace_logger.log_event(
-                    "history_compression_triggered",
-                    {
-                        "estimated_tokens": estimated_tokens,
-                        "threshold": threshold,
-                        "total_usage_tokens": host.history_manager.get_total_usage_tokens(),
-                        "message_count": host.history_manager.get_message_count(),
+            compact_info = host.context_engine.compact_if_needed(
+                history_manager=host.history_manager,
+                pending_input=pending_input,
+                step=step,
+                trace_logger=trace_logger,
+            )
+            if compact_info.get("compacted"):
+                state = self._transition(
+                    state,
+                    TransitionReason.CONTEXT_COMPACTED,
+                    trace_logger,
+                    step=step,
+                    compact_attempted=True,
+                    details={
+                        "checkpoint_id": compact_info.get("checkpoint_id"),
+                        "messages_compacted": compact_info.get("messages_compacted"),
+                        "retain_start_idx": compact_info.get("retain_start_idx"),
                     },
+                )
+                final_context = host.context_engine.build_model_view(
+                    history_manager=host.history_manager,
+                    pending_input=pending_input,
+                    step=step,
+                    trace_logger=trace_logger,
+                ).messages
+                trace_logger.log_event(
+                    "history_compression_final_context",
+                    {"message_count": len(final_context), "messages": final_context},
                     step=step,
                 )
 
                 if host.console_verbose:
                     host._console("\n📦 触发历史压缩...")
+                    host._console("✅ 压缩完成，当前轮次数: %d" % host.history_manager.get_rounds_count())
+                    host._print_context_preview(final_context)
                 elif host.logger.isEnabledFor(10):
                     host.logger.debug("触发历史压缩")
-
-                rounds_before = host.history_manager.get_rounds_count()
-                messages_before = host.history_manager.get_message_count()
-
-                compress_info = host.history_manager.compact(
-                    on_event=lambda ev, payload: trace_logger.log_event(ev, payload, step=step),
-                    return_info=True,
-                )
-                compressed = bool(compress_info.get("compressed"))
-
-                if compressed:
-                    rounds_after = host.history_manager.get_rounds_count()
-                    messages_after = host.history_manager.get_message_count()
-                    state = self._transition(
-                        state,
-                        TransitionReason.CONTEXT_COMPACTED,
-                        trace_logger,
-                        step=step,
-                        compact_attempted=True,
-                        details={
-                            "messages_before": messages_before,
-                            "messages_after": messages_after,
-                        },
-                    )
-
-                    trace_logger.log_event(
-                        "history_compression_completed",
-                        {
-                            "rounds_before": rounds_before,
-                            "rounds_after": rounds_after,
-                            "messages_compressed": messages_before - messages_after,
-                            "summary_generated": compress_info.get("summary_generated", False),
-                            "details": compress_info,
-                        },
-                        step=step,
-                    )
-
-                    final_context = host.context_engine.build_model_view(
-                        history_manager=host.history_manager,
-                        pending_input=pending_input,
-                        step=step,
-                        trace_logger=trace_logger,
-                    ).messages
-                    trace_logger.log_event(
-                        "history_compression_final_context",
-                        {"message_count": len(final_context), "messages": final_context},
-                        step=step,
-                    )
-
-                    if host.console_verbose:
-                        host._console(f"✅ 压缩完成，当前轮次数: {rounds_after}")
-                        host._print_context_preview(final_context)
-                    elif host.logger.isEnabledFor(10):
-                        host.logger.debug("压缩完成，当前轮次数: %d", rounds_after)
-                        host._print_context_preview(final_context)
+                    host.logger.debug("压缩完成，当前轮次数: %d", host.history_manager.get_rounds_count())
+                    host._print_context_preview(final_context)
 
             model_view = host.context_engine.build_model_view(
                 history_manager=host.history_manager,
@@ -285,7 +251,7 @@ class RuntimeRunner:
                 reasoning_content = host._extract_reasoning_content(raw_response)
                 usage = host._extract_usage(raw_response)
                 if usage and usage.get("total_tokens") is not None:
-                    host.history_manager.update_last_usage(usage["total_tokens"])
+                    host.context_engine.record_usage(usage["total_tokens"])
 
                 response_meta = host._extract_response_meta(raw_response)
                 tool_calls = host._extract_tool_calls(raw_response)

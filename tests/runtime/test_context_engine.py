@@ -191,3 +191,102 @@ def test_context_engine_emits_model_view_build_trace():
     assert payload["history_message_count"] == 1
     assert payload["source_message_count"] == 1
     assert payload["projection_mode"] == "full_history"
+
+
+from core.config import Config
+
+
+def test_context_engine_records_usage_and_decides_compaction():
+    history = HistoryManager()
+    history.append_user("q1")
+    history.append_assistant("a1")
+    history.append_user("q2")
+    engine = ContextEngine(
+        context_builder=_FakeContextBuilder(),
+        config=Config(context_window=1000, compression_threshold=0.8),
+    )
+
+    engine.record_usage(810)
+
+    assert engine.should_compact(history_manager=history, pending_input="more") is True
+    assert engine.total_usage_tokens == 810
+
+
+def test_context_engine_compact_if_needed_creates_checkpoint_and_preserves_history():
+    history = HistoryManager()
+    for idx in range(5):
+        history.append_user(f"q{idx}")
+        history.append_assistant(f"a{idx}")
+    before = history.get_messages()
+    trace = _FakeTraceLogger()
+    engine = ContextEngine(
+        context_builder=_FakeContextBuilder(),
+        config=Config(context_window=1000, compression_threshold=0.1, min_retain_rounds=2),
+        summary_generator=lambda messages: f"summary({len(messages)})",
+    )
+    engine.record_usage(900)
+
+    info = engine.compact_if_needed(
+        history_manager=history,
+        pending_input="more",
+        step=7,
+        trace_logger=trace,
+    )
+    view = engine.build_model_view(history_manager=history)
+
+    assert info["compacted"] is True
+    assert history.get_messages() == before
+    assert view.projection_mode == "compact_checkpoint"
+    assert view.messages[1]["role"] == "system"
+    assert "Archived History Summary" in view.messages[1]["content"]
+    assert any(event[0] == "context_compaction_completed" for event in trace.events)
+
+
+def test_context_engine_does_not_repeat_compaction_for_unchanged_history():
+    history = HistoryManager()
+    for idx in range(5):
+        history.append_user(f"q{idx}")
+        history.append_assistant(f"a{idx}")
+    summary_calls = []
+
+    def generate_summary(messages):
+        summary_calls.append(len(messages))
+        return f"summary({len(messages)})"
+
+    engine = ContextEngine(
+        context_builder=_FakeContextBuilder(),
+        config=Config(context_window=1000, compression_threshold=0.1, min_retain_rounds=2),
+        summary_generator=generate_summary,
+    )
+    engine.record_usage(900)
+
+    first = engine.compact_if_needed(history_manager=history, pending_input="more")
+    second = engine.compact_if_needed(history_manager=history, pending_input="more")
+
+    assert first["compacted"] is True
+    assert second == {
+        "compacted": False,
+        "reason": "checkpoint_current",
+        "checkpoint_id": first["checkpoint_id"],
+    }
+    assert summary_calls == [6]
+
+
+def test_context_engine_reset_clears_checkpoint_and_usage():
+    history = HistoryManager()
+    for idx in range(3):
+        history.append_user(f"q{idx}")
+        history.append_assistant(f"a{idx}")
+    engine = ContextEngine(
+        context_builder=_FakeContextBuilder(),
+        config=Config(context_window=1000, compression_threshold=0.1, min_retain_rounds=1),
+        summary_generator=lambda messages: "summary",
+    )
+    engine.record_usage(900)
+    engine.compact_if_needed(history_manager=history, pending_input="more")
+
+    engine.reset()
+
+    assert engine.compact_store.active_checkpoint is None
+    assert engine.last_usage_tokens == 0
+    assert engine.total_usage_tokens == 0

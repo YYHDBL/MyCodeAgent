@@ -12,6 +12,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 from core.config import Config
+from runtime.context import ContextBudgetPolicy, ContextCompactor, ContextEngine, MessageNormalizer
 from runtime.host import CodeAgent
 from runtime.history import HistoryManager
 from runtime.input_preprocess import extract_file_mentions, preprocess_input
@@ -193,9 +194,13 @@ class TestCodeAgentToolCalls:
         hm.append_user("Hello")
         hm.append_assistant("Hi")
         hm.append_user("Test")
-        
-        # last_usage = 0，远低于阈值
-        assert hm.should_compress("short input") == False
+
+        decision = ContextBudgetPolicy(config).should_compact(
+            messages=hm.get_messages(),
+            pending_input="short input",
+            last_usage_tokens=0,
+        )
+        assert decision.should_compact is False
 
     def test_should_compress_above_threshold(self):
         """超过阈值时触发压缩"""
@@ -204,28 +209,34 @@ class TestCodeAgentToolCalls:
         hm.append_user("Hello")
         hm.append_assistant("Hi")
         hm.append_user("Test")
-        hm.update_last_usage(850)  # 接近阈值
-        
-        # 850 + len("more input")/3 ≈ 853 > 800 (0.8 * 1000)
-        assert hm.should_compress("more input") == True
+
+        decision = ContextBudgetPolicy(config).should_compact(
+            messages=hm.get_messages(),
+            pending_input="more input",
+            last_usage_tokens=850,
+        )
+        assert decision.should_compact is True
 
     def test_compact_preserves_min_rounds(self):
-        """压缩时保留最少轮次"""
+        """压缩生成 checkpoint，但不破坏历史"""
         config = Config(min_retain_rounds=2)
         hm = HistoryManager(config=config)
-        
+
         # 创建 5 轮对话
         for i in range(5):
             hm.append_user(f"Question {i}")
             hm.append_assistant(f"Answer {i}")
-        
+
+        before = hm.get_messages()
+        compactor = ContextCompactor(
+            config=config,
+            summary_generator=lambda messages: f"summary({len(messages)})",
+        )
+        result = compactor.compact(hm.get_messages())
+
+        assert result["compacted"] is True
+        assert hm.get_messages() == before
         assert hm.get_rounds_count() == 5
-        
-        # 执行压缩
-        result = hm.compact()
-        
-        assert result == True
-        assert hm.get_rounds_count() == 2  # 保留最后 2 轮
 
     def test_serialize_for_prompt(self):
         """序列化为 messages 格式"""
@@ -233,7 +244,7 @@ class TestCodeAgentToolCalls:
         hm.append_user("Hello")
         hm.append_assistant("Hi there")
 
-        messages = hm.to_messages()
+        messages = MessageNormalizer().normalize(hm.get_messages())
 
         assert len(messages) == 2
         assert messages[0]["role"] == "user"
@@ -270,26 +281,32 @@ class TestLongHorizonCompression:
         """压缩后插入 Summary，保留最近轮次与工具对"""
         config = Config(min_retain_rounds=2, tool_message_format="strict")
         summary_generator = lambda msgs: f"summary({len(msgs)})"
-        hm = HistoryManager(config=config, summary_generator=summary_generator)
+        hm = HistoryManager(config=config)
 
         for i in range(6):
             self._append_round(hm, i)
 
-        info = hm.compact(return_info=True)
+        engine = ContextEngine(
+            context_builder=MagicMock(get_system_messages=lambda: [{"role": "system", "content": "base"}]),
+            config=config,
+            summary_generator=summary_generator,
+        )
+        engine.record_usage(999999)
+        info = engine.compact_if_needed(history_manager=hm, pending_input="more")
+        view = engine.build_model_view(history_manager=hm)
 
-        assert info.get("compressed") is True
-        assert hm.get_rounds_count() == 2
+        assert info.get("compacted") is True
+        assert hm.get_rounds_count() == 6
 
         messages = hm.get_messages()
         summaries = [m for m in messages if m.role == "summary"]
-        assert len(summaries) == 1
-        assert "summary(" in summaries[0].content
+        assert len(summaries) == 0
 
         tool_msgs = [m for m in messages if m.role == "tool"]
-        assert len(tool_msgs) == 2
+        assert len(tool_msgs) == 6
         assert all((m.metadata or {}).get("tool_call_id") for m in tool_msgs)
 
-        serialized = hm.to_messages()
+        serialized = view.messages
         tool_serialized = [m for m in serialized if m.get("role") == "tool"]
         assert len(tool_serialized) == 2
         assert all(m.get("tool_call_id") for m in tool_serialized)
@@ -300,6 +317,7 @@ class TestLongHorizonCompression:
             and "Archived History Summary" in m.get("content", "")
         ]
         assert summary_serialized
+        assert view.projection_mode == "compact_checkpoint"
 
 
 class TestReadToolMtime:

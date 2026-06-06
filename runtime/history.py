@@ -1,9 +1,7 @@
 """Runtime message and history services."""
 
-import json
-import logging
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -45,34 +43,24 @@ class HistoryManager:
     
     管理会话历史，支持：
     - 消息写入（区分 user/assistant/tool/summary）
-    - 轮次边界识别（user 消息开启新轮）
-    - 压缩触发检测
-    - 历史压缩（保留最近 N 轮 + Summary）
+    - 完整历史读取与持久化
+    - 轮次计数
     """
 
     def __init__(
         self,
         config: Optional[Config] = None,
-        summary_generator: Optional[Callable[[List[Message]], Optional[str]]] = None,
     ):
         """
         初始化历史管理器
         
         Args:
-            config: 配置对象，包含 context_window、compression_threshold 等
-            summary_generator: Summary 生成回调函数，接收待压缩的消息列表，返回 Summary 文本
-                              如果为 None，则压缩时不生成 Summary，仅做截断
+            config: 配置对象
         """
         self._config = config or Config.from_env()
-        self._summary_generator = summary_generator
         
         # 历史消息列表
         self._messages: List[Message] = []
-        
-        # 上一次 API 调用的 token 使用量（精确值）
-        self._last_usage_tokens: int = 0
-        # 会话累计 token 使用量
-        self._total_usage_tokens: int = 0
     
     # =========================================================================
     # 公开接口
@@ -220,275 +208,9 @@ class HistoryManager:
     def clear(self):
         """清空历史记录"""
         self._messages.clear()
-        self._last_usage_tokens = 0
-        self._total_usage_tokens = 0
-    
-    def update_last_usage(self, total_tokens: int):
-        """
-        更新上一次 API 调用的 token 使用量
-        
-        Args:
-            total_tokens: API 返回的 usage.total_tokens
-        """
-        if total_tokens is None:
-            return
-        self._last_usage_tokens = total_tokens
-        self._total_usage_tokens += total_tokens
-
-    def get_total_usage_tokens(self) -> int:
-        """获取会话累计 token 使用量"""
-        return self._total_usage_tokens
-
-    def estimate_total_tokens(self, pending_input: str) -> int:
-        """估算会话累计 token（累计 usage + 当前输入估算）"""
-        input_estimate = len(pending_input) // 3
-        return self._total_usage_tokens + input_estimate
-
-    def estimate_context_tokens(self, pending_input: str) -> int:
-        """估算当前上下文 token（历史消息 + 当前输入）"""
-        total_chars = len(pending_input or "")
-        for msg in self._messages:
-            content = msg.content or ""
-            total_chars += len(str(content))
-            meta = msg.metadata or {}
-            if msg.role == "assistant":
-                tool_calls = meta.get("tool_calls")
-                if tool_calls:
-                    try:
-                        total_chars += len(json.dumps(tool_calls, ensure_ascii=False))
-                    except Exception:
-                        total_chars += len(str(tool_calls))
-            elif msg.role == "tool":
-                tool_name = meta.get("tool_name")
-                if tool_name:
-                    total_chars += len(str(tool_name))
-        return total_chars // 3
-    
-    # =========================================================================
-    # 压缩触发检测
-    # =========================================================================
-    
-    def should_compress(self, pending_input: str) -> bool:
-        """
-        检测是否应该触发压缩
-        
-        根据 A6 规则：
-        - estimated_total = last_usage + len(user_input) // 3
-        - 触发条件：estimated_total >= threshold 且消息数 >= 3
-        
-        Args:
-            pending_input: 待发送的用户输入
-        
-        Returns:
-            是否需要压缩
-        """
-        # 最低消息数要求
-        if len(self._messages) < 3:
-            return False
-        
-        # 计算预估 token 数（兼容 usage 与上下文字符估算两条路径）
-        usage_estimated_total = self._last_usage_tokens + len(pending_input or "") // 3
-        estimated_total = max(self.estimate_context_tokens(pending_input), usage_estimated_total)
-        
-        # 计算阈值
-        threshold = int(self._config.context_window * self._config.compression_threshold)
-        
-        return estimated_total >= threshold
-    
-    # =========================================================================
-    # 历史压缩
-    # =========================================================================
-    
-    def compact(self, on_event=None, return_info: bool = False):
-        """
-        执行历史压缩
-        
-        压缩流程：
-        1. 识别轮次边界
-        2. 计算保留区（最近 N 轮）
-        3. 对旧消息生成 Summary（如果有 summary_generator）
-        4. 删除旧消息，插入 Summary
-        
-        Returns:
-            是否执行了压缩（False 表示消息数不足，无需压缩）
-        """
-        def _emit(event: str, payload: dict):
-            if on_event:
-                try:
-                    on_event(event, payload)
-                except Exception:
-                    pass
-
-        info: dict = {"compressed": False}
-
-        # 获取轮次边界
-        rounds = self._identify_rounds()
-        
-        # 至少需要超过 min_retain_rounds 轮才压缩
-        min_rounds = self._config.min_retain_rounds
-        if len(rounds) <= min_rounds:
-            info.update({
-                "reason": "rounds_not_enough",
-                "rounds_count": len(rounds),
-                "min_retain_rounds": min_rounds,
-            })
-            _emit("history_compression_plan", info)
-            _emit("history_compression_skipped", info)
-            return info if return_info else False
-        
-        # 计算保留区：保留最后 min_rounds 轮
-        retain_start_round = len(rounds) - min_rounds
-        retain_start_idx = rounds[retain_start_round][0]  # 保留区起始消息索引
-
-        info.update({
-            "rounds": rounds,
-            "rounds_count": len(rounds),
-            "min_retain_rounds": min_rounds,
-            "retain_start_round": retain_start_round,
-            "retain_start_idx": retain_start_idx,
-            "messages_before": len(self._messages),
-        })
-        _emit("history_compression_plan", info)
-        
-        # 提取待压缩的消息（不包括 summary 消息）
-        messages_to_compress = [
-            msg for msg in self._messages[:retain_start_idx]
-            if msg.role != "summary"
-        ]
-        
-        # 提取现有的 summary 消息（保留）
-        existing_summaries = [
-            msg for msg in self._messages[:retain_start_idx]
-            if msg.role == "summary"
-        ]
-
-        info.update({
-            "messages_to_compress": len(messages_to_compress),
-            "existing_summaries": len(existing_summaries),
-        })
-        _emit("history_compression_messages", {
-            "messages_to_compress": len(messages_to_compress),
-            "existing_summaries": len(existing_summaries),
-        })
-        
-        # 如果没有需要压缩的消息，跳过
-        if not messages_to_compress:
-            info.update({"reason": "no_messages_to_compress"})
-            _emit("history_compression_skipped", info)
-            return info if return_info else False
-        
-        # 生成新的 Summary
-        new_summary = None
-        if self._summary_generator:
-            try:
-                new_summary = self._summary_generator(messages_to_compress)
-            except Exception:
-                # Summary 生成失败，使用降级策略（仅截断）
-                new_summary = None
-
-        info.update({
-            "summary_generated": new_summary is not None,
-            "summary_len": len(new_summary) if isinstance(new_summary, str) else 0,
-            "summary_text": new_summary if isinstance(new_summary, str) else "",
-        })
-        _emit("history_compression_summary", {
-            "summary_generated": new_summary is not None,
-            "summary_len": len(new_summary) if isinstance(new_summary, str) else 0,
-            "summary_text": new_summary if isinstance(new_summary, str) else "",
-        })
-        
-        # 重建消息列表
-        new_messages: List[Message] = []
-        
-        # 1. 保留现有的 summary 消息
-        new_messages.extend(existing_summaries)
-        
-        # 2. 插入新生成的 Summary（如果有）
-        # 注意：使用 is not None 判断，避免空字符串被当作 False 丢弃
-        if new_summary is not None:
-            new_messages.append(Message(
-                content=new_summary,
-                role="summary",
-                metadata={"generated_at": datetime.now().isoformat()},
-            ))
-        
-        # 3. 保留最近 N 轮的消息
-        new_messages.extend(self._messages[retain_start_idx:])
-        
-        # 替换消息列表
-        self._messages = new_messages
-
-        info.update({
-            "compressed": True,
-            "messages_after": len(self._messages),
-        })
-        _emit("history_compression_rebuilt", {
-            "messages_after": len(self._messages),
-        })
-
-        # 记录压缩后的上下文（HistoryManager.to_messages 格式）
-        try:
-            compressed_context = self.to_messages()
-        except Exception:
-            compressed_context = []
-        _emit("history_compression_context", {
-            "messages": compressed_context,
-            "message_count": len(compressed_context),
-        })
-        
-        return info if return_info else True
-    
-    def _identify_rounds(self) -> List[Tuple[int, int]]:
-        """
-        识别轮次边界
-        
-        一轮定义（A4）：从 user 发起到 assistant 完成回答（中间允许多次工具调用）
-        
-        Returns:
-            轮次列表，每项为 (start_idx, end_idx)，表示该轮在 _messages 中的索引范围
-        """
-        rounds: List[Tuple[int, int]] = []
-        current_round_start: Optional[int] = None
-        
-        for idx, msg in enumerate(self._messages):
-            if msg.role == "user":
-                # 遇到 user 消息，开启新轮
-                if current_round_start is not None:
-                    # 关闭上一轮（结束于上一个消息）
-                    rounds.append((current_round_start, idx - 1))
-                current_round_start = idx
-            elif msg.role == "summary":
-                # summary 消息不属于任何轮次，跳过
-                continue
-        
-        # 处理最后一轮
-        if current_round_start is not None:
-            rounds.append((current_round_start, len(self._messages) - 1))
-        
-        return rounds
-    
-    # =========================================================================
-    # 序列化（供 ContextBuilder 使用）
-    # =========================================================================
-    
-    def to_messages(self) -> List[Dict[str, Any]]:
-        """
-        将历史消息转换为 OpenAI messages 格式
-        
-        Message List 模式：
-        - user: {"role": "user", "content": "..."}
-        - assistant: {"role": "assistant", "content": "...", "tool_calls": [...] (可选)}
-        - tool: {"role": "tool", "tool_call_id": "...", "content": "..."}
-        - summary: {"role": "system", "content": "## Summary\n..."}
-          作为 system 消息注入
-        
-        Returns:
-            OpenAI messages 格式的列表
-        """
-        from runtime.context.normalizer import MessageNormalizer
-
-        return MessageNormalizer().normalize(self._messages)
     
     def get_rounds_count(self) -> int:
         """获取当前轮次数"""
-        return len(self._identify_rounds())
+        from runtime.context.rounds import RoundSegmenter
+
+        return len(RoundSegmenter().identify(self._messages))
