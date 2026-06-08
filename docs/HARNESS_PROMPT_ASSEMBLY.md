@@ -34,8 +34,9 @@ Runtime Signals
   - `get_system_messages()` 返回 `stable_messages + runtime_signal_messages`，供当前 LLM 接口继续使用。
 
 - `runtime/loop.py`
-  - 每次 run 记录 `prompt_assembly` Trace 事件。
-  - 事件包含各层 fingerprint，以及相对上一次 run 的 `changed_layers`。
+  - 每个模型请求 step 在 Runtime Signals 更新后记录 `prompt_assembly` Trace 事件。
+  - 事件包含各层 fingerprint，以及相对上一次模型请求的 `changed_layers`。
+  - `tool_schema` 使用本 step 实际传给模型的 schema 计算 fingerprint。
 
 - `tools/registry.py`
   - OpenAI tools schema 统一按工具名稳定排序。

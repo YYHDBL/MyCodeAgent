@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -60,6 +62,68 @@ class RuntimeRunner:
                 step=step,
             )
 
+    def _trace_model_request_state(
+        self,
+        trace_logger,
+        *,
+        tools_schema: list[dict[str, Any]],
+        step: int,
+    ) -> None:
+        host = self.host
+        if hasattr(host.context_builder, "get_prompt_assembly"):
+            prompt_assembly = host.context_builder.get_prompt_assembly()
+            previous_prompt_fingerprints = getattr(host, "_last_prompt_fingerprints", {})
+            current_prompt_fingerprints = {
+                "constitution": prompt_assembly.constitution_fingerprint,
+                "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
+                "project_rules": prompt_assembly.project_rules_fingerprint,
+                "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
+            }
+            changed_layers = [
+                layer
+                for layer, value in current_prompt_fingerprints.items()
+                if previous_prompt_fingerprints.get(layer) not in (None, value)
+            ]
+            trace_logger.log_event(
+                "prompt_assembly",
+                {
+                    "constitution_fingerprint": prompt_assembly.constitution_fingerprint,
+                    "tool_contracts_fingerprint": prompt_assembly.tool_contracts_fingerprint,
+                    "project_rules_fingerprint": prompt_assembly.project_rules_fingerprint,
+                    "runtime_signals_fingerprint": prompt_assembly.runtime_signals_fingerprint,
+                    "system_fingerprint": prompt_assembly.system_fingerprint,
+                    "stable_message_count": len(prompt_assembly.stable_messages),
+                    "runtime_signal_count": len(prompt_assembly.runtime_signal_messages),
+                    "changed_layers": changed_layers,
+                },
+                step=step,
+            )
+            host._last_prompt_fingerprints = current_prompt_fingerprints
+
+        tool_schema_payload = json.dumps(
+            tools_schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        tool_schema_fingerprint = hashlib.sha256(
+            tool_schema_payload.encode("utf-8")
+        ).hexdigest()
+        previous_tool_schema_fingerprint = getattr(host, "_last_tool_schema_fingerprint", None)
+        trace_logger.log_event(
+            "tool_schema",
+            {
+                "fingerprint": tool_schema_fingerprint,
+                "tool_count": len(tools_schema),
+                "changed": previous_tool_schema_fingerprint not in (
+                    None,
+                    tool_schema_fingerprint,
+                ),
+            },
+            step=step,
+        )
+        host._last_tool_schema_fingerprint = tool_schema_fingerprint
+
     def run(self, input_text: str, **kwargs) -> str:
         host = self.host
         show_raw = kwargs.pop("show_raw", False)
@@ -88,54 +152,6 @@ class RuntimeRunner:
         trace_logger = host.trace_logger
         host._run_id += 1
         run_id = host._run_id
-
-        prompt_assembly = None
-        if hasattr(host.context_builder, "get_prompt_assembly"):
-            prompt_assembly = host.context_builder.get_prompt_assembly()
-            previous_prompt_fingerprints = getattr(host, "_last_prompt_fingerprints", {})
-            changed_layers = [
-                layer
-                for layer, value in {
-                    "constitution": prompt_assembly.constitution_fingerprint,
-                    "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
-                    "project_rules": prompt_assembly.project_rules_fingerprint,
-                    "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
-                }.items()
-                if previous_prompt_fingerprints.get(layer) not in (None, value)
-            ]
-            trace_logger.log_event(
-                "prompt_assembly",
-                {
-                    "constitution_fingerprint": prompt_assembly.constitution_fingerprint,
-                    "tool_contracts_fingerprint": prompt_assembly.tool_contracts_fingerprint,
-                    "project_rules_fingerprint": prompt_assembly.project_rules_fingerprint,
-                    "runtime_signals_fingerprint": prompt_assembly.runtime_signals_fingerprint,
-                    "system_fingerprint": prompt_assembly.system_fingerprint,
-                    "stable_message_count": len(prompt_assembly.stable_messages),
-                    "runtime_signal_count": len(prompt_assembly.runtime_signal_messages),
-                    "changed_layers": changed_layers,
-                },
-                step=0,
-            )
-            host._last_prompt_fingerprints = {
-                "constitution": prompt_assembly.constitution_fingerprint,
-                "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
-                "project_rules": prompt_assembly.project_rules_fingerprint,
-                "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
-            }
-        if hasattr(host, "_get_openai_tools_fingerprint_for_current_mode"):
-            tool_schema_fingerprint = host._get_openai_tools_fingerprint_for_current_mode()
-            previous_tool_schema_fingerprint = getattr(host, "_last_tool_schema_fingerprint", None)
-            trace_logger.log_event(
-                "tool_schema",
-                {
-                    "fingerprint": tool_schema_fingerprint,
-                    "tool_count": len(host._get_openai_tools_for_current_mode()),
-                    "changed": previous_tool_schema_fingerprint not in (None, tool_schema_fingerprint),
-                },
-                step=0,
-            )
-            host._last_tool_schema_fingerprint = tool_schema_fingerprint
 
         host._log_system_messages_if_needed(trace_logger)
         trace_logger.log_event(
@@ -213,6 +229,12 @@ class RuntimeRunner:
                 runtime_state = host.team_manager.export_state()
                 runtime_blocks = host._format_runtime_system_blocks(events, runtime_state=runtime_state)
                 host.context_builder.set_runtime_system_blocks(runtime_blocks)
+
+            self._trace_model_request_state(
+                trace_logger,
+                tools_schema=tools_schema,
+                step=step,
+            )
 
             if host.console_verbose:
                 host._console(f"\n--- Step {step}/{host.max_steps} ---")
