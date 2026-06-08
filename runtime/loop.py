@@ -369,23 +369,16 @@ class RuntimeRunner:
                     {"action_type": "tool_call", "tool_calls": tool_calls},
                     step,
                 )
-                if getattr(host, "tool_orchestrator", None) is not None:
-                    if hasattr(host.tool_orchestrator, "run"):
-                        observations = host.tool_orchestrator.run(
-                            tool_calls,
-                            step=step,
-                            trace_logger=trace_logger,
-                        )
-                    else:
-                        observations = host.tool_orchestrator.run_serial(
-                            tool_calls,
-                            step=step,
-                            trace_logger=trace_logger,
-                        )
+                if getattr(host, "tool_orchestrator", None) is None:
+                    raise RuntimeError("Runtime host must provide a ToolOrchestrator instance")
+                if hasattr(host.tool_orchestrator, "run"):
+                    observations = host.tool_orchestrator.run(
+                        tool_calls,
+                        step=step,
+                        trace_logger=trace_logger,
+                    )
                 else:
-                    from tools.orchestrator import ToolOrchestrator
-
-                    observations = ToolOrchestrator(host).run(
+                    observations = host.tool_orchestrator.run_serial(
                         tool_calls,
                         step=step,
                         trace_logger=trace_logger,

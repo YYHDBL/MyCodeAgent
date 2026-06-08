@@ -23,6 +23,31 @@ user input
 
 当前实现保留轻量取舍：不追求完整形式化状态机，但每条关键继续和结束路径必须有可观察原因。新增 fallback、hook、恢复机制时，应先定义状态转移，而不是在循环里增加隐式布尔变量。
 
+### 正式入口与实验边界
+
+Phase 0 之后，默认单 Agent 正式调用链固定为：
+
+```text
+main.py
+  -> app.cli
+  -> runtime.host.CodeAgent
+  -> RuntimeRunner.run()
+  -> RuntimeRunner._react_loop()
+  -> ContextEngine.build_model_view()
+  -> LLM
+  -> ToolOrchestrator.run()
+  -> HistoryManager
+  -> terminal / run_end
+```
+
+约束：
+
+- `CodeAgent.run()` 只委托给 `RuntimeRunner.run()`。
+- `CodeAgent._react_loop()` 仅保留兼容委托，不是第二套正式 loop。
+- `RuntimeRunner` 不在运行时临时构造新的 `ToolOrchestrator`；host 必须在装配阶段提供实例。
+- `tools/builtin/task.py` 当前仍通过 `experimental.teams.turn_executor` 启动简化子流程，它是实验边界，不属于默认单 Agent runtime。
+- `experimental/teams/` 在 Phase 7 前只允许被标记和隔离，不作为主运行时依赖扩张点。
+
 ## 2. Tool Orchestrator
 
 模型只负责提出 tool calls，`ToolOrchestrator` 决定如何执行。
@@ -87,6 +112,8 @@ HistoryManager full log
 - 安全工具批次与结果预算
 - 非破坏性 compact checkpoint
 - 模型视图与完整历史分离
+- Phase 0 核心 Trace 协议冻结，见 `docs/HARNESS_TRACE_PROTOCOL.md`
+- Phase 0 mock 基线场景固定，见 `tests/scenarios/`
 
 暂不实现：
 

@@ -29,12 +29,14 @@ RuntimeRunner
 ```
 
 详细设计见 [docs/HARNESS.md](docs/HARNESS.md)。
+核心 Trace 协议见 [docs/HARNESS_TRACE_PROTOCOL.md](docs/HARNESS_TRACE_PROTOCOL.md)。
 
 ## 当前能力
 
 ### Agent Loop
 
 - `runtime/loop.py` 是唯一的主循环
+- `runtime.host.CodeAgent` 只负责装配依赖并委托给 `RuntimeRunner`
 - `runtime/state.py` 记录显式 transition 和 terminal reason
 - 支持空响应重试、最大步数终止、工具调用继续和上下文压缩转移
 - trace 可以解释每一轮为什么继续或结束
@@ -58,6 +60,11 @@ RuntimeRunner
 ### Tools
 
 内置文件读取、搜索、写入、编辑、Bash、Todo、Skill、Task 和用户询问工具。工具响应遵循 [通用工具响应协议](docs/通用工具响应协议.md)。
+
+注意：
+
+- `Task` 当前仍连接到 `experimental/teams/` 的实验性子运行时。
+- 这条路径在 Phase 0 只做边界标记，不算默认单 Agent harness 的正式入口。
 
 ## 快速开始
 
@@ -105,6 +112,7 @@ LLM_API_KEY=your-api-key
 ```bash
 .venv/bin/python -m pytest tests/runtime tests/tools -q
 .venv/bin/python -m pytest tests/extensions -q
+.venv/bin/python -m pytest tests/scenarios -q
 .venv/bin/python -m pytest tests/experimental -q
 ```
 
