@@ -7,6 +7,7 @@ import json
 import time
 import logging
 import os
+import hashlib
 from typing import Optional, Any, Callable, TypedDict
 
 from .base import Tool, ToolStatus, ErrorCode, ToolParameter
@@ -17,6 +18,11 @@ load_env()
 
 # 设置日志
 logger = logging.getLogger(__name__)
+
+
+def _hash_json(data: Any) -> str:
+    payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class ReadMeta(TypedDict):
@@ -102,7 +108,7 @@ class ToolRegistry:
         """
         tools: list[dict[str, Any]] = []
 
-        for tool in self._tools.values():
+        for tool in sorted(self._tools.values(), key=lambda item: item.name):
             if not self._circuit_breaker.is_available(tool.name):
                 continue
             try:
@@ -118,7 +124,7 @@ class ToolRegistry:
                 },
             })
 
-        for name, info in self._functions.items():
+        for name, info in sorted(self._functions.items(), key=lambda item: item[0]):
             if not self._circuit_breaker.is_available(name):
                 continue
             tools.append({
@@ -141,6 +147,9 @@ class ToolRegistry:
             })
 
         return tools
+
+    def get_openai_tools_fingerprint(self) -> str:
+        return _hash_json(self.get_openai_tools())
 
     @staticmethod
     def _parameters_to_schema(params: list[ToolParameter]) -> dict[str, Any]:

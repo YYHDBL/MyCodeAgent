@@ -105,6 +105,8 @@ Phase 9  求职材料与架构收口
 
 ## 5. Phase 1：Prompt Assembly 与缓存稳定性
 
+状态：已完成 Prompt Assembly 分层、`CODE_LAW.md` 内容感知刷新、Skills/MCP/disabled tools 稳定指纹，以及工具 schema 稳定 fingerprint；未接入真实 prompt cache。
+
 ### 目标
 
 建立明确的提示词控制面，使稳定指令、工具能力、项目规则和动态运行时信息拥有不同生命周期。

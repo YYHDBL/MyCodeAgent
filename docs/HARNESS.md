@@ -125,3 +125,30 @@ HistoryManager full log
 - token-budget continuation
 
 后续能力只有在现有边界能够自然承载时才加入，不为模仿 Claude Code 而复制全部复杂度。
+
+## 5. Prompt Assembly
+
+Phase 1 之后，提示词控制面不再把所有稳定信息与动态通知混成一条 system prompt，而是分成四层生命周期：
+
+```text
+Constitution
+Tool Contracts
+Project Rules
+Runtime Signals
+```
+
+当前边界：
+
+- `Constitution`：`L1_system_prompt.py`
+- `Tool Contracts`：本地工具提示、Skills、MCP 说明、disabled tools
+- `Project Rules`：`CODE_LAW.md`
+- `Runtime Signals`：teams runtime blocks 等逐轮动态信号
+
+关键不变量：
+
+- `Runtime Signals` 只在读时追加，不进入稳定 `system_fingerprint`
+- `CODE_LAW.md` 内容变化必须改变 project/system fingerprint
+- Skills、MCP、disabled tools 只有内容变化时才应改变工具契约层 fingerprint
+- 工具 schema 必须稳定排序并可输出 fingerprint
+
+设计细节见 `docs/HARNESS_PROMPT_ASSEMBLY.md`。

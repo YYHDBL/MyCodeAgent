@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass
 
 from runtime.context import ContextEngine
 from runtime.history import Message
@@ -53,6 +54,25 @@ class ScenarioContextBuilder:
     def get_system_messages(self):
         return [{"role": "system", "content": "system"}]
 
+    def get_prompt_assembly(self):
+        @dataclass(frozen=True)
+        class _Assembly:
+            constitution_fingerprint: str = "constitution"
+            tool_contracts_fingerprint: str = "tool-contracts"
+            project_rules_fingerprint: str = "project-rules"
+            runtime_signals_fingerprint: str = "runtime-signals"
+            system_fingerprint: str = "system"
+            stable_messages: list = None
+            runtime_signal_messages: list = None
+            all_system_messages: list = None
+
+        messages = self.get_system_messages()
+        return _Assembly(
+            stable_messages=list(messages),
+            runtime_signal_messages=[],
+            all_system_messages=list(messages),
+        )
+
 
 class BaseScenarioHost:
     def __init__(self):
@@ -94,6 +114,9 @@ class BaseScenarioHost:
 
     def _get_openai_tools_for_current_mode(self):
         return []
+
+    def _get_openai_tools_fingerprint_for_current_mode(self):
+        return "tool-schema"
 
     def _extract_content(self, raw_response):
         return raw_response["choices"][0]["message"]["content"]

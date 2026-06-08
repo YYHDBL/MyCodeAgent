@@ -86,6 +86,13 @@
 
 ## Phase 1：Prompt Assembly 与缓存稳定性
 
+执行备注（2026-06-08）：
+
+- `ContextBuilder` 保留运行时 facade，但内部已按 `Constitution / Tool Contracts / Project Rules / Runtime Signals` 分层。
+- `Runtime Signals` 仍通过 system messages 进入当前模型接口，但不进入稳定 `system_fingerprint`。
+- `CODE_LAW.md` 改为按内容感知刷新，不再依赖“存在性”或外部手动失效。
+- OpenAI tools schema 已稳定排序，并可输出 fingerprint 供 Trace 与 session 对比。
+
 ### P1-T1：引入 Prompt Assembly 分层模型
 
 **目标**：把稳定宪法、工具契约、项目规则和运行时信号拆成明确生命周期。

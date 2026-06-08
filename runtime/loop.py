@@ -89,6 +89,54 @@ class RuntimeRunner:
         host._run_id += 1
         run_id = host._run_id
 
+        prompt_assembly = None
+        if hasattr(host.context_builder, "get_prompt_assembly"):
+            prompt_assembly = host.context_builder.get_prompt_assembly()
+            previous_prompt_fingerprints = getattr(host, "_last_prompt_fingerprints", {})
+            changed_layers = [
+                layer
+                for layer, value in {
+                    "constitution": prompt_assembly.constitution_fingerprint,
+                    "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
+                    "project_rules": prompt_assembly.project_rules_fingerprint,
+                    "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
+                }.items()
+                if previous_prompt_fingerprints.get(layer) not in (None, value)
+            ]
+            trace_logger.log_event(
+                "prompt_assembly",
+                {
+                    "constitution_fingerprint": prompt_assembly.constitution_fingerprint,
+                    "tool_contracts_fingerprint": prompt_assembly.tool_contracts_fingerprint,
+                    "project_rules_fingerprint": prompt_assembly.project_rules_fingerprint,
+                    "runtime_signals_fingerprint": prompt_assembly.runtime_signals_fingerprint,
+                    "system_fingerprint": prompt_assembly.system_fingerprint,
+                    "stable_message_count": len(prompt_assembly.stable_messages),
+                    "runtime_signal_count": len(prompt_assembly.runtime_signal_messages),
+                    "changed_layers": changed_layers,
+                },
+                step=0,
+            )
+            host._last_prompt_fingerprints = {
+                "constitution": prompt_assembly.constitution_fingerprint,
+                "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
+                "project_rules": prompt_assembly.project_rules_fingerprint,
+                "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
+            }
+        if hasattr(host, "_get_openai_tools_fingerprint_for_current_mode"):
+            tool_schema_fingerprint = host._get_openai_tools_fingerprint_for_current_mode()
+            previous_tool_schema_fingerprint = getattr(host, "_last_tool_schema_fingerprint", None)
+            trace_logger.log_event(
+                "tool_schema",
+                {
+                    "fingerprint": tool_schema_fingerprint,
+                    "tool_count": len(host._get_openai_tools_for_current_mode()),
+                    "changed": previous_tool_schema_fingerprint not in (None, tool_schema_fingerprint),
+                },
+                step=0,
+            )
+            host._last_tool_schema_fingerprint = tool_schema_fingerprint
+
         host._log_system_messages_if_needed(trace_logger)
         trace_logger.log_event(
             "run_start",

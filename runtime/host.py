@@ -3,6 +3,7 @@ import uuid
 import os
 import logging
 import sys
+import hashlib
 import traceback as tb
 from typing import Any, Optional, List, Tuple
 
@@ -552,6 +553,11 @@ class CodeAgent(Agent):
             if self._is_tool_allowed_in_delegate_mode(str(name or "")):
                 filtered.append(item)
         return filtered
+
+    def _get_openai_tools_fingerprint_for_current_mode(self) -> str:
+        tools = self._get_openai_tools_for_current_mode()
+        payload = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _ensure_json_input(self, raw: str) -> Tuple[Any, Optional[str]]:
         if raw is None:

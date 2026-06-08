@@ -28,7 +28,7 @@ class TestContextBuilder(unittest.TestCase):
             messages = builder.build_messages(history)
             self.assertEqual(messages[0]["role"], "system")
             self.assertEqual(messages[1]["role"], "system")
-            self.assertEqual(messages[2]["role"], "user")
+            self.assertEqual(messages[-1]["role"], "user")
 
     def test_system_prompt_override(self):
         structure = {
@@ -42,7 +42,7 @@ class TestContextBuilder(unittest.TestCase):
             )
             messages = builder.get_system_messages()
             self.assertIn("OVERRIDE", messages[0]["content"])
-            self.assertIn("LS tool", messages[0]["content"])
+            self.assertIn("LS tool", "\n".join(message["content"] for message in messages))
 
     def test_code_law_lowercase_name(self):
         structure = {
@@ -62,16 +62,16 @@ class TestContextBuilder(unittest.TestCase):
         }
         with self._make_project(structure) as project:
             builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
+            snapshot1 = builder.get_prompt_assembly()
             messages1 = builder.get_system_messages()
             self.assertIn("Rule A", messages1[1]["content"])
             time.sleep(0.01)
             project.path("CODE_LAW.md").write_text("Rule B", encoding="utf-8")
-            # Cache is reused until invalidated explicitly
+            snapshot2 = builder.get_prompt_assembly()
             messages2 = builder.get_system_messages()
-            self.assertIn("Rule A", messages2[1]["content"])
-            builder.set_mcp_tools_prompt("invalidate")
-            messages3 = builder.get_system_messages()
-            self.assertIn("Rule B", messages3[1]["content"])
+            self.assertIn("Rule B", messages2[1]["content"])
+            self.assertNotEqual(snapshot1.system_fingerprint, snapshot2.system_fingerprint)
+            self.assertNotEqual(snapshot1.project_rules_fingerprint, snapshot2.project_rules_fingerprint)
 
     def test_tool_prompts_sorted_and_skip_private(self):
         structure = {
@@ -83,7 +83,7 @@ class TestContextBuilder(unittest.TestCase):
         with self._make_project(structure) as project:
             builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
             messages = builder.get_system_messages()
-            content = messages[0]["content"]
+            content = "\n".join(message["content"] for message in messages)
             self.assertIn("A", content)
             self.assertIn("B", content)
             self.assertNotIn("X", content)
@@ -107,8 +107,9 @@ class TestContextBuilder(unittest.TestCase):
             builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
             builder.set_mcp_tools_prompt("MCP tool list")
             messages = builder.get_system_messages()
-            self.assertIn("# MCP Tools", messages[0]["content"])
-            self.assertIn("MCP tool list", messages[0]["content"])
+            content = "\n".join(message["content"] for message in messages)
+            self.assertIn("## MCP Tools", content)
+            self.assertIn("MCP tool list", content)
 
     def test_skills_prompt_injection(self):
         structure = {
@@ -119,7 +120,7 @@ class TestContextBuilder(unittest.TestCase):
             builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
             builder.set_skills_prompt("SkillA, SkillB")
             messages = builder.get_system_messages()
-            self.assertIn("SkillA, SkillB", messages[0]["content"])
+            self.assertIn("SkillA, SkillB", "\n".join(message["content"] for message in messages))
 
     def test_cache_invalidated_on_set_skills_prompt(self):
         structure = {
@@ -129,10 +130,48 @@ class TestContextBuilder(unittest.TestCase):
         with self._make_project(structure) as project:
             builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
             messages1 = builder.get_system_messages()
-            self.assertNotIn("SkillA", messages1[0]["content"])
+            self.assertNotIn("SkillA", "\n".join(message["content"] for message in messages1))
             builder.set_skills_prompt("SkillA")
             messages2 = builder.get_system_messages()
-            self.assertIn("SkillA", messages2[0]["content"])
+            self.assertIn("SkillA", "\n".join(message["content"] for message in messages2))
+
+    def test_runtime_signals_do_not_change_stable_system_fingerprint(self):
+        structure = {
+            "prompts/agents_prompts/L1_system_prompt.py": "system_prompt = 'L1 {tools}'",
+            "prompts/tools_prompts/skill_prompt.py": "skill_prompt = 'Skills: {{available_skills}}'",
+        }
+        with self._make_project(structure) as project:
+            builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
+            before = builder.get_prompt_assembly()
+            builder.set_runtime_system_blocks(["runtime block"])
+            after = builder.get_prompt_assembly()
+
+            self.assertEqual(before.system_fingerprint, after.system_fingerprint)
+            self.assertNotEqual(before.runtime_signals_fingerprint, after.runtime_signals_fingerprint)
+            self.assertEqual(after.runtime_signal_messages[-1]["content"], "runtime block")
+
+    def test_skills_and_mcp_fingerprints_change_only_when_content_changes(self):
+        structure = {
+            "prompts/agents_prompts/L1_system_prompt.py": "system_prompt = 'L1 {tools}'",
+            "prompts/tools_prompts/skill_prompt.py": "skill_prompt = 'Skills: {{available_skills}}'",
+        }
+        with self._make_project(structure) as project:
+            builder = ContextBuilder(tool_registry=DummyToolRegistry(), project_root=str(project.root))
+
+            baseline = builder.get_prompt_assembly()
+            builder.set_skills_prompt("SkillA")
+            skill_once = builder.get_prompt_assembly()
+            builder.set_skills_prompt("SkillA")
+            skill_twice = builder.get_prompt_assembly()
+            builder.set_mcp_tools_prompt("MCP tool list")
+            mcp_once = builder.get_prompt_assembly()
+            builder.set_mcp_tools_prompt("MCP tool list")
+            mcp_twice = builder.get_prompt_assembly()
+
+            self.assertNotEqual(baseline.tool_contracts_fingerprint, skill_once.tool_contracts_fingerprint)
+            self.assertEqual(skill_once.tool_contracts_fingerprint, skill_twice.tool_contracts_fingerprint)
+            self.assertNotEqual(skill_once.tool_contracts_fingerprint, mcp_once.tool_contracts_fingerprint)
+            self.assertEqual(mcp_once.tool_contracts_fingerprint, mcp_twice.tool_contracts_fingerprint)
 
 
 if __name__ == "__main__":
