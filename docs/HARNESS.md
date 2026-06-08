@@ -152,3 +152,27 @@ Runtime Signals
 - 工具 schema 必须稳定排序并可输出 fingerprint
 
 设计细节见 `docs/HARNESS_PROMPT_ASSEMBLY.md`。
+
+## 6. Completion Gate
+
+Phase 2 之后，`RuntimeRunner` 不再把模型 final text 直接视为 terminal，而是先经过 `runtime/completion.py`：
+
+```text
+final text
+  -> CompletionCandidate
+  -> CompletionRequirements
+  -> VerificationEvidence
+  -> DeterministicCompletionVerifier
+  -> PASS / FAIL / UNVERIFIED
+```
+
+当前边界：
+
+- `CompletionCandidate` 把模型 final response 与 terminal 分离
+- `CompletionRequirements` 只处理显式验证要求、可选 unverifiable 和最新 Todo 状态
+- `VerificationEvidence` 只来自实际工具执行，不接受模型自述
+- 验证后再发生 `Write` / `Edit` / `MultiEdit` 会使旧证据失效
+- Gate 阻塞通过 `STOP_HOOK_BLOCKING` 转移进入下一轮，并受重试上限约束
+- 默认 verifier 是确定性接口实现，不启动第二个 Agent，也不允许 verifier 修改代码
+
+Trace 和协议细节见 `docs/HARNESS_COMPLETION_GATE.md`。

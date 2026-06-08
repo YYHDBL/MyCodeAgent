@@ -39,14 +39,20 @@ class _FakeHistoryManager:
     def __init__(self):
         self.messages = []
 
-    def append_user(self, content):
-        self.messages.append({"role": "user", "content": content})
+    def append_user(self, content, metadata=None):
+        self.messages.append({"role": "user", "content": content, "metadata": metadata or {}})
 
     def append_assistant(self, content, metadata=None, reasoning_content=None):
         self.messages.append({"role": "assistant", "content": content, "metadata": metadata or {}})
 
     def append_tool(self, tool_name, raw_result, metadata=None, project_root=None):
-        self.messages.append({"role": "tool", "content": raw_result, "metadata": metadata or {}})
+        self.messages.append(
+            {
+                "role": "tool",
+                "content": raw_result,
+                "metadata": {"tool_name": tool_name, **(metadata or {})},
+            }
+        )
 
     def get_messages(self):
         from runtime.history import Message
@@ -76,6 +82,27 @@ class _FakeContextBuilder:
 
     def get_system_messages(self):
         return [{"role": "system", "content": "system"}]
+
+    def get_prompt_assembly(self):
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _Assembly:
+            constitution_fingerprint: str = "constitution"
+            tool_contracts_fingerprint: str = "tool-contracts"
+            project_rules_fingerprint: str = "project-rules"
+            runtime_signals_fingerprint: str = "runtime-signals"
+            system_fingerprint: str = "system"
+            stable_messages: list = None
+            runtime_signal_messages: list = None
+            all_system_messages: list = None
+
+        messages = self.get_system_messages()
+        return _Assembly(
+            stable_messages=list(messages),
+            runtime_signal_messages=[],
+            all_system_messages=list(messages),
+        )
 
     def build_messages(self, history_messages):
         return [{"role": "system", "content": "system"}] + list(history_messages)
@@ -147,6 +174,9 @@ class _FakeHost:
 
     def _get_openai_tools_for_current_mode(self):
         return []
+
+    def _get_openai_tools_fingerprint_for_current_mode(self):
+        return "tools"
 
     def _extract_content(self, raw_response):
         return raw_response["choices"][0]["message"]["content"]
@@ -406,6 +436,191 @@ class _BudgetedOrchestrator:
                 metadata={"budgeted": True, "reason": "single_tool_budget"},
             )
         ]
+
+
+class _SimpleQuestionHost(_FakeHost):
+    pass
+
+
+class _FinalWithoutEvidenceHost(_FakeHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [{"choices": [{"message": {"content": "tests passed, task complete"}}]}]
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                return self.outer.responses[0]
+
+        self.llm = _FakeLLM(self)
+
+
+class _BashVerificationHost(_FakeHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "Bash",
+                                        "arguments": "{\"command\": \".venv/bin/python -m pytest -q\"}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "tests passed, task complete"}}]},
+        ]
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                return self.outer.responses.pop(0)
+
+        self.llm = _FakeLLM(self)
+
+    def _extract_tool_calls(self, raw_response):
+        return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
+
+    def _execute_tool(self, tool_name, tool_input):
+        return json.dumps(
+            {
+                "status": "success",
+                "data": {"exit_code": 0},
+                "text": "Command succeeded: .venv/bin/python -m pytest -q",
+                "context": {"params_input": tool_input},
+            }
+        )
+
+
+class _VerificationInvalidatedByWriteHost(_BashVerificationHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [
+            self.responses[0],
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_2",
+                                    "function": {
+                                        "name": "Write",
+                                        "arguments": "{\"path\": \"a.txt\", \"content\": \"x\"}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "tests passed earlier, task complete"}}]},
+        ]
+
+    def _execute_tool(self, tool_name, tool_input):
+        if tool_name == "Bash":
+            return super()._execute_tool(tool_name, tool_input)
+        return json.dumps(
+            {
+                "status": "success",
+                "data": {"path": tool_input.get("path")},
+                "text": "file written",
+                "context": {"params_input": tool_input},
+            }
+        )
+
+
+class _TodoBlockingHost(_FakeHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "TodoWrite",
+                                        "arguments": "{\"summary\": \"work\", \"todos\": [{\"content\": \"do thing\", \"status\": \"in_progress\"}]}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "done"}}]},
+            {"choices": [{"message": {"content": "done again"}}]},
+        ]
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                return self.outer.responses.pop(0)
+
+        self.llm = _FakeLLM(self)
+
+    def _extract_tool_calls(self, raw_response):
+        return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
+
+    def _execute_tool(self, tool_name, tool_input):
+        return json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "todos": [{"id": "t1", "content": "do thing", "status": "in_progress"}],
+                    "summary": "work",
+                    "stats": {"total": 1, "pending": 0, "in_progress": 1, "completed": 0, "cancelled": 0},
+                },
+                "text": "todo updated",
+                "context": {"params_input": tool_input},
+            }
+        )
+
+    def _extract_tool_calls(self, raw_response):
+        return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
+
+    def _execute_tool(self, tool_name, tool_input):
+        return json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "todos": [{"id": "t1", "content": "do thing", "status": "in_progress"}],
+                    "summary": "work",
+                    "stats": {"total": 1, "pending": 0, "in_progress": 1, "completed": 0, "cancelled": 0},
+                },
+                "text": "todo updated",
+                "context": {"params_input": tool_input},
+            }
+        )
 
 
 def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
@@ -695,3 +910,116 @@ def test_runtime_runner_emits_context_compacted_transition():
         event[0] == "state_transition" and event[2]["reason"] == "context_compacted"
         for event in host.trace_logger.events
     )
+
+
+def test_runtime_runner_simple_question_can_complete_without_verification():
+    from runtime.loop import RuntimeRunner
+
+    host = _SimpleQuestionHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("what is 2+2?", show_raw=False)
+
+    assert result == "runner final answer"
+    assert any(event[0] == "completion_candidate" for event in host.trace_logger.events)
+    assert any(
+        event[0] == "completion_gate_verdict" and event[2]["verdict"] == "pass"
+        for event in host.trace_logger.events
+    )
+    candidate_index = next(
+        index for index, event in enumerate(host.trace_logger.events) if event[0] == "completion_candidate"
+    )
+    terminal_index = next(
+        index for index, event in enumerate(host.trace_logger.events) if event[0] == "terminal"
+    )
+    assert candidate_index < terminal_index
+
+
+def test_runtime_runner_requires_test_evidence_when_user_explicitly_requests_tests():
+    from runtime.loop import RuntimeRunner
+
+    host = _FinalWithoutEvidenceHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("make the fix and run tests", show_raw=False)
+
+    assert "无法在限定步数内完成" in result
+    assert any(
+        event[0] == "completion_gate_verdict" and event[2]["verdict"] == "fail"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "state_transition" and event[2]["reason"] == "stop_hook_blocking"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "terminal" and event[2]["reason"] == "completion_gate_blocked"
+        for event in host.trace_logger.events
+    )
+
+
+def test_runtime_runner_passes_completion_gate_with_valid_verification_evidence():
+    from runtime.loop import RuntimeRunner
+
+    host = _BashVerificationHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("make the fix and run tests", show_raw=False)
+
+    assert result == "tests passed, task complete"
+    assert any(
+        event[0] == "completion_gate_verdict" and event[2]["verdict"] == "pass"
+        for event in host.trace_logger.events
+    )
+    assert any(event[0] == "verification_evidence" for event in host.trace_logger.events)
+
+
+def test_runtime_runner_can_finish_unverified_when_user_marks_verification_optional():
+    from runtime.loop import RuntimeRunner
+
+    host = _FinalWithoutEvidenceHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("make the fix and run tests if possible", show_raw=False)
+
+    assert result == "tests passed, task complete"
+    assert any(
+        event[0] == "completion_gate_verdict" and event[2]["verdict"] == "unverified"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "terminal" and event[2]["reason"] == "completed_unverified"
+        for event in host.trace_logger.events
+    )
+
+
+def test_runtime_runner_invalidates_old_verification_after_file_modification():
+    from runtime.loop import RuntimeRunner
+
+    host = _VerificationInvalidatedByWriteHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("make the fix and run tests", show_raw=False)
+
+    assert "无法在限定步数内完成" in result
+    evidence_events = [event for event in host.trace_logger.events if event[0] == "verification_evidence"]
+    assert evidence_events
+    assert any(event[2]["valid"] is False for event in evidence_events)
+    verdict_events = [event for event in host.trace_logger.events if event[0] == "completion_gate_verdict"]
+    assert verdict_events[-1][2]["reasons"] == ["verification_invalid:tests"]
+
+
+def test_runtime_runner_blocks_when_todo_remains_incomplete():
+    from runtime.loop import RuntimeRunner
+
+    host = _TodoBlockingHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("finish this task", show_raw=False)
+
+    assert "无法在限定步数内完成" in result
+    requirement_events = [event for event in host.trace_logger.events if event[0] == "completion_requirements"]
+    assert requirement_events
+    assert requirement_events[-1][2]["has_incomplete_todos"] is True
+    verdict_events = [event for event in host.trace_logger.events if event[0] == "completion_gate_verdict"]
+    assert verdict_events[-1][2]["reasons"] == ["incomplete_todos"]

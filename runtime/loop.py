@@ -7,6 +7,13 @@ import json
 import uuid
 from typing import Any
 
+from runtime.completion import (
+    CompletionGateVerdict,
+    DeterministicCompletionVerifier,
+    build_completion_candidate,
+    collect_verification_evidence,
+    infer_completion_requirements,
+)
 from runtime.input_preprocess import preprocess_input
 from runtime.state import LoopState, TerminalReason, TransitionReason
 
@@ -124,6 +131,24 @@ class RuntimeRunner:
         )
         host._last_tool_schema_fingerprint = tool_schema_fingerprint
 
+    def _append_user_message(self, content: str, metadata: dict[str, Any] | None = None) -> None:
+        append_user = self.host.history_manager.append_user
+        if metadata is None:
+            append_user(content)
+            return
+        try:
+            append_user(content, metadata=metadata)
+        except TypeError:
+            append_user(content)
+
+    def _get_completion_verifier(self):
+        verifier = getattr(self.host, "completion_verifier", None)
+        if verifier is not None:
+            return verifier
+        verifier = DeterministicCompletionVerifier()
+        self.host.completion_verifier = verifier
+        return verifier
+
     def run(self, input_text: str, **kwargs) -> str:
         host = self.host
         show_raw = kwargs.pop("show_raw", False)
@@ -164,7 +189,7 @@ class RuntimeRunner:
             step=0,
         )
 
-        host.history_manager.append_user(processed_input)
+        self._append_user_message(processed_input)
         trace_logger.log_event(
             "user_input",
             {"text": input_text, "processed": processed_input},
@@ -204,6 +229,7 @@ class RuntimeRunner:
     def _react_loop(self, pending_input: str, show_raw: bool, trace_logger) -> str:
         host = self.host
         tool_choice = "auto"
+        completion_retry_limit = int(getattr(host, "completion_gate_retry_limit", 2) or 2)
         state = LoopState(
             messages=[],
             step=1,
@@ -494,34 +520,142 @@ class RuntimeRunner:
                 continue
 
             final_text = str(response_text).strip()
+            candidate = build_completion_candidate(
+                final_text=final_text,
+                step=step,
+                response_meta=response_meta,
+                history_messages=host.history_manager.get_messages(),
+            )
+            trace_logger.log_event(
+                "completion_candidate",
+                candidate.to_trace_payload(),
+                step=step,
+            )
+
+            requirements = infer_completion_requirements(
+                user_input=pending_input,
+                history_messages=host.history_manager.get_messages(),
+            )
+            trace_logger.log_event(
+                "completion_requirements",
+                requirements.to_trace_payload(),
+                step=step,
+            )
+
+            evidence = collect_verification_evidence(host.history_manager.get_messages())
+            for item in evidence:
+                trace_logger.log_event("verification_evidence", item.to_trace_payload(), step=step)
+
+            verdict = self._get_completion_verifier().evaluate(
+                candidate,
+                requirements,
+                evidence,
+                host.history_manager.get_messages(),
+            )
+            trace_logger.log_event(
+                "completion_gate_verdict",
+                verdict.to_trace_payload(),
+                step=step,
+            )
+
+            if verdict.verdict in {CompletionGateVerdict.PASS, CompletionGateVerdict.UNVERIFIED}:
+                action_type = "final" if verdict.verdict is CompletionGateVerdict.PASS else "final_unverified"
+                host.history_manager.append_assistant(
+                    content=final_text,
+                    metadata={"step": step, "action_type": action_type},
+                    reasoning_content=reasoning_content,
+                )
+                host._log_message_write(
+                    trace_logger,
+                    "assistant",
+                    final_text,
+                    {"action_type": action_type},
+                    step,
+                )
+                state = self._transition(
+                    state,
+                    TransitionReason.MODEL_RETURNED_FINAL,
+                    trace_logger,
+                    step=step,
+                    last_response_meta={
+                        "final_length": len(final_text),
+                        "completion_verdict": verdict.verdict.value,
+                    },
+                    details={
+                        "final_length": len(final_text),
+                        "completion_verdict": verdict.verdict.value,
+                    },
+                )
+                terminal_reason = (
+                    TerminalReason.COMPLETED
+                    if verdict.verdict is CompletionGateVerdict.PASS
+                    else TerminalReason.COMPLETED_UNVERIFIED
+                )
+                self._terminal(
+                    terminal_reason,
+                    trace_logger,
+                    step=step,
+                    final_length=len(final_text),
+                    completion_verdict=verdict.verdict.value,
+                )
+                trace_logger.log_event(
+                    "finish",
+                    {"final": final_text, "completion_verdict": verdict.verdict.value},
+                    step=step,
+                )
+                return final_text
+
             host.history_manager.append_assistant(
                 content=final_text,
-                metadata={"step": step, "action_type": "final"},
+                metadata={"step": step, "action_type": "final_candidate"},
                 reasoning_content=reasoning_content,
             )
             host._log_message_write(
                 trace_logger,
                 "assistant",
                 final_text,
-                {"action_type": "final"},
+                {"action_type": "final_candidate"},
+                step,
+            )
+            block_count = state.completion_block_count + 1
+            feedback = verdict.blocking_feedback or "Completion blocked by runtime gate."
+            self._append_user_message(
+                feedback,
+                metadata={"step": step, "source": "completion_gate"},
+            )
+            host._log_message_write(
+                trace_logger,
+                "user",
+                feedback,
+                {"source": "completion_gate"},
                 step,
             )
             state = self._transition(
                 state,
-                TransitionReason.MODEL_RETURNED_FINAL,
+                TransitionReason.STOP_HOOK_BLOCKING,
                 trace_logger,
                 step=step,
-                last_response_meta={"final_length": len(final_text)},
-                details={"final_length": len(final_text)},
+                completion_block_count=block_count,
+                stop_hook_active=True,
+                details={
+                    "completion_verdict": verdict.verdict.value,
+                    "reasons": list(verdict.reasons),
+                    "retry_count": block_count,
+                    "retry_limit": completion_retry_limit,
+                },
             )
-            self._terminal(
-                TerminalReason.COMPLETED,
-                trace_logger,
-                step=step,
-                final_length=len(final_text),
-            )
-            trace_logger.log_event("finish", {"final": final_text}, step=step)
-            return final_text
+            if block_count >= completion_retry_limit:
+                self._terminal(
+                    TerminalReason.COMPLETION_GATE_BLOCKED,
+                    trace_logger,
+                    step=step,
+                    completion_verdict=verdict.verdict.value,
+                    reasons=list(verdict.reasons),
+                    retry_count=block_count,
+                    retry_limit=completion_retry_limit,
+                )
+                return "抱歉，我无法在限定步数内完成这个任务。"
+            continue
 
         state = self._transition(
             state,

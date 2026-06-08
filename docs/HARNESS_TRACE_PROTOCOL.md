@@ -39,3 +39,21 @@
 - 协议常量：`extensions/tracing/protocol.py`
 - 协议测试：`tests/extensions/test_trace_protocol.py`
 - Phase 0 基线场景：`tests/scenarios/`
+
+## Phase 1-2 辅助事件
+
+这些事件不是 Phase 0 核心协议的一部分，但当前 harness 依赖它们解释提示词装配与完成判定：
+
+| Event | 关键字段 | 语义 |
+| --- | --- | --- |
+| `prompt_assembly` | `constitution_fingerprint`, `tool_contracts_fingerprint`, `project_rules_fingerprint`, `runtime_signals_fingerprint`, `system_fingerprint`, `changed_layers` | 当前 step 的 Prompt Assembly 指纹和变化来源 |
+| `tool_schema` | `fingerprint`, `tool_count`, `changed` | 当前工具 schema 指纹与变化状态 |
+| `completion_candidate` | `final_text`, `final_length`, `step`, `response_meta`, `last_tool_name`, `last_tool_status` | 模型 final response 的候选完成声明 |
+| `completion_requirements` | `requires_verification`, `verification_kinds`, `allow_unverified`, `has_incomplete_todos`, `incomplete_todos`, `explicit_user_constraints` | 当前 runtime 判断出的最小完成要求 |
+| `verification_evidence` | `requirement_id`, `tool_name`, `command`, `status`, `step`, `valid`, `invalid_reason` | 实际工具执行产生的验证证据，以及是否仍有效 |
+| `completion_gate_verdict` | `verdict`, `reasons`, `blocking_feedback`, `passed_evidence` | Completion Gate 对 candidate 的确定性判定 |
+
+辅助终止原因补充：
+
+- `completed_unverified`
+- `completion_gate_blocked`

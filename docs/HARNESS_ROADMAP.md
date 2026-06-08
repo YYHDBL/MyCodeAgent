@@ -150,6 +150,8 @@ Runtime Signals    当前步骤、恢复提示、验证反馈等动态信息
 
 ## 6. Phase 2：Completion Gate 与验证协议
 
+状态：已完成 `CompletionCandidate / CompletionRequirements / VerificationEvidence / DeterministicCompletionVerifier` 接入；final response 不再直接 terminal，当前默认不启动独立 Verification Agent。
+
 ### 目标
 
 把“模型说完成了”改造成“运行时允许任务完成”，建立项目最重要的可靠结束机制。
@@ -170,7 +172,7 @@ model final candidate
 
 `CompletionRequirements` 描述本次任务允许完成前必须满足的条件，例如是否要求测试、是否允许无法验证、是否存在必须完成的 Todo。`VerificationEvidence` 记录由哪次工具调用、命令结果或状态检查证明某项要求已经满足，并标记证据是否仍然有效。
 
-确定性检查只负责代码可以可靠判断的事实，例如未完成 Todo、最后工具失败、要求的验证没有有效证据、存在阻塞状态。该阶段先定义统一验证协议和扩展接口；真正独立运行的 Verification Agent 在 Phase 7 接入，避免当前阶段提前引入第二套 Agent Runtime。
+确定性检查只负责代码可以可靠判断的事实，例如未完成 Todo、要求的验证没有有效证据、存在阻塞状态。该阶段先定义统一验证协议和扩展接口；真正独立运行的 Verification Agent 在 Phase 7 接入，避免当前阶段提前引入第二套 Agent Runtime。
 
 ### 范围
 

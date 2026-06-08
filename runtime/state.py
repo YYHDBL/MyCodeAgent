@@ -22,7 +22,9 @@ class TransitionReason(str, Enum):
 
 class TerminalReason(str, Enum):
     COMPLETED = "completed"
+    COMPLETED_UNVERIFIED = "completed_unverified"
     EMPTY_RESPONSE_FAILED = "empty_response_failed"
+    COMPLETION_GATE_BLOCKED = "completion_gate_blocked"
     MAX_STEPS = "max_steps"
     TOOL_ERROR_UNRECOVERABLE = "tool_error_unrecoverable"
     USER_ABORT = "user_abort"
@@ -46,6 +48,7 @@ class LoopState:
     empty_response_retry_used: bool = False
     max_output_recovery_count: int = 0
     stop_hook_active: bool = False
+    completion_block_count: int = 0
     last_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     last_response_meta: dict[str, Any] = field(default_factory=dict)
     last_error: str | None = None

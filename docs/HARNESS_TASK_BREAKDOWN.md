@@ -160,6 +160,15 @@
 
 ## Phase 2：Completion Gate 与验证协议
 
+执行备注（2026-06-08）：
+
+- `RuntimeRunner` final 分支已先产出 `CompletionCandidate`，再交给 `runtime/completion.py` 判定。
+- `CompletionRequirements` 当前只处理显式验证要求、可选 `UNVERIFIED` 和最新 `TodoWrite` 未完成项。
+- `VerificationEvidence` 当前只从实际工具执行中提取，模型文本自述不算证据。
+- 验证后发生 `Write` / `Edit` / `MultiEdit` 会使旧证据失效。
+- Gate 阻塞通过 `STOP_HOOK_BLOCKING` 转移进入下一轮，超过上限后以 `completion_gate_blocked` 终止。
+- verifier 接口已预留，默认仍是确定性实现，不启动第二个 Agent。
+
 ### P2-T1：定义完成候选协议
 
 **目标**：模型 final response 先变成完成候选，而不是直接 terminal。
