@@ -22,6 +22,16 @@ def test_infer_completion_requirements_detects_explicit_test_request():
     assert requirements.allow_unverified is False
 
 
+def test_infer_completion_requirements_detects_chinese_test_request():
+    requirements = infer_completion_requirements(
+        user_input="修复这个问题，然后运行测试",
+        history_messages=[],
+    )
+
+    assert requirements.requires_verification is True
+    assert requirements.verification_kinds == ("tests",)
+
+
 def test_infer_completion_requirements_allows_unverified_when_user_marks_optional():
     requirements = infer_completion_requirements(
         user_input="make the fix and run tests if possible",
@@ -30,6 +40,26 @@ def test_infer_completion_requirements_allows_unverified_when_user_marks_optiona
 
     assert requirements.requires_verification is True
     assert requirements.allow_unverified is True
+
+
+def test_collect_verification_evidence_ignores_non_test_commands_with_test_text():
+    history_messages = [
+        Message(
+            role="tool",
+            content=json.dumps(
+                {
+                    "status": "success",
+                    "data": {"exit_code": 0},
+                    "context": {"params_input": {"command": "grep test README.md"}},
+                }
+            ),
+            metadata={"tool_name": "Bash", "step": 1},
+        ),
+    ]
+
+    evidence = collect_verification_evidence(history_messages)
+
+    assert evidence == []
 
 
 def test_collect_verification_evidence_invalidates_after_later_mutation():

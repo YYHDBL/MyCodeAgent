@@ -605,23 +605,6 @@ class _TodoBlockingHost(_FakeHost):
             }
         )
 
-    def _extract_tool_calls(self, raw_response):
-        return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
-
-    def _execute_tool(self, tool_name, tool_input):
-        return json.dumps(
-            {
-                "status": "success",
-                "data": {
-                    "todos": [{"id": "t1", "content": "do thing", "status": "in_progress"}],
-                    "summary": "work",
-                    "stats": {"total": 1, "pending": 0, "in_progress": 1, "completed": 0, "cancelled": 0},
-                },
-                "text": "todo updated",
-                "context": {"params_input": tool_input},
-            }
-        )
-
 
 def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     from runtime.loop import RuntimeRunner

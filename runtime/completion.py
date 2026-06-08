@@ -22,14 +22,20 @@ VERIFY_REQUIREMENT_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\brun\s+(the\s+)?tests?\b", "tests"),
     (r"\btest\s+suite\b", "tests"),
     (r"\bunit\s+tests?\b", "tests"),
+    (r"(运行|执行|跑)(一下)?测试", "tests"),
     (r"\blint\b", "lint"),
     (r"\btypecheck\b", "typecheck"),
+    (r"类型检查", "typecheck"),
     (r"\bbuild\b", "build"),
+    (r"(运行|执行)?构建", "build"),
 )
 
 VERIFY_COMMAND_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bpytest\b", "tests"),
-    (r"\btest\b", "tests"),
+    (r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?::[\w-]+)?\b", "tests"),
+    (r"\bgo\s+test\b", "tests"),
+    (r"\bcargo\s+test\b", "tests"),
+    (r"\bmake\s+test\b", "tests"),
     (r"\blint\b", "lint"),
     (r"\btypecheck\b", "typecheck"),
     (r"\bbuild\b", "build"),
