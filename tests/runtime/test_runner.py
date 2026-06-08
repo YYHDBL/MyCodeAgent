@@ -338,6 +338,102 @@ class _AlwaysEmptyHost(_FakeHost):
         self.llm = _FakeLLM(self)
 
 
+class _ApiErrorHost(_FakeHost):
+    def __init__(self):
+        super().__init__()
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                raise RuntimeError("rate limit exceeded")
+
+        self.llm = _FakeLLM(self)
+
+
+class _ReactiveCompactContextEngine:
+    def __init__(self):
+        self.compact_calls = []
+        self.build_calls = []
+        self.last_usage_tokens = 0
+        self.total_usage_tokens = 0
+
+    def compact_if_needed(self, **kwargs):
+        return {"compacted": False, "reason": "budget_ok"}
+
+    def build_model_view(self, *, history_manager, pending_input="", step=0, trace_logger=None):
+        self.build_calls.append(step)
+        if trace_logger:
+            trace_logger.log_event(
+                "model_view_build",
+                {
+                    "message_count": 2,
+                    "system_message_count": 1,
+                    "history_message_count": 1,
+                    "source_message_count": 1,
+                    "estimated_chars": len(pending_input or ""),
+                    "projection_mode": "full",
+                    "compact_checkpoint_id": None,
+                    "warnings": [],
+                },
+                step=step,
+            )
+        return type(
+            "ModelView",
+            (),
+            {
+                "messages": [
+                    {"role": "system", "content": "system"},
+                    {"role": "user", "content": pending_input},
+                ],
+                "history_message_count": 1,
+                "source_message_count": 1,
+                "projection_mode": "full",
+            },
+        )()
+
+    def record_usage(self, total_tokens):
+        if total_tokens is None:
+            return
+        self.last_usage_tokens = int(total_tokens)
+        self.total_usage_tokens += int(total_tokens)
+
+    def reactive_compact(self, *, history_manager, pending_input, step=0, trace_logger=None):
+        self.compact_calls.append({"pending_input": pending_input, "step": step})
+        info = {
+            "compacted": len(self.compact_calls) == 1,
+            "reason": "reactive_prompt_too_long",
+            "checkpoint_id": f"ckpt-{len(self.compact_calls)}",
+            "messages_compacted": 1,
+            "retain_start_idx": 0,
+        }
+        if trace_logger:
+            trace_logger.log_event("context_compaction_completed", info, step=step)
+        return info
+
+
+class _PromptTooLongHost(_FakeHost):
+    def __init__(self):
+        super().__init__()
+        self.context_engine = _ReactiveCompactContextEngine()
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                raise RuntimeError("prompt too long for model context window")
+
+        self.llm = _FakeLLM(self)
+
+
 class _CompressingHistoryManager(_FakeHistoryManager):
     def __init__(self):
         super().__init__()
@@ -737,6 +833,14 @@ def test_runtime_runner_emits_empty_response_retry_transition():
     assert result == "after retry"
     transitions = [event for event in host.trace_logger.events if event[0] == "state_transition"]
     assert any(event[2]["reason"] == "model_empty_retry" for event in transitions)
+    assert any(
+        event[0] == "model_error_classified" and event[2]["kind"] == "empty_response"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "model_recovery_attempted" and event[2]["kind"] == "empty_response"
+        for event in host.trace_logger.events
+    )
 
 
 def test_runtime_runner_emits_tools_executed_transition():
@@ -861,6 +965,10 @@ def test_runtime_runner_emits_empty_response_failed_terminal():
         event[0] == "state_transition" and event[2]["reason"] == "max_steps_exceeded"
         for event in host.trace_logger.events
     )
+    assert any(
+        event[0] == "model_recovery_failed" and event[2]["kind"] == "empty_response"
+        for event in host.trace_logger.events
+    )
 
 
 def test_runtime_runner_state_tracks_current_model_view_messages():
@@ -939,6 +1047,10 @@ def test_runtime_runner_requires_test_evidence_when_user_explicitly_requests_tes
         event[0] == "terminal" and event[2]["reason"] == "completion_gate_blocked"
         for event in host.trace_logger.events
     )
+    assert not any(
+        event[0] in {"model_error_classified", "model_recovery_attempted", "model_recovery_failed"}
+        for event in host.trace_logger.events
+    )
 
 
 def test_runtime_runner_passes_completion_gate_with_valid_verification_evidence():
@@ -1006,3 +1118,54 @@ def test_runtime_runner_blocks_when_todo_remains_incomplete():
     assert requirement_events[-1][2]["has_incomplete_todos"] is True
     verdict_events = [event for event in host.trace_logger.events if event[0] == "completion_gate_verdict"]
     assert verdict_events[-1][2]["reasons"] == ["incomplete_todos"]
+
+
+def test_runtime_runner_api_error_does_not_enter_completion_gate():
+    from runtime.loop import RuntimeRunner
+
+    host = _ApiErrorHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("do work", show_raw=False)
+
+    assert "限定步数" in result
+    assert any(
+        event[0] == "model_error_classified" and event[2]["kind"] == "api_error"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "terminal" and event[2]["reason"] == "model_error"
+        for event in host.trace_logger.events
+    )
+    assert not any(
+        event[0] in {"completion_candidate", "completion_requirements", "completion_gate_verdict"}
+        for event in host.trace_logger.events
+    )
+
+
+def test_runtime_runner_prompt_too_long_attempts_single_reactive_compact():
+    from runtime.loop import RuntimeRunner
+
+    host = _PromptTooLongHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("do work", show_raw=False)
+
+    assert "限定步数" in result
+    assert len(host.context_engine.compact_calls) == 1
+    assert any(
+        event[0] == "model_error_classified" and event[2]["kind"] == "prompt_too_long"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "model_recovery_attempted" and event[2]["kind"] == "prompt_too_long"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "model_recovery_failed" and event[2]["kind"] == "prompt_too_long"
+        for event in host.trace_logger.events
+    )
+    assert not any(
+        event[0] in {"completion_candidate", "completion_requirements", "completion_gate_verdict"}
+        for event in host.trace_logger.events
+    )

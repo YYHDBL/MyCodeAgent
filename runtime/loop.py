@@ -15,6 +15,7 @@ from runtime.completion import (
     infer_completion_requirements,
 )
 from runtime.input_preprocess import preprocess_input
+from runtime.model_errors import ModelErrorKind, classify_model_error
 from runtime.state import LoopState, TerminalReason, TransitionReason
 
 
@@ -148,6 +149,88 @@ class RuntimeRunner:
         verifier = DeterministicCompletionVerifier()
         self.host.completion_verifier = verifier
         return verifier
+
+    def _get_model_recovery_limit(self, kind: ModelErrorKind) -> int:
+        host = self.host
+        if kind is ModelErrorKind.EMPTY_RESPONSE:
+            return int(getattr(host, "empty_response_retry_limit", 1) or 1)
+        if kind is ModelErrorKind.PROMPT_TOO_LONG:
+            return 1
+        if kind is ModelErrorKind.MAX_OUTPUT:
+            return int(getattr(host, "max_output_recovery_limit", 0) or 0)
+        return 0
+
+    def _increment_model_recovery_count(self, state: LoopState, kind: ModelErrorKind) -> dict[str, int]:
+        counts = dict(state.model_recovery_counts)
+        counts[kind.value] = counts.get(kind.value, 0) + 1
+        return counts
+
+    def _trace_model_error_classified(
+        self,
+        trace_logger,
+        *,
+        step: int,
+        stage: str,
+        kind: ModelErrorKind,
+        retry_count: int,
+        retry_limit: int,
+        message: str,
+        finish_reason: str | None = None,
+    ) -> None:
+        trace_logger.log_event(
+            "model_error_classified",
+            {
+                "stage": stage,
+                "kind": kind.value,
+                "retry_count": retry_count,
+                "retry_limit": retry_limit,
+                "message": message,
+                "finish_reason": finish_reason,
+            },
+            step=step,
+        )
+
+    def _trace_model_recovery_attempted(
+        self,
+        trace_logger,
+        *,
+        step: int,
+        kind: ModelErrorKind,
+        retry_count: int,
+        retry_limit: int,
+        action: str,
+    ) -> None:
+        trace_logger.log_event(
+            "model_recovery_attempted",
+            {
+                "kind": kind.value,
+                "retry_count": retry_count,
+                "retry_limit": retry_limit,
+                "action": action,
+            },
+            step=step,
+        )
+
+    def _trace_model_recovery_failed(
+        self,
+        trace_logger,
+        *,
+        step: int,
+        kind: ModelErrorKind,
+        retry_count: int,
+        retry_limit: int,
+        reason: str,
+    ) -> None:
+        trace_logger.log_event(
+            "model_recovery_failed",
+            {
+                "kind": kind.value,
+                "retry_count": retry_count,
+                "retry_limit": retry_limit,
+                "reason": reason,
+            },
+            step=step,
+        )
 
     def run(self, input_text: str, **kwargs) -> str:
         host = self.host
@@ -330,12 +413,151 @@ class RuntimeRunner:
                 step=step,
             )
 
-            empty_retry_used = False
             response_text = ""
             tool_calls: list[dict[str, Any]] = []
+            reasoning_content = None
+            response_meta: dict[str, Any] = {}
 
             while True:
-                raw_response = host.llm.invoke_raw(messages, tools=tools_schema, tool_choice=tool_choice)
+                try:
+                    raw_response = host.llm.invoke_raw(messages, tools=tools_schema, tool_choice=tool_choice)
+                except Exception as exc:
+                    classification = classify_model_error(error=exc)
+                    retry_count = state.model_recovery_counts.get(classification.kind.value, 0)
+                    retry_limit = self._get_model_recovery_limit(classification.kind)
+                    self._trace_model_error_classified(
+                        trace_logger,
+                        step=step,
+                        stage="model_invoke",
+                        kind=classification.kind,
+                        retry_count=retry_count,
+                        retry_limit=retry_limit,
+                        message=classification.message,
+                        finish_reason=classification.finish_reason,
+                    )
+
+                    if (
+                        classification.kind is ModelErrorKind.PROMPT_TOO_LONG
+                        and retry_count < retry_limit
+                        and hasattr(host.context_engine, "reactive_compact")
+                    ):
+                        next_retry_count = retry_count + 1
+                        recovery_counts = self._increment_model_recovery_count(state, classification.kind)
+                        self._trace_model_recovery_attempted(
+                            trace_logger,
+                            step=step,
+                            kind=classification.kind,
+                            retry_count=next_retry_count,
+                            retry_limit=retry_limit,
+                            action="reactive_compact",
+                        )
+                        compact_info = host.context_engine.reactive_compact(
+                            history_manager=host.history_manager,
+                            pending_input=pending_input,
+                            step=step,
+                            trace_logger=trace_logger,
+                        )
+                        if compact_info.get("compacted"):
+                            state = self._transition(
+                                state,
+                                TransitionReason.MODEL_RECOVERY_RETRY,
+                                trace_logger,
+                                step=step,
+                                model_recovery_counts=recovery_counts,
+                                compact_attempted=True,
+                                last_model_error_kind=classification.kind.value,
+                                last_model_error_stage="model_invoke",
+                                last_error=classification.message,
+                                details={
+                                    "error_kind": classification.kind.value,
+                                    "retry_count": next_retry_count,
+                                    "retry_limit": retry_limit,
+                                    "action": "reactive_compact",
+                                    "checkpoint_id": compact_info.get("checkpoint_id"),
+                                },
+                            )
+                            model_view = host.context_engine.build_model_view(
+                                history_manager=host.history_manager,
+                                pending_input=pending_input,
+                                step=step,
+                                trace_logger=trace_logger,
+                            )
+                            messages = model_view.messages
+                            base_messages = messages
+                            state = state.update(messages=messages)
+                            trace_logger.log_event(
+                                "context_build",
+                                {
+                                    "message_count": len(messages),
+                                    "history_count": model_view.history_message_count,
+                                    "source_message_count": model_view.source_message_count,
+                                    "projection_mode": model_view.projection_mode,
+                                },
+                                step=step,
+                            )
+                            continue
+
+                        self._trace_model_recovery_failed(
+                            trace_logger,
+                            step=step,
+                            kind=classification.kind,
+                            retry_count=next_retry_count,
+                            retry_limit=retry_limit,
+                            reason=str(compact_info.get("reason") or "reactive_compact_failed"),
+                        )
+                        state = self._transition(
+                            state,
+                            TransitionReason.MODEL_RECOVERY_FAILED,
+                            trace_logger,
+                            step=step,
+                            model_recovery_counts=recovery_counts,
+                            compact_attempted=True,
+                            last_model_error_kind=classification.kind.value,
+                            last_model_error_stage="model_invoke",
+                            last_error=classification.message,
+                            details={
+                                "error_kind": classification.kind.value,
+                                "retry_count": next_retry_count,
+                                "retry_limit": retry_limit,
+                                "action": "reactive_compact",
+                                "reason": compact_info.get("reason"),
+                            },
+                        )
+                    else:
+                        self._trace_model_recovery_failed(
+                            trace_logger,
+                            step=step,
+                            kind=classification.kind,
+                            retry_count=retry_count,
+                            retry_limit=retry_limit,
+                            reason="non_recoverable" if retry_limit == 0 else "retry_exhausted",
+                        )
+                        state = self._transition(
+                            state,
+                            TransitionReason.MODEL_RECOVERY_FAILED,
+                            trace_logger,
+                            step=step,
+                            last_model_error_kind=classification.kind.value,
+                            last_model_error_stage="model_invoke",
+                            last_error=classification.message,
+                            details={
+                                "error_kind": classification.kind.value,
+                                "retry_count": retry_count,
+                                "retry_limit": retry_limit,
+                            },
+                        )
+
+                    self._terminal(
+                        TerminalReason.MODEL_ERROR,
+                        trace_logger,
+                        step=step,
+                        error_kind=classification.kind.value,
+                        message=classification.message,
+                        retry_count=retry_count,
+                        retry_limit=retry_limit,
+                    )
+                    return "抱歉，我无法在限定步数内完成这个任务。"
+
                 if show_raw:
                     host.last_response_raw = (
                         raw_response.model_dump()
@@ -370,21 +592,67 @@ class RuntimeRunner:
                         display_reasoning = display_reasoning[:1200] + "...(truncated)"
                     host._console(f"\n🧠 Reasoning: {display_reasoning}\n")
 
-                if tool_calls or (response_text and str(response_text).strip()):
+                classification = None
+                if not tool_calls and not str(response_text or "").strip():
+                    classification = classify_model_error(
+                        response_text=response_text,
+                        tool_calls=tool_calls,
+                        response_meta=response_meta,
+                    )
+                elif not tool_calls:
+                    candidate_error = classify_model_error(
+                        response_text=response_text,
+                        tool_calls=tool_calls,
+                        response_meta=response_meta,
+                    )
+                    if candidate_error.kind is ModelErrorKind.MAX_OUTPUT:
+                        classification = candidate_error
+
+                if classification is None:
                     break
 
-                if not empty_retry_used:
-                    empty_retry_used = True
+                retry_count = state.model_recovery_counts.get(classification.kind.value, 0)
+                retry_limit = self._get_model_recovery_limit(classification.kind)
+                self._trace_model_error_classified(
+                    trace_logger,
+                    step=step,
+                    stage="model_response",
+                    kind=classification.kind,
+                    retry_count=retry_count,
+                    retry_limit=retry_limit,
+                    message=classification.message,
+                    finish_reason=classification.finish_reason,
+                )
+
+                if classification.kind is ModelErrorKind.EMPTY_RESPONSE and retry_count < retry_limit:
+                    next_retry_count = retry_count + 1
+                    recovery_counts = self._increment_model_recovery_count(state, classification.kind)
                     hint = "上次 content 为空且未返回 tool_calls，请在 content 中回复最终答案，或使用工具调用。"
                     messages = base_messages + [{"role": "user", "content": hint}]
+                    self._trace_model_recovery_attempted(
+                        trace_logger,
+                        step=step,
+                        kind=classification.kind,
+                        retry_count=next_retry_count,
+                        retry_limit=retry_limit,
+                        action="retry_with_hint",
+                    )
                     state = self._transition(
                         state,
                         TransitionReason.MODEL_EMPTY_RETRY,
                         trace_logger,
                         step=step,
-                        empty_response_retry_used=True,
+                        model_recovery_counts=recovery_counts,
+                        last_model_error_kind=classification.kind.value,
+                        last_model_error_stage="model_response",
+                        last_error=classification.message,
                         last_response_meta=response_meta,
-                        details={"finish_reason": response_meta.get("finish_reason")},
+                        details={
+                            "error_kind": classification.kind.value,
+                            "finish_reason": response_meta.get("finish_reason"),
+                            "retry_count": next_retry_count,
+                            "retry_limit": retry_limit,
+                        },
                     )
                     trace_logger.log_event(
                         "empty_response_retry",
@@ -402,38 +670,66 @@ class RuntimeRunner:
                         host.logger.warning("LLM返回空响应，追加提示后重试一次")
                     continue
 
-                if host.console_verbose:
-                    host._console("❌ LLM返回空响应")
-                else:
-                    host.logger.error("LLM返回空响应")
+                self._trace_model_recovery_failed(
+                    trace_logger,
+                    step=step,
+                    kind=classification.kind,
+                    retry_count=retry_count,
+                    retry_limit=retry_limit,
+                    reason="retry_exhausted" if retry_limit else "non_recoverable",
+                )
+                transition_reason = (
+                    TransitionReason.MODEL_EMPTY_FAILED
+                    if classification.kind is ModelErrorKind.EMPTY_RESPONSE
+                    else TransitionReason.MODEL_RECOVERY_FAILED
+                )
+                state_changes: dict[str, Any] = {
+                    "last_response_meta": response_meta,
+                    "last_model_error_kind": classification.kind.value,
+                    "last_model_error_stage": "model_response",
+                    "last_error": classification.message,
+                }
+                if classification.kind is ModelErrorKind.MAX_OUTPUT:
+                    state_changes["max_output_recovery_count"] = state.max_output_recovery_count + 1
                 state = self._transition(
                     state,
-                    TransitionReason.MODEL_EMPTY_FAILED,
+                    transition_reason,
                     trace_logger,
                     step=step,
-                    last_response_meta=response_meta,
-                    details={"finish_reason": response_meta.get("finish_reason")},
+                    details={
+                        "error_kind": classification.kind.value,
+                        "finish_reason": response_meta.get("finish_reason"),
+                        "retry_count": retry_count,
+                        "retry_limit": retry_limit,
+                    },
+                    **state_changes,
+                )
+                terminal_reason = (
+                    TerminalReason.EMPTY_RESPONSE_FAILED
+                    if classification.kind is ModelErrorKind.EMPTY_RESPONSE
+                    else TerminalReason.MODEL_ERROR
                 )
                 self._terminal(
-                    TerminalReason.EMPTY_RESPONSE_FAILED,
+                    terminal_reason,
                     trace_logger,
                     step=step,
+                    error_kind=classification.kind.value,
                     finish_reason=response_meta.get("finish_reason"),
+                    retry_count=retry_count,
+                    retry_limit=retry_limit,
                 )
-                trace_logger.log_event(
-                    "error",
-                    {
-                        "stage": "llm_response",
-                        "error_code": "INTERNAL_ERROR",
-                        "message": "Empty response",
-                        "meta": response_meta,
-                    },
-                    step=step,
-                )
+                if classification.kind is ModelErrorKind.EMPTY_RESPONSE:
+                    trace_logger.log_event(
+                        "error",
+                        {
+                            "stage": "llm_response",
+                            "error_code": "INTERNAL_ERROR",
+                            "message": "Empty response",
+                            "meta": response_meta,
+                        },
+                        step=step,
+                    )
                 return "抱歉，我无法在限定步数内完成这个任务。"
-
-            if not tool_calls and (not response_text or not str(response_text).strip()):
-                break
 
             if tool_calls:
                 state = self._transition(

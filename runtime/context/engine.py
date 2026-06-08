@@ -165,3 +165,33 @@ class ContextEngine:
             )
 
         return view
+
+    def reactive_compact(
+        self,
+        *,
+        history_manager: Any,
+        pending_input: str,
+        step: int = 0,
+        trace_logger: Any = None,
+    ) -> dict[str, Any]:
+        source_messages = history_manager.get_messages()
+        checkpoint = self.compact_store.active_checkpoint
+        if checkpoint and checkpoint.source_message_count == len(source_messages):
+            info = {
+                "compacted": False,
+                "reason": "checkpoint_current",
+                "checkpoint_id": checkpoint.id,
+            }
+        else:
+            info = self.compactor.compact(source_messages)
+            if not info.get("reason"):
+                info["reason"] = "reactive_prompt_too_long"
+
+        if trace_logger:
+            event_name = (
+                "context_compaction_completed"
+                if info.get("compacted")
+                else "context_compaction_skipped"
+            )
+            trace_logger.log_event(event_name, info, step=step)
+        return info

@@ -12,6 +12,8 @@ class TransitionReason(str, Enum):
     CONTEXT_COMPACTED = "context_compacted"
     MODEL_EMPTY_RETRY = "model_empty_retry"
     MODEL_EMPTY_FAILED = "model_empty_failed"
+    MODEL_RECOVERY_RETRY = "model_recovery_retry"
+    MODEL_RECOVERY_FAILED = "model_recovery_failed"
     MODEL_RETURNED_TOOL_CALLS = "model_returned_tool_calls"
     TOOLS_EXECUTED = "tools_executed"
     MODEL_RETURNED_FINAL = "model_returned_final"
@@ -45,12 +47,14 @@ class LoopState:
     tool_choice: str
     transition: Transition | None = None
     compact_attempted: bool = False
-    empty_response_retry_used: bool = False
     max_output_recovery_count: int = 0
+    model_recovery_counts: dict[str, int] = field(default_factory=dict)
     stop_hook_active: bool = False
     completion_block_count: int = 0
     last_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     last_response_meta: dict[str, Any] = field(default_factory=dict)
+    last_model_error_kind: str | None = None
+    last_model_error_stage: str | None = None
     last_error: str | None = None
 
     def update(self, **changes: Any) -> "LoopState":
