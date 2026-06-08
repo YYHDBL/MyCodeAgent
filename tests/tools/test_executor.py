@@ -1,7 +1,8 @@
 import json
 import inspect
 
-from tools.base import Tool, ToolParameter, ToolStatus
+from tools.base import ErrorCode, Tool, ToolParameter, ToolStatus
+from tools.permissions import PermissionAction, PermissionContext, PermissionDecision, RiskLevel
 from tools.registry import ToolRegistry
 
 
@@ -85,3 +86,29 @@ def test_tool_execution_context_carries_permission_checker():
 
     assert result["status"] == ToolStatus.ERROR.value
     assert result["error"]["code"] == "PERMISSION_DENIED"
+
+
+def test_tool_executor_returns_permission_denied_payload_with_decision_metadata():
+    from tools.context import ToolExecutionContext
+    from tools.executor import ToolExecutor
+
+    registry = ToolRegistry()
+    registry.register_tool(EchoTool())
+    context = ToolExecutionContext(
+        permission_context=PermissionContext(runtime_mode="readonly_subagent"),
+        permission_decider=lambda name, params, ctx: PermissionDecision(
+            action=PermissionAction.DENY,
+            risk=RiskLevel.HIGH,
+            reason=f"{name} blocked for {ctx.runtime_mode}",
+            policy_source="unit_test",
+            input_summary=json.dumps(params, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    executor = ToolExecutor(registry, context=context)
+
+    result = json.loads(executor.execute("Echo", {"value": "hello"}))
+
+    assert result["status"] == ToolStatus.ERROR.value
+    assert result["error"]["code"] == ErrorCode.PERMISSION_DENIED.value
+    assert result["error"]["details"]["permission"]["action"] == "deny"
+    assert result["error"]["details"]["permission"]["policy_source"] == "unit_test"

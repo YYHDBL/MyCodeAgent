@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional
 
 from .base import ErrorCode, ToolStatus
 from .context import ToolExecutionContext
+from .permissions import PermissionAction
 
 
 class ToolExecutor:
@@ -23,22 +24,12 @@ class ToolExecutor:
             permission_checker=permission_checker or (lambda _name: True)
         )
 
-    def execute(self, name: str, input_text: Any) -> str:
+    def execute(self, name: str, input_text: Any, *, trace_logger=None, step: int = 0) -> str:
         parameters = self.registry.prepare_parameters(input_text)
 
-        if not self.context.permission_checker(name):
-            payload = {
-                "status": ToolStatus.ERROR.value,
-                "data": {},
-                "text": f"Tool '{name}' is not allowed in the current mode.",
-                "error": {
-                    "code": ErrorCode.PERMISSION_DENIED.value,
-                    "message": f"Tool '{name}' is not allowed in the current mode.",
-                },
-                "stats": {"time_ms": 0},
-                "context": {"cwd": ".", "params_input": parameters},
-            }
-            return json.dumps(payload, ensure_ascii=False, indent=2)
+        permission_payload = self._decide_permission(name, parameters, trace_logger=trace_logger, step=step)
+        if permission_payload is not None:
+            return json.dumps(permission_payload, ensure_ascii=False, indent=2)
 
         if name in {"Write", "Edit", "MultiEdit"}:
             parameters = self.registry.inject_optimistic_lock_params(name, parameters)
@@ -83,3 +74,61 @@ class ToolExecutor:
             self.registry.cache_read_result(result_payload, parameters)
 
         return json.dumps(result_payload, ensure_ascii=False, indent=2)
+
+    def _decide_permission(self, name: str, parameters: dict[str, Any], *, trace_logger=None, step: int = 0):
+        decider = self.context.permission_decider
+        if decider is not None:
+            decision = decider(name, parameters, self.context.permission_context)
+            effective_action = decision.action
+            if effective_action is PermissionAction.ASK and self.context.permission_context.ask_policy == "deny":
+                effective_action = PermissionAction.DENY
+            if trace_logger:
+                trace_logger.log_event(
+                    "permission_decision",
+                    decision.as_trace_payload(
+                        tool_name=name,
+                        effective_action=effective_action.value,
+                    ),
+                    step=step,
+                )
+            if effective_action is not PermissionAction.ALLOW:
+                return self._permission_denied_payload(name, parameters, decision, effective_action)
+            return None
+
+        if not self.context.permission_checker(name):
+            return {
+                "status": ToolStatus.ERROR.value,
+                "data": {},
+                "text": f"Tool '{name}' is not allowed in the current mode.",
+                "error": {
+                    "code": ErrorCode.PERMISSION_DENIED.value,
+                    "message": f"Tool '{name}' is not allowed in the current mode.",
+                },
+                "stats": {"time_ms": 0},
+                "context": {"cwd": ".", "params_input": parameters},
+            }
+        return None
+
+    def _permission_denied_payload(self, name: str, parameters: dict[str, Any], decision, effective_action):
+        rendered_action = "denied" if effective_action is PermissionAction.DENY else "requires confirmation"
+        return {
+            "status": ToolStatus.ERROR.value,
+            "data": {},
+            "text": f"Tool '{name}' {rendered_action} by permission core.",
+            "error": {
+                "code": ErrorCode.PERMISSION_DENIED.value,
+                "message": f"Tool '{name}' {rendered_action} by permission core.",
+                "details": {
+                    "permission": {
+                        **decision.as_trace_payload(tool_name=name),
+                        "effective_action": effective_action.value,
+                    }
+                },
+            },
+            "stats": {"time_ms": 0},
+            "context": {
+                "cwd": ".",
+                "params_input": parameters,
+                "runtime_mode": self.context.permission_context.runtime_mode,
+            },
+        }

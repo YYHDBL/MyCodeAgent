@@ -188,7 +188,12 @@ class ToolOrchestrator:
         host = self.host
         try:
             if hasattr(host, "tool_executor") and host.tool_executor is not None:
-                observation = host.tool_executor.execute(tool_name, tool_input)
+                observation = host.tool_executor.execute(
+                    tool_name,
+                    tool_input,
+                    trace_logger=trace_logger,
+                    step=step,
+                )
             else:
                 observation = host._execute_tool(tool_name, tool_input)
             self._log_tool_result(trace_logger, step, tool_name, observation)

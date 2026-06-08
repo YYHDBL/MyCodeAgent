@@ -39,6 +39,7 @@ from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
 from tools.orchestrator import ToolOrchestrator
 from tools.context import ToolExecutionContext
+from tools.permissions import PermissionContext, RiskClassifier
 from utils import setup_logger
 from runtime.loop import RuntimeRunner
 
@@ -187,6 +188,8 @@ class CodeAgent(Agent):
             self.tool_registry,
             context=ToolExecutionContext(
                 permission_checker=self._is_tool_allowed_in_delegate_mode,
+                permission_decider=self._classify_tool_permission,
+                permission_context=PermissionContext(runtime_mode=self._get_runtime_mode()),
                 project_root=self.project_root,
             ),
         )
@@ -531,10 +534,25 @@ class CodeAgent(Agent):
     def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
         return self.tool_executor.execute(tool_name, tool_input)
 
+    def _get_runtime_mode(self) -> str:
+        return "readonly_subagent" if self.delegate_mode else "main_agent"
+
+    def _classify_tool_permission(self, tool_name: str, tool_input: dict[str, Any], context: PermissionContext):
+        runtime_context = PermissionContext(
+            runtime_mode=self._get_runtime_mode(),
+            ask_policy=context.ask_policy,
+        )
+        return RiskClassifier().classify(tool_name, tool_input, runtime_context)
+
     def set_delegate_mode(self, enabled: bool) -> None:
         self.delegate_mode = bool(enabled)
         if hasattr(self.config, "delegate_mode"):
             self.config.delegate_mode = self.delegate_mode
+        if getattr(self, "tool_executor", None) is not None:
+            self.tool_executor.context.permission_context = PermissionContext(
+                runtime_mode=self._get_runtime_mode(),
+                ask_policy=self.tool_executor.context.permission_context.ask_policy,
+            )
         self.logger.info("Delegate mode set to %s", self.delegate_mode)
 
     def _is_tool_allowed_in_delegate_mode(self, tool_name: str) -> bool:

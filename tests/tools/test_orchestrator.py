@@ -361,6 +361,53 @@ def test_run_applies_aggregate_message_budget_largest_first(tmp_path, monkeypatc
     assert result[1].metadata["replaced"] is True
 
 
+def test_run_emits_permission_trace_event_when_tool_denied():
+    from tools.context import ToolExecutionContext
+    from tools.executor import ToolExecutor
+    from tools.permissions import PermissionAction, PermissionContext, PermissionDecision, RiskLevel
+    from tools.registry import ToolRegistry
+
+    class _NoopTool:
+        name = "Write"
+
+        def run(self, parameters):  # pragma: no cover - should never execute
+            raise AssertionError("permission denied tool must not run")
+
+    host = _Host()
+    registry = ToolRegistry()
+    registry.register_tool(_NoopTool())
+    host.tool_executor = ToolExecutor(
+        registry,
+        context=ToolExecutionContext(
+            permission_context=PermissionContext(runtime_mode="readonly_subagent"),
+            permission_decider=lambda name, params, ctx: PermissionDecision(
+                action=PermissionAction.DENY,
+                risk=RiskLevel.HIGH,
+                reason="readonly_subagent blocks writes",
+                policy_source="unit_test",
+                input_summary=str(params),
+            ),
+        ),
+    )
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run_serial(
+        [{"id": "call_1", "name": "Write", "arguments": '{"path": "a.txt"}'}],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    payload = json.loads(result[0].observation)
+
+    assert payload["error"]["code"] == "PERMISSION_DENIED"
+    assert any(
+        event[0] == "permission_decision"
+        and event[2]["tool_name"] == "Write"
+        and event[2]["action"] == "deny"
+        for event in host.trace_logger.events
+    )
+
+
 def test_budget_does_not_restore_or_reprocess_replaced_result(tmp_path, monkeypatch):
     monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", "600")
     monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", "500")

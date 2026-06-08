@@ -291,6 +291,30 @@ class _ToolThenFinalHost(_FakeHost):
         return "{\"status\": \"success\", \"data\": {\"echo\": \"hi\"}}"
 
 
+class _DeniedToolThenFinalHost(_ToolThenFinalHost):
+    def _execute_tool(self, tool_name, tool_input):
+        return json.dumps(
+            {
+                "status": "error",
+                "error": {
+                    "code": "PERMISSION_DENIED",
+                    "message": "blocked by permission core",
+                    "details": {
+                        "permission": {
+                            "tool_name": tool_name,
+                            "risk": "high",
+                            "action": "deny",
+                            "reason": "readonly_subagent blocks writes",
+                            "policy_source": "permission_core",
+                            "input_summary": json.dumps(tool_input, ensure_ascii=False, sort_keys=True),
+                        }
+                    },
+                },
+                "data": {},
+            }
+        )
+
+
 class _AlwaysToolHost(_ToolThenFinalHost):
     def __init__(self):
         super().__init__()
@@ -754,6 +778,65 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     assert any(event[2]["reason"] == "model_returned_final" for event in transitions)
     assert any(
         event[0] == "terminal" and event[2]["reason"] == "completed"
+        for event in host.trace_logger.events
+    )
+
+
+def test_permission_denial_is_appended_to_history_and_does_not_break_loop():
+    from runtime.loop import RuntimeRunner
+
+    host = _DeniedToolThenFinalHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("write something", show_raw=False)
+
+    assert result == "tool done"
+    tool_messages = [message for message in host.history_manager.messages if message["role"] == "tool"]
+    assert len(tool_messages) == 1
+    payload = json.loads(tool_messages[0]["content"])
+    assert payload["error"]["code"] == "PERMISSION_DENIED"
+
+
+def test_permission_trace_event_is_preserved_in_runtime_history_flow():
+    from runtime.loop import RuntimeRunner
+
+    class _PermissionTraceOrchestrator(_RecordingOrchestrator):
+        def run(self, tool_calls, *, step, trace_logger):
+            trace_logger.log_event(
+                "permission_decision",
+                {
+                    "tool_name": "Write",
+                    "risk": "high",
+                    "action": "deny",
+                    "reason": "readonly_subagent blocks writes",
+                    "policy_source": "permission_core",
+                    "input_summary": '{"path":"a.txt"}',
+                },
+                step=step,
+            )
+            return [
+                type(
+                    "Obs",
+                    (),
+                    {
+                        "tool_name": "Write",
+                        "tool_call_id": "call_1",
+                        "observation": '{"status":"error","error":{"code":"PERMISSION_DENIED","message":"blocked"}}',
+                        "metadata": {"permission_action": "deny"},
+                    },
+                )()
+            ]
+
+    host = _ToolThenFinalHost()
+    host.tool_orchestrator = _PermissionTraceOrchestrator()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("write something", show_raw=False)
+
+    assert result == "tool done"
+    assert any(
+        event[0] == "permission_decision"
+        and event[2]["tool_name"] == "Write"
         for event in host.trace_logger.events
     )
 
