@@ -593,20 +593,13 @@ class RuntimeRunner:
                     host._console(f"\n🧠 Reasoning: {display_reasoning}\n")
 
                 classification = None
-                if not tool_calls and not str(response_text or "").strip():
-                    classification = classify_model_error(
-                        response_text=response_text,
-                        tool_calls=tool_calls,
-                        response_meta=response_meta,
-                    )
-                elif not tool_calls:
-                    candidate_error = classify_model_error(
-                        response_text=response_text,
-                        tool_calls=tool_calls,
-                        response_meta=response_meta,
-                    )
-                    if candidate_error.kind is ModelErrorKind.MAX_OUTPUT:
-                        classification = candidate_error
+                candidate_error = classify_model_error(
+                    response_text=response_text,
+                    tool_calls=tool_calls,
+                    response_meta=response_meta,
+                )
+                if candidate_error.kind in {ModelErrorKind.EMPTY_RESPONSE, ModelErrorKind.MAX_OUTPUT}:
+                    classification = candidate_error
 
                 if classification is None:
                     break

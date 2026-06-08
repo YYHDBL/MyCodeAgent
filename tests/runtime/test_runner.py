@@ -355,6 +355,40 @@ class _ApiErrorHost(_FakeHost):
         self.llm = _FakeLLM(self)
 
 
+class _MaxOutputWithToolCallsHost(_ToolThenFinalHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "partial",
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "Echo",
+                                        "arguments": "{\"text\": \"should-not-run\"}",
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+
+        class _FailIfToolRuns:
+            def run(self, tool_calls, *, step, trace_logger):
+                raise AssertionError("truncated model output must not execute tool calls")
+
+        self.tool_orchestrator = _FailIfToolRuns()
+
+    def _extract_response_meta(self, raw_response):
+        return {"finish_reason": "length"}
+
+
 class _ReactiveCompactContextEngine:
     def __init__(self):
         self.compact_calls = []
@@ -1141,6 +1175,30 @@ def test_runtime_runner_api_error_does_not_enter_completion_gate():
         event[0] in {"completion_candidate", "completion_requirements", "completion_gate_verdict"}
         for event in host.trace_logger.events
     )
+
+
+def test_runtime_runner_max_output_with_tool_calls_does_not_execute_tools():
+    from runtime.loop import RuntimeRunner
+
+    host = _MaxOutputWithToolCallsHost()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("do work", show_raw=False)
+
+    assert "限定步数" in result
+    assert any(
+        event[0] == "model_error_classified" and event[2]["kind"] == "max_output"
+        for event in host.trace_logger.events
+    )
+    assert any(
+        event[0] == "terminal" and event[2]["reason"] == "model_error"
+        for event in host.trace_logger.events
+    )
+    assert not any(
+        event[0] == "state_transition" and event[2]["reason"] == "model_returned_tool_calls"
+        for event in host.trace_logger.events
+    )
+    assert not any(event[0] == "completion_candidate" for event in host.trace_logger.events)
 
 
 def test_runtime_runner_prompt_too_long_attempts_single_reactive_compact():
