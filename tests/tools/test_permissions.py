@@ -94,6 +94,32 @@ def test_readonly_subagent_denies_write_actions():
     assert "readonly_subagent" in decision.reason
 
 
+def test_todo_write_is_allowed_without_file_path_for_main_agent():
+    classifier = RiskClassifier()
+
+    decision = classifier.classify(
+        "TodoWrite",
+        {"summary": "work", "todos": [{"content": "inspect", "status": "in_progress"}]},
+        PermissionContext(runtime_mode="main_agent"),
+    )
+
+    assert decision.action is PermissionAction.ALLOW
+    assert decision.risk is RiskLevel.LOW
+
+
+def test_todo_write_is_allowed_as_internal_planning_for_readonly_subagent():
+    classifier = RiskClassifier()
+
+    decision = classifier.classify(
+        "TodoWrite",
+        {"summary": "work", "todos": [{"content": "inspect", "status": "in_progress"}]},
+        PermissionContext(runtime_mode="readonly_subagent"),
+    )
+
+    assert decision.action is PermissionAction.ALLOW
+    assert decision.risk is RiskLevel.LOW
+
+
 def test_missing_bash_command_is_denied():
     classifier = RiskClassifier()
 
@@ -105,4 +131,3 @@ def test_missing_bash_command_is_denied():
 
     assert decision.action in {PermissionAction.DENY, PermissionAction.ASK}
     assert decision.risk is RiskLevel.UNKNOWN
-

@@ -60,7 +60,8 @@ class RiskClassifier:
     """Classify tool calls into permission decisions."""
 
     READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "ListFiles"}
-    WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "TodoWrite"}
+    WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+    INTERNAL_STATE_TOOLS = {"TodoWrite"}
     RECURSIVE_OR_MUTATING_TOOLS = {"Bash", "Task"}
     COORDINATION_TOOLS = {
         "AskUser",
@@ -132,6 +133,15 @@ class RiskClassifier:
             decision = self._classify_write(tool_name, payload, context, summary)
             if decision is not None:
                 return decision
+
+        if tool_name in self.INTERNAL_STATE_TOOLS:
+            return PermissionDecision(
+                action=PermissionAction.ALLOW,
+                risk=RiskLevel.LOW,
+                reason="internal planning state tool",
+                policy_source="permission_core",
+                input_summary=summary,
+            )
 
         if tool_name == "Bash":
             return self._classify_bash(payload, context, summary)
