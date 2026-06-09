@@ -1,6 +1,6 @@
 # Phase 0 Baseline Scenarios
 
-这些场景用于冻结 Phase 0 的单 Agent harness 基线。它们不验证后续 Phase 的 Completion Gate、Recovery 分类、Permission Core 或 Subagent Runtime。
+这些场景用于冻结 mock harness 基线，并在后续阶段继续提供可比较的 deterministic eval 输入。
 
 ## 自动化 mock 场景
 
@@ -8,9 +8,12 @@
 
 覆盖：
 
+- `normal_complete`: 无工具直接完成
 - `read_only_search`: 只读工具调用后完成
 - `file_edit`: 副作用工具调用后完成
 - `tool_failure`: 工具执行报错但仍形成标准化 observation
+- `permission_deny`: 权限拒绝形成 observation，但 loop 仍可继续
+- `completion_gate_block`: Completion Gate 连续阻塞直到终止
 - `context_compaction`: 触发 ContextEngine compact 路径
 - `empty_response_recovery`: 空响应追加提示后恢复
 - `max_steps`: 工具循环导致最大步数终止
@@ -18,10 +21,23 @@
 
 基线指标：
 
+- `model_call_count`
 - `step_count`
 - `tool_call_count`
+- `tool_error_count`
+- `permission_denied_count`
+- `completion_gate_block_count`
+- `model_recovery_count`
+- `context_compaction_count`
 - `projection_modes`
 - `terminal_reason`
+- `failure_stage`
+
+批量 summary 入口：
+
+- `tests.scenarios.phase0_baselines.run_phase0_mock_scenarios()`
+- 输出可序列化 JSON report
+- 汇总逻辑位于 `runtime/evals.py`
 
 ## 真实模型场景
 

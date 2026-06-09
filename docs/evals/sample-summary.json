@@ -1,0 +1,85 @@
+{
+  "scenario_count": 6,
+  "scenarios": [
+    {
+      "scenario_name": "normal_complete",
+      "result": "runner final answer",
+      "metrics": {
+        "run_id": 1,
+        "session_id": null,
+        "terminal_reason": "completed",
+        "failure_stage": "unknown",
+        "step_count": 1,
+        "model_call_count": 1,
+        "tool_call_count": 0,
+        "tool_error_count": 0,
+        "permission_denied_count": 0,
+        "completion_gate_block_count": 0,
+        "model_recovery_count": 0,
+        "context_compaction_count": 0,
+        "prompt_fingerprint": "system",
+        "tool_schema_fingerprint": "tool-schema",
+        "total_tokens": 12,
+        "projection_modes": [
+          "full"
+        ]
+      }
+    },
+    {
+      "scenario_name": "permission_deny",
+      "result": "tool done",
+      "metrics": {
+        "run_id": 1,
+        "session_id": null,
+        "terminal_reason": "completed",
+        "failure_stage": "unknown",
+        "step_count": 2,
+        "model_call_count": 2,
+        "tool_call_count": 1,
+        "tool_error_count": 1,
+        "permission_denied_count": 1,
+        "completion_gate_block_count": 0,
+        "model_recovery_count": 0,
+        "context_compaction_count": 0,
+        "prompt_fingerprint": "system",
+        "tool_schema_fingerprint": "tool-schema",
+        "total_tokens": 24,
+        "projection_modes": [
+          "full",
+          "full"
+        ]
+      }
+    },
+    {
+      "scenario_name": "completion_gate_block",
+      "result": "抱歉，我无法在限定步数内完成这个任务。",
+      "metrics": {
+        "run_id": 1,
+        "session_id": null,
+        "terminal_reason": "completion_gate_blocked",
+        "failure_stage": "completion_gate",
+        "step_count": 2,
+        "model_call_count": 2,
+        "tool_call_count": 0,
+        "tool_error_count": 0,
+        "permission_denied_count": 0,
+        "completion_gate_block_count": 2,
+        "model_recovery_count": 0,
+        "context_compaction_count": 0,
+        "prompt_fingerprint": "system",
+        "tool_schema_fingerprint": "tool-schema",
+        "total_tokens": 24,
+        "projection_modes": [
+          "full",
+          "full"
+        ]
+      }
+    }
+  ],
+  "aggregate": {
+    "permission_denied_count": 1,
+    "completion_gate_block_count": 2,
+    "model_recovery_count": 1,
+    "context_compaction_count": 1
+  }
+}

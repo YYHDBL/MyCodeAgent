@@ -1,9 +1,13 @@
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
+from runtime.completion import CompletionGateResult, CompletionGateVerdict
 from runtime.context import ContextEngine
+from runtime.evals import summarize_trace as summarize_trace_metrics
 from runtime.history import Message
+from runtime.loop import RuntimeRunner
 from tools.orchestrator import ToolOrchestrator
 
 
@@ -205,7 +209,7 @@ class EmptyThenFinalScenarioHost(BaseScenarioHost):
 
 
 class ToolThenFinalScenarioHost(BaseScenarioHost):
-    def __init__(self, tool_name="Read"):
+    def __init__(self, tool_name="Read", final_text="tool done"):
         super().__init__()
         self.responses = [
             {
@@ -226,7 +230,7 @@ class ToolThenFinalScenarioHost(BaseScenarioHost):
                     }
                 ]
             },
-            {"choices": [{"message": {"content": "tool done"}}]},
+            {"choices": [{"message": {"content": final_text}}]},
         ]
 
         class _FakeLLM:
@@ -245,6 +249,97 @@ class ToolThenFinalScenarioHost(BaseScenarioHost):
 class ToolFailureScenarioHost(ToolThenFinalScenarioHost):
     def _execute_tool(self, tool_name, tool_input):
         raise RuntimeError(f"{tool_name} failed")
+
+
+class PermissionDeniedScenarioHost(ToolThenFinalScenarioHost):
+    def __init__(self):
+        super().__init__(tool_name="Write")
+        self.tool_orchestrator = _PermissionDeniedOrchestrator()
+
+
+class _PermissionDeniedOrchestrator:
+    def run(self, tool_calls, *, step, trace_logger):
+        trace_logger.log_event(
+            "tool_call",
+            {"tool": "Write", "args": {"path": "."}, "tool_call_id": "call_1"},
+            step=step,
+        )
+        trace_logger.log_event(
+            "permission_decision",
+            {
+                "tool_name": "Write",
+                "risk": "high",
+                "action": "deny",
+                "effective_action": "deny",
+                "reason": "readonly_subagent blocks writes",
+                "policy_source": "permission_core",
+                "input_summary": 'Write({"path":"."})',
+            },
+            step=step,
+        )
+        observation = json.dumps(
+            {
+                "status": "error",
+                "error": {
+                    "code": "PERMISSION_DENIED",
+                    "message": "Tool 'Write' denied by permission core.",
+                },
+                "data": {},
+            },
+            ensure_ascii=False,
+        )
+        trace_logger.log_event(
+            "tool_result",
+            {
+                "tool": "Write",
+                "result": json.loads(observation),
+            },
+            step=step,
+        )
+        return [
+            type(
+                "Obs",
+                (),
+                {
+                    "tool_name": "Write",
+                    "tool_call_id": "call_1",
+                    "observation": observation,
+                    "metadata": {"permission_action": "deny"},
+                },
+            )()
+        ]
+
+
+class CompletionGateBlockedScenarioHost(BaseScenarioHost):
+    def __init__(self):
+        super().__init__()
+        self.responses = [
+            {"choices": [{"message": {"content": "tests passed, task complete"}}]},
+            {"choices": [{"message": {"content": "tests passed, task complete"}}]},
+        ]
+        self.completion_verifier = _AlwaysBlockingVerifier()
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                return self.outer.responses.pop(0)
+
+        self.llm = _FakeLLM(self)
+
+
+class _AlwaysBlockingVerifier:
+    def evaluate(self, candidate, requirements, evidence, history_messages):
+        return CompletionGateResult(
+            verdict=CompletionGateVerdict.FAIL,
+            reasons=("missing_verification_evidence:tests",),
+            blocking_feedback="Run tests before concluding.",
+            passed_evidence=(),
+        )
 
 
 class AlwaysToolScenarioHost(ToolThenFinalScenarioHost):
@@ -297,23 +392,42 @@ class CompressingScenarioHost(FinalOnlyScenarioHost):
 
 
 def summarize_trace(events):
-    projection_modes = []
-    terminal_reason = None
-    tool_call_count = 0
-    step_count = 0
+    return summarize_trace_metrics(events)
 
-    for name, step, payload in events:
-        step_count = max(step_count, step)
-        if name == "context_build":
-            projection_modes.append(payload["projection_mode"])
-        elif name == "terminal":
-            terminal_reason = payload["reason"]
-        elif name == "tool_call":
-            tool_call_count += 1
 
-    return {
-        "step_count": step_count,
-        "tool_call_count": tool_call_count,
-        "projection_modes": projection_modes,
-        "terminal_reason": terminal_reason,
+def run_phase0_mock_scenarios(output_path: str | Path | None = None):
+    cases = [
+        ("normal_complete", FinalOnlyScenarioHost()),
+        ("tool_call", ToolThenFinalScenarioHost()),
+        ("completion_gate_block", CompletionGateBlockedScenarioHost()),
+        ("model_recovery", EmptyThenFinalScenarioHost()),
+        ("permission_deny", PermissionDeniedScenarioHost()),
+        ("context_compaction", CompressingScenarioHost()),
+    ]
+    scenarios = []
+    for scenario_name, host in cases:
+        result = RuntimeRunner(host).run(scenario_name, show_raw=False)
+        metrics = summarize_trace(host.trace_logger.events)
+        scenarios.append(
+            {
+                "scenario_name": scenario_name,
+                "result": result,
+                "metrics": metrics,
+            }
+        )
+
+    report = {
+        "scenario_count": len(scenarios),
+        "scenarios": scenarios,
+        "aggregate": {
+            "permission_denied_count": sum(item["metrics"]["permission_denied_count"] for item in scenarios),
+            "completion_gate_block_count": sum(item["metrics"]["completion_gate_block_count"] for item in scenarios),
+            "model_recovery_count": sum(item["metrics"]["model_recovery_count"] for item in scenarios),
+            "context_compaction_count": sum(item["metrics"]["context_compaction_count"] for item in scenarios),
+        },
     }
+    if output_path is not None:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    return report
