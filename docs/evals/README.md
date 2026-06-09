@@ -17,6 +17,12 @@
 - 输出是 JSON summary / metrics dict
 - 不依赖 Datadog、OpenTelemetry、远程存储或 dashboard
 
+一个 Agent 生命周期内可能多次调用 `run()`，因此同一 trace 文件可能包含多个 run：
+
+- `summarize_trace()` / `summarize_trace_file()` 默认返回最新 run 的指标
+- `summarize_trace_runs()` / `summarize_trace_file_runs()` 返回全部 run 的独立指标
+- 不会把不同 run 的 token、模型调用和终止原因混进同一份 summary
+
 ## 指标
 
 `runtime/evals.py` 当前汇总：

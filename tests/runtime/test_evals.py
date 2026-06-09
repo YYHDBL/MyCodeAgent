@@ -126,6 +126,52 @@ def test_summarize_trace_jsonl_file_matches_event_summary(tmp_path):
     assert from_file["total_tokens"] == from_events["total_tokens"] == 12
 
 
+def test_multi_run_trace_returns_latest_run_without_mixing_metrics(tmp_path):
+    from runtime.evals import (
+        summarize_trace_events,
+        summarize_trace_file,
+        summarize_trace_file_runs,
+        summarize_trace_runs,
+    )
+
+    event_tuples = [
+        ("run_start", 0, {"run_id": 1}),
+        ("model_output", 1, {"usage": {"total_tokens": 10}}),
+        ("terminal", 1, {"reason": "completed"}),
+        ("run_end", 0, {"run_id": 1}),
+        ("run_start", 0, {"run_id": 2}),
+        ("model_output", 1, {"usage": {"total_tokens": 20}}),
+        ("model_output", 2, {"usage": {"total_tokens": 30}}),
+        ("terminal", 2, {"reason": "model_error"}),
+        ("run_end", 0, {"run_id": 2}),
+        ("session_summary", 0, {"total_usage": {"total_tokens": 60}}),
+    ]
+    events = [
+        _jsonl_event(name, step, payload)
+        for name, step, payload in event_tuples
+    ]
+
+    latest = summarize_trace_events(events)
+    runs = summarize_trace_runs(events)
+    jsonl_path = tmp_path / "multi-run.jsonl"
+    jsonl_path.write_text(
+        "\n".join(json.dumps(event, ensure_ascii=False) for event in events)
+        + "\n",
+        encoding="utf-8",
+    )
+    latest_from_file = summarize_trace_file(jsonl_path)
+    runs_from_file = summarize_trace_file_runs(jsonl_path)
+
+    assert latest["run_id"] == 2
+    assert latest["model_call_count"] == 2
+    assert latest["total_tokens"] == 50
+    assert latest["terminal_reason"] == "model_error"
+    assert [item["run_id"] for item in runs] == [1, 2]
+    assert [item["total_tokens"] for item in runs] == [10, 50]
+    assert latest_from_file == latest
+    assert runs_from_file == runs
+
+
 def test_classify_failure_stage_distinguishes_context_model_tool_permission_and_unknown():
     from runtime.evals import classify_failure_stage
 

@@ -33,6 +33,31 @@ def _iter_normalized_events(events: Iterable[Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def _split_normalized_runs(events: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    runs: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] | None = None
+
+    for event in events:
+        name = event.get("event")
+        if name == "run_start":
+            if current:
+                runs.append(current)
+            current = [event]
+            continue
+        if current is None:
+            continue
+        current.append(event)
+        if name == "run_end":
+            runs.append(current)
+            current = None
+
+    if current:
+        runs.append(current)
+    if runs:
+        return runs
+    return [events] if events else []
+
+
 def classify_failure_stage(
     *,
     terminal_reason: str | None,
@@ -58,9 +83,7 @@ def classify_failure_stage(
     return "unknown"
 
 
-def summarize_trace_events(events: Iterable[Any]) -> dict[str, Any]:
-    normalized = _iter_normalized_events(events)
-
+def _summarize_normalized_events(normalized: list[dict[str, Any]]) -> dict[str, Any]:
     run_id = None
     session_id = None
     terminal_reason = None
@@ -181,7 +204,22 @@ def summarize_trace_events(events: Iterable[Any]) -> dict[str, Any]:
     }
 
 
-def summarize_trace_file(path: str | Path) -> dict[str, Any]:
+def summarize_trace_runs(events: Iterable[Any]) -> list[dict[str, Any]]:
+    normalized = _iter_normalized_events(events)
+    return [
+        _summarize_normalized_events(run_events)
+        for run_events in _split_normalized_runs(normalized)
+    ]
+
+
+def summarize_trace_events(events: Iterable[Any]) -> dict[str, Any]:
+    runs = summarize_trace_runs(events)
+    if runs:
+        return runs[-1]
+    return _summarize_normalized_events([])
+
+
+def _load_trace_file_events(path: str | Path) -> list[dict[str, Any]]:
     path = Path(path)
     events: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -190,7 +228,15 @@ def summarize_trace_file(path: str | Path) -> dict[str, Any]:
             if not stripped:
                 continue
             events.append(json.loads(stripped))
-    return summarize_trace_events(events)
+    return events
+
+
+def summarize_trace_file(path: str | Path) -> dict[str, Any]:
+    return summarize_trace_events(_load_trace_file_events(path))
+
+
+def summarize_trace_file_runs(path: str | Path) -> list[dict[str, Any]]:
+    return summarize_trace_runs(_load_trace_file_events(path))
 
 
 def summarize_trace(source: Iterable[Any] | str | Path) -> dict[str, Any]:
@@ -204,4 +250,6 @@ __all__ = [
     "summarize_trace",
     "summarize_trace_events",
     "summarize_trace_file",
+    "summarize_trace_file_runs",
+    "summarize_trace_runs",
 ]
