@@ -50,6 +50,7 @@ from tools.context import ToolExecutionContext
 from tools.permissions import PermissionContext, RiskClassifier
 from utils import setup_logger
 from runtime.loop import RuntimeRunner
+from runtime.subagents import SubagentCompletionVerifier, SubagentLauncher
 
 
 def resolve_teammate_mode(requested_mode: Optional[str]):
@@ -217,6 +218,25 @@ class CodeAgent(Agent):
         )
         self.tool_orchestrator = ToolOrchestrator(self)
         self.runner = RuntimeRunner(self)
+        self.subagent_launcher = SubagentLauncher(
+            project_root=Path(self.project_root),
+            main_llm=self.llm,
+            tool_registry=self.tool_registry,
+            parent_trace_logger=self.trace_logger,
+            parent_history_manager=self.history_manager,
+            parent_context_engine=self.context_engine,
+            parent_host=self,
+        )
+        from tools.builtin.task import TaskTool
+
+        self.tool_registry.register_tool(
+            TaskTool(
+                project_root=Path(self.project_root),
+                launcher=self.subagent_launcher,
+            )
+        )
+        if bool(getattr(self.config, "enable_verification_agent", True)):
+            self.completion_verifier = SubagentCompletionVerifier(self.subagent_launcher)
 
     def _apply_session_memory(self, memory: SessionMemory) -> None:
         self.session_memory = memory
@@ -244,16 +264,6 @@ class CodeAgent(Agent):
             AskUserTool(project_root=self.project_root, interactive=self.interactive)
         )
         if self.enable_agent_teams:
-            from tools.builtin.task import TaskTool
-
-            self.tool_registry.register_tool(
-                TaskTool(
-                    project_root=self.project_root,
-                    main_llm=self.llm,
-                    tool_registry=self.tool_registry,
-                    team_manager=self.team_manager,
-                )
-            )
             self._register_agent_teams_tools()
 
     def _register_agent_teams_tools(self) -> None:

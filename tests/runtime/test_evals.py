@@ -100,6 +100,45 @@ def test_summarize_trace_events_exposes_metrics_schema():
     assert summary["failure_stage"] == "completion_gate"
 
 
+def test_summarize_trace_events_aggregates_subagent_metrics():
+    from runtime.evals import summarize_trace_events
+
+    events = [
+        ("run_start", 0, {"run_id": 7}),
+        ("subagent_requested", 0, {"profile": "explore"}),
+        (
+            "subagent_completed",
+            0,
+            {
+                "profile": "explore",
+                "tool_usage": {"Read": 2, "Grep": 1},
+                "token_usage": 40,
+                "verdict": "completed",
+            },
+        ),
+        ("subagent_requested", 0, {"profile": "verification"}),
+        (
+            "subagent_completed",
+            0,
+            {
+                "profile": "verification",
+                "tool_usage": {"Read": 1},
+                "token_usage": 20,
+                "verdict": "PASS",
+            },
+        ),
+        ("subagent_requested", 0, {"profile": "verification"}),
+        ("subagent_failed", 0, {"profile": "verification"}),
+        ("run_end", 0, {"run_id": 7}),
+    ]
+    summary = summarize_trace_events(events)
+    assert summary["subagent_invocation_count"] == 3
+    assert summary["child_tool_count"] == 4
+    assert summary["child_token_usage"] == 60
+    assert summary["child_failure_count"] == 1
+    assert summary["verification_verdict"] == "PASS"
+
+
 def test_summarize_trace_jsonl_file_matches_event_summary(tmp_path):
     from runtime.evals import summarize_trace_events, summarize_trace_file
 

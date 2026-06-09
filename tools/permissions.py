@@ -59,7 +59,7 @@ class PermissionDecision:
 class RiskClassifier:
     """Classify tool calls into permission decisions."""
 
-    READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "ListFiles"}
+    READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "LS", "ListFiles"}
     WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
     INTERNAL_STATE_TOOLS = {"TodoWrite"}
     RECURSIVE_OR_MUTATING_TOOLS = {"Bash", "Task"}

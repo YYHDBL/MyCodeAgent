@@ -673,6 +673,26 @@ class RuntimeRunner:
                 usage = host._extract_usage(raw_response)
                 if usage and usage.get("total_tokens") is not None:
                     host.context_engine.record_usage(usage["total_tokens"])
+                    max_total_tokens = int(getattr(host, "max_total_tokens", 0) or 0)
+                    if max_total_tokens and host.context_engine.total_usage_tokens > max_total_tokens:
+                        state = self._transition(
+                            state,
+                            TransitionReason.TOKEN_BUDGET_EXCEEDED,
+                            trace_logger,
+                            step=step,
+                            details={
+                                "total_tokens": host.context_engine.total_usage_tokens,
+                                "token_budget": max_total_tokens,
+                            },
+                        )
+                        self._terminal(
+                            TerminalReason.TOKEN_BUDGET,
+                            trace_logger,
+                            step=step,
+                            total_tokens=host.context_engine.total_usage_tokens,
+                            token_budget=max_total_tokens,
+                        )
+                        return "抱歉，我无法在限定预算内完成这个任务。"
 
                 response_meta = host._extract_response_meta(raw_response)
                 tool_calls = host._extract_tool_calls(raw_response)

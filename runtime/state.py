@@ -19,6 +19,7 @@ class TransitionReason(str, Enum):
     MODEL_RETURNED_FINAL = "model_returned_final"
     STOP_HOOK_BLOCKING = "stop_hook_blocking"
     MAX_STEPS_EXCEEDED = "max_steps_exceeded"
+    TOKEN_BUDGET_EXCEEDED = "token_budget_exceeded"
     UNRECOVERABLE_ERROR = "unrecoverable_error"
 
 
@@ -31,6 +32,7 @@ class TerminalReason(str, Enum):
     TOOL_ERROR_UNRECOVERABLE = "tool_error_unrecoverable"
     USER_ABORT = "user_abort"
     MODEL_ERROR = "model_error"
+    TOKEN_BUDGET = "token_budget"
 
 
 @dataclass(frozen=True)

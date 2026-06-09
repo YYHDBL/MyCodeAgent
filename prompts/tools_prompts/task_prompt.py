@@ -3,21 +3,17 @@
 task_prompt = """
 Tool name: Task
 Tool description:
-Launches a subagent to handle complex, multi-step tasks in an isolated session.
-Supports two modes:
-- oneshot (default): run a temporary subagent and return final result.
-- persistent: register a long-lived teammate in AgentTeams runtime.
-- parallel: fan out multiple work items to teammates (non-blocking dispatch).
+Launches an isolated, read-only Explore Agent and returns a bounded structured result.
 
 When to use Task
-- When the request is complex, multi-step, or benefits from focused sub-work.
-- When you want a subagent to explore or summarize and return a concise report.
+- When repository exploration would add noisy search history to the main context.
+- When you need a focused codebase scan with findings and file evidence.
 
-Subagent type guidance
-- general: default for complex execution and focused sub-work.
-- explore: scan the codebase, find entry points, locate relevant files.
-- plan: generate implementation steps, dependencies, risks.
-- summary: compress long outputs or multi-file findings.
+Capability boundary
+- The only supported subagent_type is "explore".
+- Explore can use only LS, Glob, Grep, and Read.
+- Explore cannot use Bash, Write, Edit, MultiEdit, AskUser, or Task.
+- Task does not provide persistent, parallel, background, plan, summary, or general agents.
 
 Model guidance
 - Choose "light" for simpler tasks when appropriate.
@@ -35,25 +31,15 @@ Parameters (JSON object)
 - prompt (string, required)
   Full, self-contained instructions for the subagent.
 - subagent_type (string, required)
-  Role to select a system prompt: general | explore | summary | plan.
+  Must be "explore".
 - model (string, optional)
   Choose "main" or "light". The main agent decides based on task complexity.
-- mode (string, optional)
-  oneshot | persistent | parallel. Default is oneshot.
-- team_name (string, optional)
-  Required when mode=persistent|parallel.
-- teammate_name (string, optional)
-  Required when mode=persistent. Legacy alias: name.
-- tasks (array, optional)
-  Required when mode=parallel. Each item should include owner/title/instruction.
-- run_in_background (boolean, optional)
-  Reserved field for future compatibility.
 
 Usage notes
 1) Only one Task call is supported at a time (single tool call).
-2) The subagent returns one final result; summarize it back to the user.
+2) The parent receives only ExploreResult, not child history or raw session memory.
 3) Your prompt should be detailed and specify exactly what to return.
-4) Subagents and teammates must not call Task recursively.
+4) Explore cannot call Task recursively.
 
 Example
 {"description": "Explore auth flow", "prompt": "Find key files and summarize auth flow. Return file paths and purpose.", "subagent_type": "explore", "model": "light"}

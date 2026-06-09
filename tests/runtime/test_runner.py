@@ -24,6 +24,19 @@ def test_runtime_host_initializes_tool_orchestrator():
     assert "self.tool_orchestrator = ToolOrchestrator(self)" in source
 
 
+def test_runtime_runner_enforces_total_token_budget():
+    from runtime.loop import RuntimeRunner
+
+    host = _FakeHost()
+    host.max_total_tokens = 5
+
+    result = RuntimeRunner(host).run("budgeted task")
+
+    assert "限定预算" in result
+    terminal = [payload for name, _step, payload in host.trace_logger.events if name == "terminal"]
+    assert terminal[-1]["reason"] == "token_budget"
+
+
 class _FakeTraceLogger:
     def __init__(self):
         self.events = []

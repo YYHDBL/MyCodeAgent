@@ -608,6 +608,16 @@
 
 ## Phase 7：Subagent Runtime 与受限多 Agent
 
+执行备注（2026-06-09）：
+
+- `RuntimeProfile`、`SubagentRequest`、`SubagentResult` 与 `SubagentLauncher`
+  位于 `runtime/subagents.py`。
+- Explore 与 Verification 都复用 `RuntimeRunner`，并拥有独立 history、context、
+  transcript、session memory、trace 和过滤 registry。
+- 正式 Task 只支持 Explore，不再支持 general/plan/summary/persistent/parallel。
+- Verification 只在 deterministic gate 通过且配置启用、任务要求验证时执行。
+- 正式路径不引用 `SubagentRunner` 或 `experimental.teams.TurnExecutor`。
+
 ### P7-T1：抽象 RuntimeProfile
 
 **目标**：让主 Agent 和子 Agent 共用 RuntimeRunner，只通过配置改变能力。
@@ -628,7 +638,7 @@
 
 **范围**：
 - TaskTool 使用 RuntimeProfile 启动受限运行时。
-- 保留旧行为必要兼容，但不能作为正式 loop。
+- 删除旧模式和旧 loop，不保留 legacy wrapper。
 
 **输出**：
 - TaskTool runtime integration。

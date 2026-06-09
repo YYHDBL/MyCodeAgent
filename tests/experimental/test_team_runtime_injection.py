@@ -35,7 +35,7 @@ class _DummyLLM:
     model = "dummy-model"
 
 
-def test_single_agent_boot_does_not_register_team_tools_by_default(tmp_path):
+def test_single_agent_boot_registers_task_without_team_tools_by_default(tmp_path):
     config = Config()
     config.enable_agent_teams = False
 
@@ -51,7 +51,7 @@ def test_single_agent_boot_does_not_register_team_tools_by_default(tmp_path):
     )
 
     tools = agent.tool_registry.list_tools()
-    assert "Task" not in tools
+    assert "Task" in tools
     assert "TeamCreate" not in tools
     assert agent.team_manager is None
 

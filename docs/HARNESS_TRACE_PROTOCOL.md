@@ -57,3 +57,24 @@
 
 - `completed_unverified`
 - `completion_gate_blocked`
+- `token_budget`
+
+## Phase 7 父子运行事件
+
+父 Agent Trace 只记录关联和汇总信息，不合并 child Trace 或 child model context。
+child 运行使用独立 session/run、Transcript 和 Session Memory。
+
+| Event | 关键字段 | 语义 |
+| --- | --- | --- |
+| `subagent_requested` | parent/child session/run id, `profile`, `model`, step/context/token budget | 父运行接受受限子任务请求 |
+| `subagent_started` | parent/child session/run id, `profile` | 隔离 child runtime 已开始 |
+| `subagent_completed` | IDs, `profile`, `terminal_reason`, `tool_usage`, `token_usage`, `verdict`, `elapsed_ms` | child 返回合法结构化结果 |
+| `subagent_failed` | IDs, `profile`, `terminal_reason`, `elapsed_ms` | child 异常、超预算、超步数或结果契约无效 |
+
+Eval summary 增加：
+
+- `subagent_invocation_count`
+- `child_tool_count`
+- `child_token_usage`
+- `child_failure_count`
+- `verification_verdict`

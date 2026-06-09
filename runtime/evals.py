@@ -99,6 +99,11 @@ def _summarize_normalized_events(normalized: list[dict[str, Any]]) -> dict[str, 
     prompt_fingerprint = None
     tool_schema_fingerprint = None
     total_tokens = 0
+    subagent_invocation_count = 0
+    child_tool_count = 0
+    child_token_usage = 0
+    child_failure_count = 0
+    verification_verdict = None
     projection_modes: list[str] = []
     event_flags = {
         "prompt_too_long": False,
@@ -169,6 +174,17 @@ def _summarize_normalized_events(normalized: list[dict[str, Any]]) -> dict[str, 
             total_usage = payload.get("total_usage") or {}
             if total_usage.get("total_tokens") is not None:
                 total_tokens = int(total_usage["total_tokens"])
+        elif name == "subagent_requested":
+            subagent_invocation_count += 1
+        elif name == "subagent_completed":
+            tool_usage = payload.get("tool_usage") or {}
+            if isinstance(tool_usage, dict):
+                child_tool_count += sum(int(value or 0) for value in tool_usage.values())
+            child_token_usage += int(payload.get("token_usage") or 0)
+            if payload.get("profile") == "verification":
+                verification_verdict = payload.get("verdict") or verification_verdict
+        elif name == "subagent_failed":
+            child_failure_count += 1
 
     permission_denied_count = (
         permission_denied_event_count
@@ -201,6 +217,11 @@ def _summarize_normalized_events(normalized: list[dict[str, Any]]) -> dict[str, 
         "tool_schema_fingerprint": tool_schema_fingerprint,
         "total_tokens": total_tokens,
         "projection_modes": projection_modes,
+        "subagent_invocation_count": subagent_invocation_count,
+        "child_tool_count": child_tool_count,
+        "child_token_usage": child_token_usage,
+        "child_failure_count": child_failure_count,
+        "verification_verdict": verification_verdict,
     }
 
 

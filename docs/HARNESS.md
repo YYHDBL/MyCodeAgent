@@ -45,8 +45,9 @@ main.py
 - `CodeAgent.run()` 只委托给 `RuntimeRunner.run()`。
 - `CodeAgent._react_loop()` 仅保留兼容委托，不是第二套正式 loop。
 - `RuntimeRunner` 不在运行时临时构造新的 `ToolOrchestrator`；host 必须在装配阶段提供实例。
-- `tools/builtin/task.py` 当前仍通过 `experimental.teams.turn_executor` 启动简化子流程，它是实验边界，不属于默认单 Agent runtime。
-- `experimental/teams/` 在 Phase 7 前只允许被标记和隔离，不作为主运行时依赖扩张点。
+- `runtime/subagents.py` 通过隔离 host 复用同一个 `RuntimeRunner`，不存在第二套正式 ReAct loop。
+- `tools/builtin/task.py` 只做 Explore 请求校验、profile 选择、launcher 调用和结构化结果映射。
+- `experimental/teams/` 继续保持实验边界，正式 Task 路径不依赖 Teams 或 `TurnExecutor`。
 
 ## 2. Tool Orchestrator
 
@@ -173,6 +174,34 @@ final text
 - `VerificationEvidence` 只来自实际工具执行，不接受模型自述
 - 验证后再发生 `Write` / `Edit` / `MultiEdit` 会使旧证据失效
 - Gate 阻塞通过 `STOP_HOOK_BLOCKING` 转移进入下一轮，并受重试上限约束
-- 默认 verifier 是确定性接口实现，不启动第二个 Agent，也不允许 verifier 修改代码
+- `DeterministicCompletionVerifier` 永远先执行，确定性 FAIL 不会启动或被模型 verifier 推翻
+- 配置启用且任务确实要求验证时，才启动独立 Verification Agent
+- Verification Agent 异常、超预算或非法结果映射为 `UNVERIFIED`，不会让父 loop 崩溃
+- Verification Agent 使用只读 registry 和 `readonly_subagent` 权限上下文，不能修改代码
 
 Trace 和协议细节见 `docs/HARNESS_COMPLETION_GATE.md`。
+
+## 7. Subagent Runtime
+
+Phase 7 的正式多 Agent 能力只有 Explore 与 Verification。两者由不可变
+`RuntimeProfile` 定义 system prompt、工具 allowlist、step/context/token
+预算、模型选择、上下文来源、完成策略、结果契约和递归策略。
+
+```text
+parent self-contained request
+  -> SubagentLauncher
+  -> isolated HistoryManager / ContextEngine / LoopState
+  -> filtered ToolRegistry + readonly PermissionContext
+  -> RuntimeRunner
+  -> ExploreResult or VerificationResult
+  -> bounded parent tool result
+```
+
+关键不变量：
+
+- 子 Agent 不读取父完整历史，也不修改父 `HistoryManager` 或 `ContextEngine`。
+- 子 Agent 有独立 Trace、Transcript 和 Session Memory。
+- Explore 只允许 `LS`、`Glob`、`Grep`、`Read`。
+- 子 registry 不注册 `Task`，Permission Core 也拒绝 `readonly_subagent` 调用 Task、Bash 或写工具。
+- 父上下文只接收结构化结果，不合并 child history、完整工具输出、Trace 或 Session Memory。
+- Task 注册不依赖 `enable_agent_teams`；persistent/parallel Teams 不属于正式 TaskTool。

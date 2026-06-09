@@ -424,6 +424,9 @@ Session Memory 是可重建、可版本化的会话级派生状态，不替代 T
 
 ## 11. Phase 7：Subagent Runtime 与受限多 Agent
 
+状态：已完成。Explore 与 Verification 使用统一 `RuntimeRunner`；旧
+`SubagentRunner` 和正式 Task 对 `experimental.teams.TurnExecutor` 的依赖已删除。
+
 ### 目标
 
 使用最小多 Agent 设计展示上下文隔离、能力裁剪和独立验证，而不是构建复杂协作平台。
@@ -467,6 +470,8 @@ result contract
 - Explore Agent 的搜索噪音不会进入父上下文。
 - Verification Agent 无法修改被验证代码。
 - 子 Agent 失败不会直接破坏父 Agent 会话。
+- Task 注册与 `enable_agent_teams` 解耦，不提供 persistent/parallel 正式模式。
+- Eval 可统计 child invocation、tool、token、failure 和 verification verdict。
 
 ### 面试价值
 

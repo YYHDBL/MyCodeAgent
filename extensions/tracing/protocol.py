@@ -25,5 +25,49 @@ CORE_TRACE_EVENTS: dict[str, TraceEventSpec] = {
     "run_end": TraceEventSpec(("run_id", "final")),
 }
 
+SUBAGENT_TRACE_EVENTS: dict[str, TraceEventSpec] = {
+    "subagent_requested": TraceEventSpec(
+        (
+            "parent_session_id",
+            "parent_run_id",
+            "child_session_id",
+            "child_run_id",
+            "profile",
+            "model",
+            "max_steps",
+            "context_token_budget",
+            "total_token_budget",
+        )
+    ),
+    "subagent_started": TraceEventSpec(
+        ("parent_session_id", "parent_run_id", "child_session_id", "child_run_id", "profile")
+    ),
+    "subagent_completed": TraceEventSpec(
+        (
+            "parent_session_id",
+            "parent_run_id",
+            "child_session_id",
+            "child_run_id",
+            "profile",
+            "terminal_reason",
+            "tool_usage",
+            "token_usage",
+            "verdict",
+            "elapsed_ms",
+        )
+    ),
+    "subagent_failed": TraceEventSpec(
+        (
+            "parent_session_id",
+            "parent_run_id",
+            "child_session_id",
+            "child_run_id",
+            "profile",
+            "terminal_reason",
+            "elapsed_ms",
+        )
+    ),
+}
 
-__all__ = ["CORE_TRACE_EVENTS", "TraceEventSpec"]
+
+__all__ = ["CORE_TRACE_EVENTS", "SUBAGENT_TRACE_EVENTS", "TraceEventSpec"]

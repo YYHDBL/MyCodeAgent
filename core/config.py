@@ -39,6 +39,7 @@ class Config(BaseModel):
     min_retain_rounds: int = 10  # 最少保留的轮次数
     summary_timeout: int = 120  # Summary 生成超时（秒）
     session_memory_char_budget: int = 4000
+    enable_verification_agent: bool = True
     # 工具消息序列化策略（已弃用，当前固定为 function calling 严格模式）
     tool_message_format: str = "strict"
     
@@ -70,6 +71,8 @@ class Config(BaseModel):
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),
             summary_timeout=int(os.getenv("SUMMARY_TIMEOUT", "120")),
             session_memory_char_budget=int(os.getenv("SESSION_MEMORY_CHAR_BUDGET", "4000")),
+            enable_verification_agent=os.getenv("ENABLE_VERIFICATION_AGENT", "true").lower()
+            in {"1", "true", "yes", "y", "on"},
             tool_message_format=os.getenv("TOOL_MESSAGE_FORMAT", "strict"),
         )
     
