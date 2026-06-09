@@ -1,5 +1,4 @@
 import json
-import uuid
 import os
 import logging
 import sys
@@ -20,7 +19,13 @@ from runtime.prompt_builder import ContextBuilder
 from runtime.input_preprocess import preprocess_input
 from runtime.summary import create_summary_generator
 from runtime.session import build_session_snapshot, save_session_snapshot, load_session_snapshot
-from runtime.transcript import ResumeLoader, TranscriptRecorder, TranscriptStore
+from runtime.transcript import (
+    ResumeLoader,
+    ResumeState,
+    TranscriptRecorder,
+    TranscriptStore,
+    resolve_transcript_session_id,
+)
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
@@ -183,12 +188,15 @@ class CodeAgent(Agent):
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
         self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
-        transcript_session_id = getattr(self.trace_logger, "session_id", None) or f"session-{uuid.uuid4().hex}"
+        transcript_session_id = resolve_transcript_session_id(
+            getattr(self.trace_logger, "session_id", None)
+        )
         self.transcript_store = TranscriptStore(
             Path(self.project_root) / "memory" / "transcripts" / f"transcript-{transcript_session_id}.jsonl",
             session_id=transcript_session_id,
         )
         self.transcript_recorder = TranscriptRecorder(self.transcript_store)
+        self.resume_state: ResumeState | None = None
         self._system_messages_logged = False
         self._run_id = 0
         self._system_messages_override: Optional[List[dict]] = None
@@ -396,12 +404,14 @@ class CodeAgent(Agent):
                     ["[Team Runtime]\n- Team state restored from session snapshot."]
                 )
 
-    def load_transcript(self, path: str, *, run_id: str) -> None:
+    def load_transcript(self, path: str, *, run_id: str) -> ResumeState:
         """从 transcript 恢复恢复事实，不恢复执行中的线程或进程。"""
         session_id = TranscriptStore.infer_session_id(path) or self.transcript_store.session_id
         store = TranscriptStore(path, session_id=session_id)
         resume = ResumeLoader(store).load(run_id=run_id)
         resume.apply_to_host(self)
+        self.resume_state = resume
+        return resume
 
     def _print_context_preview(
         self,

@@ -23,6 +23,13 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def resolve_transcript_session_id(trace_session_id: str | None) -> str:
+    normalized = str(trace_session_id or "").strip()
+    if normalized and normalized != "disabled":
+        return normalized
+    return f"session-{uuid.uuid4().hex}"
+
+
 class TranscriptEventType(str, Enum):
     MESSAGE = "message"
     STATE_TRANSITION = "state_transition"
@@ -159,11 +166,33 @@ class TranscriptStore:
     def append_event(self, event: TranscriptEvent) -> TranscriptEvent:
         line = json.dumps(event.to_dict(), ensure_ascii=False)
         with self._lock:
+            self._repair_trailing_record()
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(line)
                 handle.write("\n")
                 handle.flush()
         return event
+
+    def _repair_trailing_record(self) -> None:
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            return
+        data = self.path.read_bytes()
+        if data.endswith(b"\n"):
+            return
+
+        last_newline = data.rfind(b"\n")
+        tail_start = last_newline + 1
+        tail = data[tail_start:]
+        try:
+            json.loads(tail.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            with self.path.open("r+b") as handle:
+                handle.truncate(tail_start)
+            return
+
+        with self.path.open("ab") as handle:
+            handle.write(b"\n")
+            handle.flush()
 
     def append_message(
         self,
@@ -555,4 +584,5 @@ __all__ = [
     "TranscriptStore",
     "UNSAFE_UNCERTAIN_REPLAY_TOOLS",
     "UncertainAction",
+    "resolve_transcript_session_id",
 ]

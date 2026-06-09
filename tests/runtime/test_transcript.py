@@ -42,6 +42,18 @@ def test_transcript_event_schema_round_trips_required_fields(tmp_path: Path):
     }
 
 
+def test_transcript_session_id_is_unique_when_tracing_is_disabled():
+    from runtime.transcript import resolve_transcript_session_id
+
+    first = resolve_transcript_session_id("disabled")
+    second = resolve_transcript_session_id("disabled")
+
+    assert first.startswith("session-")
+    assert second.startswith("session-")
+    assert first != second
+    assert resolve_transcript_session_id("trace-session-1") == "trace-session-1"
+
+
 def test_transcript_store_appends_jsonl_and_flushes_for_reload(tmp_path: Path):
     from runtime.transcript import TranscriptEventType, TranscriptStore
 
@@ -87,6 +99,25 @@ def test_transcript_store_ignores_trailing_partial_json_record(tmp_path: Path):
 
     assert len(events) == 1
     assert events[0].payload["content"] == "hello"
+
+
+def test_transcript_store_can_append_after_trailing_partial_record(tmp_path: Path):
+    from runtime.transcript import TranscriptStore
+
+    path = tmp_path / "transcript.jsonl"
+    store = TranscriptStore(path, session_id="session-1")
+    store.append_message(run_id="run-1", step=0, role="user", content="before crash")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write('{"event_id":"broken"')
+        handle.flush()
+
+    store.append_message(run_id="run-1", step=1, role="assistant", content="after resume")
+    events = store.read_events()
+
+    assert [event.payload["content"] for event in events] == [
+        "before crash",
+        "after resume",
+    ]
 
 
 def test_transcript_store_can_infer_session_id_from_existing_file(tmp_path: Path):
@@ -272,3 +303,54 @@ def test_trace_logger_and_transcript_store_remain_separate(tmp_path: Path):
     assert transcript_rows[0]["event_type"] == "message"
     assert "event_type" not in trace_rows[0]
     assert "event" not in transcript_rows[0]
+
+
+def test_code_agent_load_transcript_exposes_resume_state(tmp_path: Path):
+    from runtime.host import CodeAgent
+    from runtime.transcript import TranscriptStore
+
+    path = tmp_path / "transcript.jsonl"
+    store = TranscriptStore(path, session_id="session-1")
+    store.append_tool_lifecycle(
+        run_id="run-1",
+        step=1,
+        tool_name="Write",
+        tool_call_id="call-1",
+        status="requested",
+        payload={"args": {"path": "notes.txt"}},
+    )
+    store.append_tool_lifecycle(
+        run_id="run-1",
+        step=1,
+        tool_name="Write",
+        tool_call_id="call-1",
+        status="started",
+        payload={"args": {"path": "notes.txt"}},
+    )
+
+    class _History:
+        def load_messages(self, messages):
+            self.messages = messages
+
+    class _CompactStore:
+        def set_active(self, checkpoint):
+            self.active_checkpoint = checkpoint
+
+    class _ContextEngine:
+        def __init__(self):
+            self.compact_store = _CompactStore()
+
+        def reset(self):
+            return None
+
+    agent = CodeAgent.__new__(CodeAgent)
+    agent.transcript_store = store
+    agent.history_manager = _History()
+    agent.context_engine = _ContextEngine()
+    agent.tool_registry = None
+
+    resume = CodeAgent.load_transcript(agent, str(path), run_id="run-1")
+
+    assert resume is agent.resume_state
+    assert resume.uncertain_actions[0].tool_call_id == "call-1"
+    assert resume.uncertain_actions[0].replay_allowed is False

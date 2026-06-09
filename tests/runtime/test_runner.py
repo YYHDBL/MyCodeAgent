@@ -1220,6 +1220,13 @@ def test_runtime_runner_records_tool_lifecycle_and_checkpoints_in_transcript():
     assert any(item["status"] == "started" for item in host.transcript_recorder.tool_lifecycle)
     assert any(item["status"] == "completed" for item in host.transcript_recorder.tool_lifecycle)
     assert host.transcript_recorder.checkpoints
+    checkpoint_payload = host.transcript_recorder.checkpoints[-1]["payload"]
+    assert checkpoint_payload["summary"].startswith("summary(")
+    assert (
+        checkpoint_payload["source_message_count"]
+        == host.context_engine.compact_store.active_checkpoint.source_message_count
+    )
+    assert checkpoint_payload["created_at"]
 
 
 def test_resume_restored_history_is_still_projected_by_context_engine(tmp_path):

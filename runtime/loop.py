@@ -139,6 +139,24 @@ class RuntimeRunner:
             payload=payload,
         )
 
+    def _record_active_transcript_checkpoint(self, *, step: int) -> None:
+        compact_store = getattr(getattr(self.host, "context_engine", None), "compact_store", None)
+        checkpoint = getattr(compact_store, "active_checkpoint", None)
+        if checkpoint is None:
+            return
+        self._record_transcript_checkpoint(
+            step=step,
+            checkpoint_id=checkpoint.id,
+            payload={
+                "summary": checkpoint.summary,
+                "source_message_count": checkpoint.source_message_count,
+                "retain_start_idx": checkpoint.retain_start_idx,
+                "messages_compacted": checkpoint.messages_compacted,
+                "created_at": checkpoint.created_at,
+                "metadata": dict(checkpoint.metadata),
+            },
+        )
+
     def _record_transcript_terminal(self, *, reason: str, step: int, details: dict[str, Any]) -> None:
         recorder = self._get_transcript_recorder()
         if recorder is None:
@@ -442,15 +460,7 @@ class RuntimeRunner:
                 trace_logger=trace_logger,
             )
             if compact_info.get("compacted"):
-                self._record_transcript_checkpoint(
-                    step=step,
-                    checkpoint_id=str(compact_info.get("checkpoint_id") or ""),
-                    payload={
-                        "messages_compacted": compact_info.get("messages_compacted"),
-                        "retain_start_idx": compact_info.get("retain_start_idx"),
-                        "source_message_count": host.history_manager.get_message_count(),
-                    },
-                )
+                self._record_active_transcript_checkpoint(step=step)
                 state = self._transition(
                     state,
                     TransitionReason.CONTEXT_COMPACTED,
@@ -550,15 +560,7 @@ class RuntimeRunner:
                             trace_logger=trace_logger,
                         )
                         if compact_info.get("compacted"):
-                            self._record_transcript_checkpoint(
-                                step=step,
-                                checkpoint_id=str(compact_info.get("checkpoint_id") or ""),
-                                payload={
-                                    "messages_compacted": compact_info.get("messages_compacted"),
-                                    "retain_start_idx": compact_info.get("retain_start_idx"),
-                                    "source_message_count": host.history_manager.get_message_count(),
-                                },
-                            )
+                            self._record_active_transcript_checkpoint(step=step)
                             state = self._transition(
                                 state,
                                 TransitionReason.MODEL_RECOVERY_RETRY,
