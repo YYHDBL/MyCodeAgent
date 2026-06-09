@@ -50,6 +50,36 @@ class ToolOrchestrator:
     def __init__(self, host: Any):
         self.host = host
 
+    def _get_transcript_recorder(self):
+        return getattr(self.host, "transcript_recorder", None)
+
+    def _get_transcript_run_id(self) -> str:
+        run_id = getattr(self.host, "_active_transcript_run_id", None)
+        if run_id is not None:
+            return str(run_id)
+        return f"run-{getattr(self.host, '_run_id', 0)}"
+
+    def _record_tool_lifecycle(
+        self,
+        *,
+        step: int,
+        tool_name: str,
+        tool_call_id: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        recorder = self._get_transcript_recorder()
+        if recorder is None:
+            return
+        recorder.record_tool_lifecycle(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            status=status,
+            payload=payload or {},
+        )
+
     def run(
         self,
         tool_calls: list[dict[str, Any]],
@@ -162,9 +192,23 @@ class ToolOrchestrator:
         return [observations[idx] for idx in range(len(batch.calls))]
 
     def _execute_plan(self, plan: ToolCallPlan, *, step: int, trace_logger) -> ToolObservation:
+        self._record_tool_lifecycle(
+            step=step,
+            tool_name=plan.tool_name,
+            tool_call_id=plan.tool_call_id,
+            status="requested",
+            payload={"args": plan.parsed_input},
+        )
         if plan.parse_error is not None:
             observation = self._parse_error_observation(plan.parse_error)
             self._log_parse_error(trace_logger, step, plan.tool_name, plan.tool_call_id, plan.parse_error)
+            self._record_tool_lifecycle(
+                step=step,
+                tool_name=plan.tool_name,
+                tool_call_id=plan.tool_call_id,
+                status="failed",
+                payload={"error": str(plan.parse_error), "args": plan.parsed_input},
+            )
         else:
             trace_logger.log_event(
                 "tool_call",
@@ -174,6 +218,7 @@ class ToolOrchestrator:
             observation = self._execute_one(
                 plan.tool_name,
                 plan.parsed_input,
+                plan.tool_call_id,
                 trace_logger,
                 step,
             )
@@ -184,8 +229,22 @@ class ToolOrchestrator:
             observation=observation,
         )
 
-    def _execute_one(self, tool_name: str, tool_input: dict[str, Any], trace_logger, step: int) -> str:
+    def _execute_one(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_call_id: str,
+        trace_logger,
+        step: int,
+    ) -> str:
         host = self.host
+        self._record_tool_lifecycle(
+            step=step,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            status="started",
+            payload={"args": tool_input},
+        )
         try:
             if hasattr(host, "tool_executor") and host.tool_executor is not None:
                 observation = host.tool_executor.execute(
@@ -197,6 +256,14 @@ class ToolOrchestrator:
             else:
                 observation = host._execute_tool(tool_name, tool_input)
             self._log_tool_result(trace_logger, step, tool_name, observation)
+            lifecycle_status, lifecycle_payload = self._tool_lifecycle_result_payload(observation)
+            self._record_tool_lifecycle(
+                step=step,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                status=lifecycle_status,
+                payload=lifecycle_payload,
+            )
             return observation
         except Exception as exc:
             error_result = {
@@ -215,7 +282,23 @@ class ToolOrchestrator:
                 },
                 step=step,
             )
+            self._record_tool_lifecycle(
+                step=step,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                status="failed",
+                payload={"error": str(exc), "args": tool_input},
+            )
             return json.dumps(error_result, ensure_ascii=False)
+
+    def _tool_lifecycle_result_payload(self, observation: str) -> tuple[str, dict[str, Any]]:
+        try:
+            result_obj = json.loads(observation)
+        except json.JSONDecodeError:
+            return "completed", {"result_text": observation}
+        status = str(result_obj.get("status") or "")
+        lifecycle_status = "failed" if status == "error" else "completed"
+        return lifecycle_status, {"result": result_obj}
 
     def _log_tool_result(self, trace_logger, step: int, tool_name: str, observation: str) -> None:
         try:

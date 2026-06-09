@@ -35,6 +35,30 @@ class _FakeTraceLogger:
         self.events.append(("system_messages", 0, messages))
 
 
+class _FakeTranscriptRecorder:
+    def __init__(self):
+        self.messages = []
+        self.transitions = []
+        self.tool_lifecycle = []
+        self.checkpoints = []
+        self.terminals = []
+
+    def record_message(self, **payload):
+        self.messages.append(payload)
+
+    def record_state_transition(self, **payload):
+        self.transitions.append(payload)
+
+    def record_tool_lifecycle(self, **payload):
+        self.tool_lifecycle.append(payload)
+
+    def record_checkpoint(self, **payload):
+        self.checkpoints.append(payload)
+
+    def record_terminal(self, **payload):
+        self.terminals.append(payload)
+
+
 class _FakeHistoryManager:
     def __init__(self):
         self.messages = []
@@ -71,6 +95,17 @@ class _FakeHistoryManager:
 
     def get_rounds_count(self):
         return 1
+
+    def load_messages(self, items):
+        self.messages = []
+        for item in items:
+            self.messages.append(
+                {
+                    "role": item.get("role"),
+                    "content": item.get("content"),
+                    "metadata": item.get("metadata", {}),
+                }
+            )
 
 
 class _FakeContextBuilder:
@@ -138,6 +173,8 @@ class _FakeHost:
         self.last_response_raw = None
         self.logged_messages = []
         self.llm_calls = []
+        self.transcript_recorder = None
+        self.responses = None
 
         class _FakeLLM:
             def __init__(self, outer):
@@ -147,6 +184,8 @@ class _FakeHost:
                 self.outer.llm_calls.append(
                     {"messages": messages, "tools": tools, "tool_choice": tool_choice}
                 )
+                if self.outer.responses:
+                    return self.outer.responses.pop(0)
                 return {
                     "choices": [
                         {
@@ -522,6 +561,12 @@ class _CompressingHost(_FakeHost):
         self.history_manager.append_assistant("old a")
         self.history_manager.append_user("older q")
         self.history_manager.append_assistant("older a")
+
+    def _extract_tool_calls(self, raw_response):
+        return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
+
+    def _execute_tool(self, tool_name, tool_input):
+        return "{\"status\": \"success\", \"data\": {\"echo\": \"hi\"}}"
 
 
 class _InvalidArgsToolHost(_ToolThenFinalHost):
@@ -1118,6 +1163,81 @@ def test_runtime_runner_emits_context_compacted_transition():
         event[0] == "state_transition" and event[2]["reason"] == "context_compacted"
         for event in host.trace_logger.events
     )
+
+
+def test_runtime_runner_records_transcript_messages_transitions_and_terminal():
+    from runtime.loop import RuntimeRunner
+
+    host = _ToolThenFinalHost()
+    host.transcript_recorder = _FakeTranscriptRecorder()
+    runner = RuntimeRunner(host)
+
+    result = runner.run("hello world", show_raw=False)
+
+    assert result == "tool done"
+    assert [item["role"] for item in host.transcript_recorder.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert any(item["reason"] == "model_returned_tool_calls" for item in host.transcript_recorder.transitions)
+    assert any(item["reason"] == "tools_executed" for item in host.transcript_recorder.transitions)
+    assert host.transcript_recorder.terminals[-1]["reason"] == "completed"
+
+
+def test_runtime_runner_records_tool_lifecycle_and_checkpoints_in_transcript():
+    from runtime.loop import RuntimeRunner
+
+    host = _CompressingHost()
+    host.responses = [
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {
+                                    "name": "Echo",
+                                    "arguments": "{\"text\": \"hi\"}",
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+        {"choices": [{"message": {"content": "tool done"}}]},
+    ]
+    host.transcript_recorder = _FakeTranscriptRecorder()
+    runner = RuntimeRunner(host)
+
+    runner.run("hello world", show_raw=False)
+
+    assert any(item["status"] == "requested" for item in host.transcript_recorder.tool_lifecycle)
+    assert any(item["status"] == "started" for item in host.transcript_recorder.tool_lifecycle)
+    assert any(item["status"] == "completed" for item in host.transcript_recorder.tool_lifecycle)
+    assert host.transcript_recorder.checkpoints
+
+
+def test_resume_restored_history_is_still_projected_by_context_engine(tmp_path):
+    from runtime.transcript import ResumeLoader, TranscriptStore
+
+    path = tmp_path / "transcript.jsonl"
+    store = TranscriptStore(path, session_id="session-1")
+    store.append_message(run_id="run-1", step=0, role="user", content="hello")
+    store.append_message(run_id="run-1", step=1, role="assistant", content="done")
+
+    host = _FakeHost()
+    resume = ResumeLoader(store).load(run_id="run-1")
+    host.history_manager.load_messages(resume.history_messages)
+
+    view = host.context_engine.build_model_view(history_manager=host.history_manager, pending_input="", step=0)
+
+    assert view.messages[0] == {"role": "system", "content": "system"}
+    assert [item["role"] for item in view.messages[1:]] == ["user", "assistant"]
 
 
 def test_runtime_runner_simple_question_can_complete_without_verification():

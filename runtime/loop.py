@@ -53,6 +53,13 @@ class RuntimeRunner:
                 },
                 step=step if step is not None else next_state.step,
             )
+        self._record_transcript_state_transition(
+            from_state=state.transition.reason.value if state.transition else None,
+            to_state=reason.value,
+            reason=reason.value,
+            step=step if step is not None else next_state.step,
+            details=payload_details,
+        )
         return next_state
 
     def _terminal(
@@ -69,6 +76,79 @@ class RuntimeRunner:
                 {"reason": reason.value, "details": details},
                 step=step,
             )
+        self._record_transcript_terminal(reason=reason.value, step=step, details=details)
+
+    def _get_transcript_recorder(self):
+        return getattr(self.host, "transcript_recorder", None)
+
+    def _get_transcript_run_id(self) -> str:
+        run_id = getattr(self.host, "_active_transcript_run_id", None)
+        if run_id is not None:
+            return str(run_id)
+        fallback = getattr(self.host, "_run_id", 0)
+        return f"run-{fallback}"
+
+    def _record_transcript_message(
+        self,
+        *,
+        role: str,
+        content: str,
+        step: int,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        recorder = self._get_transcript_recorder()
+        if recorder is None:
+            return
+        recorder.record_message(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            role=role,
+            content=content,
+            metadata=metadata or {},
+        )
+
+    def _record_transcript_state_transition(
+        self,
+        *,
+        from_state: str | None,
+        to_state: str,
+        reason: str,
+        step: int,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        recorder = self._get_transcript_recorder()
+        if recorder is None:
+            return
+        recorder.record_state_transition(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            from_state=from_state,
+            to_state=to_state,
+            reason=reason,
+            details=details or {},
+        )
+
+    def _record_transcript_checkpoint(self, *, step: int, checkpoint_id: str, payload: dict[str, Any]) -> None:
+        recorder = self._get_transcript_recorder()
+        if recorder is None:
+            return
+        recorder.record_checkpoint(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            checkpoint_id=checkpoint_id,
+            payload=payload,
+        )
+
+    def _record_transcript_terminal(self, *, reason: str, step: int, details: dict[str, Any]) -> None:
+        recorder = self._get_transcript_recorder()
+        if recorder is None:
+            return
+        recorder.record_terminal(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            reason=reason,
+            details=details,
+        )
 
     def _trace_model_request_state(
         self,
@@ -260,6 +340,7 @@ class RuntimeRunner:
         trace_logger = host.trace_logger
         host._run_id += 1
         run_id = host._run_id
+        host._active_transcript_run_id = f"run-{run_id}"
 
         host._log_system_messages_if_needed(trace_logger)
         trace_logger.log_event(
@@ -273,6 +354,7 @@ class RuntimeRunner:
         )
 
         self._append_user_message(processed_input)
+        self._record_transcript_message(role="user", content=processed_input, step=0, metadata={})
         trace_logger.log_event(
             "user_input",
             {"text": input_text, "processed": processed_input},
@@ -298,6 +380,7 @@ class RuntimeRunner:
                 {"run_id": run_id, "final": response_text if "response_text" in locals() else ""},
                 step=0,
             )
+            host._active_transcript_run_id = None
         if host.console_progress:
             host._console("✅ Agent 已完成")
 
@@ -359,6 +442,15 @@ class RuntimeRunner:
                 trace_logger=trace_logger,
             )
             if compact_info.get("compacted"):
+                self._record_transcript_checkpoint(
+                    step=step,
+                    checkpoint_id=str(compact_info.get("checkpoint_id") or ""),
+                    payload={
+                        "messages_compacted": compact_info.get("messages_compacted"),
+                        "retain_start_idx": compact_info.get("retain_start_idx"),
+                        "source_message_count": host.history_manager.get_message_count(),
+                    },
+                )
                 state = self._transition(
                     state,
                     TransitionReason.CONTEXT_COMPACTED,
@@ -458,6 +550,15 @@ class RuntimeRunner:
                             trace_logger=trace_logger,
                         )
                         if compact_info.get("compacted"):
+                            self._record_transcript_checkpoint(
+                                step=step,
+                                checkpoint_id=str(compact_info.get("checkpoint_id") or ""),
+                                payload={
+                                    "messages_compacted": compact_info.get("messages_compacted"),
+                                    "retain_start_idx": compact_info.get("retain_start_idx"),
+                                    "source_message_count": host.history_manager.get_message_count(),
+                                },
+                            )
                             state = self._transition(
                                 state,
                                 TransitionReason.MODEL_RECOVERY_RETRY,
@@ -747,6 +848,15 @@ class RuntimeRunner:
                     },
                     reasoning_content=reasoning_content,
                 )
+                self._record_transcript_message(
+                    role="assistant",
+                    content=assistant_content,
+                    step=step,
+                    metadata={
+                        "action_type": "tool_call",
+                        "tool_calls": tool_calls,
+                    },
+                )
                 host._log_message_write(
                     trace_logger,
                     "assistant",
@@ -779,6 +889,16 @@ class RuntimeRunner:
                             **obs_metadata,
                         },
                         project_root=host.project_root,
+                    )
+                    self._record_transcript_message(
+                        role="tool",
+                        content=obs.observation,
+                        step=step,
+                        metadata={
+                            "tool_name": obs.tool_name,
+                            "tool_call_id": obs.tool_call_id,
+                            **obs_metadata,
+                        },
                     )
                     host._log_message_write(
                         trace_logger,
@@ -854,6 +974,12 @@ class RuntimeRunner:
                     metadata={"step": step, "action_type": action_type},
                     reasoning_content=reasoning_content,
                 )
+                self._record_transcript_message(
+                    role="assistant",
+                    content=final_text,
+                    step=step,
+                    metadata={"action_type": action_type},
+                )
                 host._log_message_write(
                     trace_logger,
                     "assistant",
@@ -899,6 +1025,12 @@ class RuntimeRunner:
                 metadata={"step": step, "action_type": "final_candidate"},
                 reasoning_content=reasoning_content,
             )
+            self._record_transcript_message(
+                role="assistant",
+                content=final_text,
+                step=step,
+                metadata={"action_type": "final_candidate"},
+            )
             host._log_message_write(
                 trace_logger,
                 "assistant",
@@ -911,6 +1043,12 @@ class RuntimeRunner:
             self._append_user_message(
                 feedback,
                 metadata={"step": step, "source": "completion_gate"},
+            )
+            self._record_transcript_message(
+                role="user",
+                content=feedback,
+                step=step,
+                metadata={"source": "completion_gate"},
             )
             host._log_message_write(
                 trace_logger,
