@@ -8,6 +8,7 @@ from runtime.context.model_view import ModelView
 from runtime.context.normalizer import MessageNormalizer
 from runtime.context.projection import ProjectionBuilder, ProjectionResult
 from runtime.context.rounds import HistoryRound, RoundSegmenter
+from runtime.session_memory import SessionMemory
 
 __all__ = [
     "CompactCheckpoint",
@@ -22,4 +23,5 @@ __all__ = [
     "ProjectionBuilder",
     "ProjectionResult",
     "RoundSegmenter",
+    "SessionMemory",
 ]

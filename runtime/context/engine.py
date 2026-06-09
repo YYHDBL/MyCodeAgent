@@ -11,6 +11,7 @@ from runtime.context.compact_store import CompactStore
 from runtime.context.model_view import ModelView
 from runtime.context.normalizer import MessageNormalizer
 from runtime.context.projection import ProjectionBuilder
+from runtime.session_memory import SessionMemory, render_session_memory
 
 
 class ContextEngine:
@@ -41,6 +42,7 @@ class ContextEngine:
         self.normalizer = normalizer or MessageNormalizer()
         self.last_usage_tokens = 0
         self.total_usage_tokens = 0
+        self.session_memory: SessionMemory | None = None
 
     def record_usage(self, total_tokens: int | None) -> None:
         if total_tokens is None:
@@ -53,6 +55,10 @@ class ContextEngine:
         self.compact_store.clear()
         self.last_usage_tokens = 0
         self.total_usage_tokens = 0
+        self.session_memory = None
+
+    def set_session_memory(self, memory: SessionMemory | None) -> None:
+        self.session_memory = memory
 
     def should_compact(self, *, history_manager: Any, pending_input: str) -> bool:
         source_messages = history_manager.get_messages()
@@ -131,7 +137,14 @@ class ContextEngine:
         projection = self.projection_builder.project(source_messages)
         history_messages = self.normalizer.normalize(projection.messages)
         system_messages = self.context_builder.get_system_messages()
-        messages = list(system_messages) + list(history_messages)
+        dynamic_messages: list[dict[str, Any]] = []
+        session_memory_chars = 0
+        if self.session_memory is not None:
+            budget = max(0, int(getattr(self.config, "session_memory_char_budget", 4000) or 4000))
+            rendered, session_memory_chars = render_session_memory(self.session_memory, char_budget=budget)
+            if rendered:
+                dynamic_messages.append({"role": "system", "content": rendered})
+        messages = list(system_messages) + dynamic_messages + list(history_messages)
 
         estimated_chars = len(pending_input or "")
         for message in messages:
@@ -146,6 +159,10 @@ class ContextEngine:
             projection_mode=projection.projection_mode,
             compact_checkpoint_id=projection.compact_checkpoint_id,
             warnings=projection.warnings,
+            dynamic_message_count=len(dynamic_messages),
+            session_memory_message_count=len(dynamic_messages),
+            session_memory_chars=session_memory_chars,
+            dynamic_context_sources=("session_memory",) if dynamic_messages else (),
         )
 
         if trace_logger:
@@ -160,6 +177,10 @@ class ContextEngine:
                     "projection_mode": view.projection_mode,
                     "compact_checkpoint_id": view.compact_checkpoint_id,
                     "warnings": list(view.warnings),
+                    "dynamic_message_count": view.dynamic_message_count,
+                    "session_memory_message_count": view.session_memory_message_count,
+                    "session_memory_chars": view.session_memory_chars,
+                    "dynamic_context_sources": list(view.dynamic_context_sources),
                 },
                 step=step,
             )

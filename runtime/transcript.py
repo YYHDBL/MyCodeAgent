@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from runtime.context.compact_store import CompactCheckpoint
+from runtime.session_memory import SessionMemory, SessionMemoryDeriver
 from runtime.state import LoopState, Transition, TransitionReason
 
 
@@ -108,13 +109,18 @@ class ResumeState:
     uncertain_actions: list[UncertainAction]
     completed_tool_results: dict[str, dict[str, Any]]
     failed_tool_results: dict[str, dict[str, Any]]
+    session_memory: SessionMemory = field(default_factory=SessionMemory)
     runtime_state: dict[str, Any] = field(default_factory=dict)
 
     def apply_to_host(self, host: Any) -> None:
         if hasattr(host, "context_engine"):
             host.context_engine.reset()
+            if hasattr(host.context_engine, "set_session_memory"):
+                host.context_engine.set_session_memory(self.session_memory)
         if hasattr(host, "history_manager"):
             host.history_manager.load_messages(self.history_messages)
+        if hasattr(host, "session_memory"):
+            host.session_memory = self.session_memory
         checkpoint = self.checkpoint
         compact_store = getattr(getattr(host, "context_engine", None), "compact_store", None)
         if checkpoint and compact_store is not None:
@@ -353,8 +359,14 @@ class TranscriptStore:
 class TranscriptRecorder:
     """Runtime-facing recorder that hides raw store writes."""
 
-    def __init__(self, store: TranscriptStore):
+    def __init__(self, store: TranscriptStore, *, on_recorded: Any = None):
         self.store = store
+        self.on_recorded = on_recorded
+
+    def _finalize(self, event: TranscriptEvent) -> TranscriptEvent:
+        if callable(self.on_recorded):
+            self.on_recorded(event)
+        return event
 
     def record_message(
         self,
@@ -366,14 +378,14 @@ class TranscriptRecorder:
         metadata: dict[str, Any] | None = None,
         reference_id: str | None = None,
     ) -> TranscriptEvent:
-        return self.store.append_message(
+        return self._finalize(self.store.append_message(
             run_id=run_id,
             step=step,
             role=role,
             content=content,
             metadata=metadata,
             reference_id=reference_id,
-        )
+        ))
 
     def record_state_transition(
         self,
@@ -386,7 +398,7 @@ class TranscriptRecorder:
         details: dict[str, Any] | None = None,
         reference_id: str | None = None,
     ) -> TranscriptEvent:
-        return self.store.append_state_transition(
+        return self._finalize(self.store.append_state_transition(
             run_id=run_id,
             step=step,
             from_state=from_state,
@@ -394,7 +406,7 @@ class TranscriptRecorder:
             reason=reason,
             details=details,
             reference_id=reference_id,
-        )
+        ))
 
     def record_tool_lifecycle(
         self,
@@ -407,7 +419,7 @@ class TranscriptRecorder:
         payload: dict[str, Any] | None = None,
         reference_id: str | None = None,
     ) -> TranscriptEvent:
-        return self.store.append_tool_lifecycle(
+        return self._finalize(self.store.append_tool_lifecycle(
             run_id=run_id,
             step=step,
             tool_name=tool_name,
@@ -415,7 +427,7 @@ class TranscriptRecorder:
             status=status,
             payload=payload,
             reference_id=reference_id,
-        )
+        ))
 
     def record_checkpoint(
         self,
@@ -426,13 +438,13 @@ class TranscriptRecorder:
         payload: dict[str, Any] | None = None,
         reference_id: str | None = None,
     ) -> TranscriptEvent:
-        return self.store.append_checkpoint(
+        return self._finalize(self.store.append_checkpoint(
             run_id=run_id,
             step=step,
             checkpoint_id=checkpoint_id,
             payload=payload,
             reference_id=reference_id,
-        )
+        ))
 
     def record_terminal(
         self,
@@ -443,13 +455,13 @@ class TranscriptRecorder:
         details: dict[str, Any] | None = None,
         reference_id: str | None = None,
     ) -> TranscriptEvent:
-        return self.store.append_terminal(
+        return self._finalize(self.store.append_terminal(
             run_id=run_id,
             step=step,
             reason=reason,
             details=details,
             reference_id=reference_id,
-        )
+        ))
 
 
 class ResumeLoader:
@@ -569,6 +581,7 @@ class ResumeLoader:
             uncertain_actions=uncertain_actions,
             completed_tool_results=completed_tool_results,
             failed_tool_results=failed_tool_results,
+            session_memory=SessionMemoryDeriver().rebuild(events),
             runtime_state={},
         )
 

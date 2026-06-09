@@ -19,6 +19,7 @@ from runtime.prompt_builder import ContextBuilder
 from runtime.input_preprocess import preprocess_input
 from runtime.summary import create_summary_generator
 from runtime.session import build_session_snapshot, save_session_snapshot, load_session_snapshot
+from runtime.session_memory import SessionMemory, SessionMemoryManager
 from runtime.transcript import (
     ResumeLoader,
     ResumeState,
@@ -195,8 +196,13 @@ class CodeAgent(Agent):
             Path(self.project_root) / "memory" / "transcripts" / f"transcript-{transcript_session_id}.jsonl",
             session_id=transcript_session_id,
         )
-        self.transcript_recorder = TranscriptRecorder(self.transcript_store)
+        self.session_memory_manager = SessionMemoryManager(on_update=self._apply_session_memory)
+        self.transcript_recorder = TranscriptRecorder(
+            self.transcript_store,
+            on_recorded=self.session_memory_manager.ingest_event,
+        )
         self.resume_state: ResumeState | None = None
+        self.session_memory: SessionMemory = SessionMemory()
         self._system_messages_logged = False
         self._run_id = 0
         self._system_messages_override: Optional[List[dict]] = None
@@ -211,6 +217,11 @@ class CodeAgent(Agent):
         )
         self.tool_orchestrator = ToolOrchestrator(self)
         self.runner = RuntimeRunner(self)
+
+    def _apply_session_memory(self, memory: SessionMemory) -> None:
+        self.session_memory = memory
+        if hasattr(self.context_engine, "set_session_memory"):
+            self.context_engine.set_session_memory(memory)
     
     def _register_builtin_tools(self):
         """注册内置工具"""
@@ -409,8 +420,11 @@ class CodeAgent(Agent):
         session_id = TranscriptStore.infer_session_id(path) or self.transcript_store.session_id
         store = TranscriptStore(path, session_id=session_id)
         resume = ResumeLoader(store).load(run_id=run_id)
+        if hasattr(self, "session_memory_manager"):
+            self.session_memory_manager.memory = resume.session_memory
         resume.apply_to_host(self)
         self.resume_state = resume
+        self.session_memory = resume.session_memory
         return resume
 
     def _print_context_preview(

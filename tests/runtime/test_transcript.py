@@ -198,6 +198,7 @@ def test_resume_loader_keeps_completed_tool_results_without_reexecution(tmp_path
 
     assert resume.completed_tool_results["call-1"]["result"]["status"] == "success"
     assert resume.pending_tool_calls == []
+    assert any("Read" in item.text for item in resume.session_memory.completed_work)
 
 
 def test_resume_loader_marks_started_but_unfinished_mutation_tool_uncertain(tmp_path: Path):
@@ -229,6 +230,8 @@ def test_resume_loader_marks_started_but_unfinished_mutation_tool_uncertain(tmp_
     assert resume.uncertain_actions[0].tool_name == "Write"
     assert resume.uncertain_actions[0].tool_call_id == "call-2"
     assert resume.uncertain_actions[0].replay_allowed is False
+    assert not any("call-2" in item.text for item in resume.session_memory.completed_work)
+    assert any("call-2" in item.text for item in resume.session_memory.todo_items)
 
 
 def test_resume_loader_keeps_requested_but_unstarted_tool_replannable(tmp_path: Path):
@@ -354,3 +357,4 @@ def test_code_agent_load_transcript_exposes_resume_state(tmp_path: Path):
     assert resume is agent.resume_state
     assert resume.uncertain_actions[0].tool_call_id == "call-1"
     assert resume.uncertain_actions[0].replay_allowed is False
+    assert agent.session_memory == resume.session_memory

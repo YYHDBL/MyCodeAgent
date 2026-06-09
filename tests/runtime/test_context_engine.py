@@ -193,6 +193,66 @@ def test_context_engine_emits_model_view_build_trace():
     assert payload["projection_mode"] == "full_history"
 
 
+def test_context_engine_injects_session_memory_without_mutating_history():
+    from runtime.session_memory import SessionMemory, SessionMemoryItem, TranscriptEventRange
+
+    history = HistoryManager()
+    history.append_user("hello")
+    engine = ContextEngine(context_builder=_FakeContextBuilder())
+    engine.set_session_memory(
+        SessionMemory(
+            current_goal=SessionMemoryItem(
+                text="Finish task",
+                source=TranscriptEventRange(
+                    start_event_id="evt-1",
+                    end_event_id="evt-1",
+                    start_step=0,
+                    end_step=0,
+                ),
+            ),
+        )
+    )
+
+    before = history.get_messages()
+    view = engine.build_model_view(history_manager=history, pending_input="hello", step=3)
+
+    assert history.get_messages() == before
+    assert view.messages[1]["role"] == "system"
+    assert "Session Memory" in view.messages[1]["content"]
+    assert view.session_memory_message_count == 1
+    assert view.dynamic_context_sources == ("session_memory",)
+
+
+def test_context_engine_applies_independent_session_memory_budget():
+    from core.config import Config
+    from runtime.session_memory import SessionMemory, SessionMemoryItem, TranscriptEventRange
+
+    history = HistoryManager()
+    history.append_user("hello")
+    engine = ContextEngine(
+        context_builder=_FakeContextBuilder(),
+        config=Config(session_memory_char_budget=80),
+    )
+    engine.set_session_memory(
+        SessionMemory(
+            current_goal=SessionMemoryItem(
+                text="A" * 120,
+                source=TranscriptEventRange(
+                    start_event_id="evt-1",
+                    end_event_id="evt-1",
+                    start_step=0,
+                    end_step=0,
+                ),
+            ),
+        )
+    )
+
+    view = engine.build_model_view(history_manager=history, pending_input="")
+
+    assert view.session_memory_chars <= 80
+    assert "[truncated]" in view.messages[1]["content"]
+
+
 from core.config import Config
 
 

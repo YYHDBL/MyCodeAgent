@@ -18,6 +18,10 @@ class ModelView:
     projection_mode: str = "full_history"
     compact_checkpoint_id: str | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    dynamic_message_count: int = 0
+    session_memory_message_count: int = 0
+    session_memory_chars: int = 0
+    dynamic_context_sources: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def message_count(self) -> int:
