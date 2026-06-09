@@ -8,7 +8,11 @@ from runtime.context import ContextEngine
 from runtime.evals import summarize_trace as summarize_trace_metrics
 from runtime.history import Message
 from runtime.loop import RuntimeRunner
+from tools.context import ToolExecutionContext
+from tools.executor import ToolExecutor
 from tools.orchestrator import ToolOrchestrator
+from tools.permissions import PermissionContext, RiskClassifier
+from tools.registry import ToolRegistry
 
 
 class RecordingTraceLogger:
@@ -254,60 +258,21 @@ class ToolFailureScenarioHost(ToolThenFinalScenarioHost):
 class PermissionDeniedScenarioHost(ToolThenFinalScenarioHost):
     def __init__(self):
         super().__init__(tool_name="Write")
-        self.tool_orchestrator = _PermissionDeniedOrchestrator()
+        registry = ToolRegistry()
 
+        def _unexpected_write(_input):
+            raise AssertionError("permission denied scenario must not execute Write")
 
-class _PermissionDeniedOrchestrator:
-    def run(self, tool_calls, *, step, trace_logger):
-        trace_logger.log_event(
-            "tool_call",
-            {"tool": "Write", "args": {"path": "."}, "tool_call_id": "call_1"},
-            step=step,
+        registry.register_function("Write", "write fixture", _unexpected_write)
+        classifier = RiskClassifier()
+        self.tool_executor = ToolExecutor(
+            registry,
+            context=ToolExecutionContext(
+                permission_context=PermissionContext(runtime_mode="readonly_subagent"),
+                permission_decider=classifier.classify,
+                project_root=self.project_root,
+            ),
         )
-        trace_logger.log_event(
-            "permission_decision",
-            {
-                "tool_name": "Write",
-                "risk": "high",
-                "action": "deny",
-                "effective_action": "deny",
-                "reason": "readonly_subagent blocks writes",
-                "policy_source": "permission_core",
-                "input_summary": 'Write({"path":"."})',
-            },
-            step=step,
-        )
-        observation = json.dumps(
-            {
-                "status": "error",
-                "error": {
-                    "code": "PERMISSION_DENIED",
-                    "message": "Tool 'Write' denied by permission core.",
-                },
-                "data": {},
-            },
-            ensure_ascii=False,
-        )
-        trace_logger.log_event(
-            "tool_result",
-            {
-                "tool": "Write",
-                "result": json.loads(observation),
-            },
-            step=step,
-        )
-        return [
-            type(
-                "Obs",
-                (),
-                {
-                    "tool_name": "Write",
-                    "tool_call_id": "call_1",
-                    "observation": observation,
-                    "metadata": {"permission_action": "deny"},
-                },
-            )()
-        ]
 
 
 class CompletionGateBlockedScenarioHost(BaseScenarioHost):

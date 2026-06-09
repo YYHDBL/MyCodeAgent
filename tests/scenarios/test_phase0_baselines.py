@@ -54,3 +54,13 @@ def test_phase0_mock_baseline_batch_runner_returns_json_summary(tmp_path):
     assert by_name["completion_gate_block"]["metrics"]["failure_stage"] == "completion_gate"
     assert by_name["model_recovery"]["metrics"]["model_recovery_count"] >= 1
     assert by_name["context_compaction"]["metrics"]["context_compaction_count"] >= 1
+
+
+def test_permission_deny_scenario_uses_real_permission_execution_chain():
+    from tools.executor import ToolExecutor
+    from tools.orchestrator import ToolOrchestrator
+
+    host = PermissionDeniedScenarioHost()
+
+    assert isinstance(host.tool_orchestrator, ToolOrchestrator)
+    assert isinstance(host.tool_executor, ToolExecutor)
