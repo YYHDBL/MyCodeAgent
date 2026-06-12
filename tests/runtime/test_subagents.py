@@ -38,7 +38,7 @@ def _tool(name):
 
 def _registry():
     registry = ToolRegistry()
-    for name in ["LS", "Glob", "Grep", "Read", "Write", "Edit", "MultiEdit", "Bash", "Task", "AskUser"]:
+    for name in ["LS", "Glob", "Grep", "Read", "Write", "Edit", "MultiEdit", "Bash", "Task", "AskUser", "Memory"]:
         registry.register_tool(_tool(name))
     return registry
 
@@ -84,6 +84,7 @@ def test_filtered_registry_and_permission_core_both_block_mutation():
     filtered = launcher.build_registry(EXPLORE_PROFILE)
     assert filtered.get_tool("Read") is not None
     assert filtered.get_tool("Write") is None
+    assert filtered.get_tool("Memory") is None
     assert filtered.get_tool("Task") is None
 
     decision = RiskClassifier().classify(
@@ -98,6 +99,12 @@ def test_filtered_registry_and_permission_core_both_block_mutation():
         PermissionContext(runtime_mode="readonly_subagent"),
     )
     assert recursive.action is PermissionAction.DENY
+    memory = RiskClassifier().classify(
+        "Memory",
+        {"action": "add", "target": "memory", "content": "x"},
+        PermissionContext(runtime_mode="readonly_subagent"),
+    )
+    assert memory.action is PermissionAction.DENY
     readonly = RiskClassifier().classify(
         "LS",
         {},

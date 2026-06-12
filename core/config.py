@@ -39,6 +39,11 @@ class Config(BaseModel):
     min_retain_rounds: int = 10  # 最少保留的轮次数
     summary_timeout: int = 120  # Summary 生成超时（秒）
     session_memory_char_budget: int = 4000
+    long_term_memory_enabled: bool = True
+    memory_char_limit: int = 3000
+    user_memory_char_limit: int = 1500
+    user_memory_path: Optional[str] = None
+    memory_nudge_interval: int = 0
     enable_verification_agent: bool = True
     # 工具消息序列化策略（已弃用，当前固定为 function calling 严格模式）
     tool_message_format: str = "strict"
@@ -71,6 +76,12 @@ class Config(BaseModel):
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),
             summary_timeout=int(os.getenv("SUMMARY_TIMEOUT", "120")),
             session_memory_char_budget=int(os.getenv("SESSION_MEMORY_CHAR_BUDGET", "4000")),
+            long_term_memory_enabled=os.getenv("LONG_TERM_MEMORY_ENABLED", "true").lower()
+            in {"1", "true", "yes", "y", "on"},
+            memory_char_limit=int(os.getenv("MEMORY_CHAR_LIMIT", "3000")),
+            user_memory_char_limit=int(os.getenv("USER_MEMORY_CHAR_LIMIT", "1500")),
+            user_memory_path=os.getenv("USER_MEMORY_PATH") or None,
+            memory_nudge_interval=int(os.getenv("MEMORY_NUDGE_INTERVAL", "0")),
             enable_verification_agent=os.getenv("ENABLE_VERIFICATION_AGENT", "true").lower()
             in {"1", "true", "yes", "y", "on"},
             tool_message_format=os.getenv("TOOL_MESSAGE_FORMAT", "strict"),

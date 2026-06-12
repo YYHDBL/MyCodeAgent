@@ -105,6 +105,43 @@ HistoryManager full log
 - history clear/session load 会同步清理 context runtime 状态
 - `RuntimeRunner` 只通过 `ContextEngine.build_model_view()` 获取模型上下文
 
+### 记忆层边界
+
+Phase 8 之后，记忆相关边界固定为四层：
+
+```text
+Transcript         完整会话事实和恢复来源
+Session Memory     当前任务目标、进度、决策、验证状态
+Long-term Memory   跨会话稳定事实
+Model View         当前模型实际看到的有限动态视图
+```
+
+约束：
+
+- `Transcript` 是 append-only 事实源，不被长期记忆覆写。
+- `Session Memory` 只服务当前会话，不自动写入长期记忆。
+- `Long-term Memory` 只保存稳定偏好、项目约束、环境事实和可复用经验。
+- `Model View` 在读时注入 Session/Long-term Memory，不改写原始 history。
+- 当前用户指令优先于长期记忆。
+
+### Long-term Memory
+
+长期记忆采用有界、可解释的文件存储，而不是数据库或向量检索：
+
+```text
+memory/long_term/MEMORY.md   项目环境、稳定约束、工具经验、架构决策
+memory/long_term/USER.md     用户身份、沟通偏好、工作习惯、明确纠正
+```
+
+关键不变量：
+
+- 文件格式是 `§` 分隔的 entry list，不引入复杂 record schema。
+- `MEMORY.md` 与 `USER.md` 有独立字符预算。
+- 写入前做轻量安全检查，拒绝 prompt injection、秘密外泄模式和不可见 Unicode。
+- 写入使用独立 lock file、同目录临时文件、`flush + fsync + os.replace`。
+- `CodeAgent` 在会话开始时加载 frozen snapshot；会话内写入立即落盘，但不会改变当前 snapshot。
+- Long-term Memory 作为独立动态层注入 `ModelView`，不进入 Prompt Assembly 稳定 fingerprint。
+
 ## 4. 当前取舍
 
 已经完成：
@@ -178,6 +215,7 @@ final text
 - 配置启用且任务确实要求验证时，才启动独立 Verification Agent
 - Verification Agent 异常、超预算或非法结果映射为 `UNVERIFIED`，不会让父 loop 崩溃
 - Verification Agent 使用只读 registry 和 `readonly_subagent` 权限上下文，不能修改代码
+- 显式 `Memory` 工具、项目/用户长期记忆分离、frozen snapshot 与原子写入
 
 Trace 和协议细节见 `docs/HARNESS_COMPLETION_GATE.md`。
 
@@ -202,6 +240,6 @@ parent self-contained request
 - 子 Agent 不读取父完整历史，也不修改父 `HistoryManager` 或 `ContextEngine`。
 - 子 Agent 有独立 Trace、Transcript 和 Session Memory。
 - Explore 只允许 `LS`、`Glob`、`Grep`、`Read`。
-- 子 registry 不注册 `Task`，Permission Core 也拒绝 `readonly_subagent` 调用 Task、Bash 或写工具。
+- 子 registry 不注册 `Task` 或 `Memory`，Permission Core 也拒绝 `readonly_subagent` 调用 Task、Bash、`Memory` 或写工具。
 - 父上下文只接收结构化结果，不合并 child history、完整工具输出、Trace 或 Session Memory。
 - Task 注册不依赖 `enable_agent_teams`；persistent/parallel Teams 不属于正式 TaskTool。

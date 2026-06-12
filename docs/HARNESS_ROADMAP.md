@@ -479,6 +479,9 @@ result contract
 
 ## 12. Phase 8：Long-term Memory 最小闭环
 
+状态：已完成 MVP。当前实现提供有界 curated memory、`MEMORY.md/USER.md`
+分离、显式 `Memory` 工具、frozen snapshot、原子写入与轻量安全检查；未实现自动后台记忆提取、embedding 或外部 memory provider。
+
 ### 目标
 
 实现可控、可追溯的跨会话记忆，展示记忆写入、检索、失效和注入，而不是堆叠向量数据库。

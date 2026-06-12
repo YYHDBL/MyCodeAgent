@@ -253,6 +253,58 @@ def test_context_engine_applies_independent_session_memory_budget():
     assert "[truncated]" in view.messages[1]["content"]
 
 
+def test_context_engine_injects_long_term_memory_snapshot_without_mutating_history(tmp_path):
+    from runtime.memory import LongTermMemoryStore
+
+    history = HistoryManager()
+    history.append_user("hello")
+    store = LongTermMemoryStore(project_root=tmp_path)
+    store.add("memory", "Project uses explicit verification gates.")
+    store.add("user", "User prefers concise technical summaries.")
+    snapshot = store.load()
+    trace = _FakeTraceLogger()
+    engine = ContextEngine(context_builder=_FakeContextBuilder())
+    engine.set_long_term_memory_snapshot(snapshot)
+
+    before = history.get_messages()
+    view = engine.build_model_view(
+        history_manager=history,
+        pending_input="hello",
+        step=7,
+        trace_logger=trace,
+    )
+
+    assert history.get_messages() == before
+    assert view.messages[1]["role"] == "system"
+    assert "## Long-term Memory: user" in view.messages[1]["content"]
+    assert "## Long-term Memory: memory" in view.messages[2]["content"]
+    assert view.long_term_memory_message_count == 2
+    assert view.long_term_memory_chars > 0
+    assert "long_term_memory" in view.dynamic_context_sources
+    injected = [event for event in trace.events if event[0] == "long_term_memory_snapshot_injected"]
+    assert injected
+    assert "entries" not in injected[-1][2]
+
+
+def test_context_engine_uses_frozen_long_term_snapshot_until_reset(tmp_path):
+    from runtime.memory import LongTermMemoryStore
+
+    history = HistoryManager()
+    history.append_user("hello")
+    store = LongTermMemoryStore(project_root=tmp_path)
+    store.add("memory", "Existing project fact.")
+    snapshot = store.load()
+    engine = ContextEngine(context_builder=_FakeContextBuilder())
+    engine.set_long_term_memory_snapshot(snapshot)
+
+    store.add("memory", "New fact saved mid-session.")
+    view = engine.build_model_view(history_manager=history, pending_input="")
+
+    rendered = "\n".join(message["content"] for message in view.messages if message["role"] == "system")
+    assert "Existing project fact." in rendered
+    assert "New fact saved mid-session." not in rendered
+
+
 from core.config import Config
 
 

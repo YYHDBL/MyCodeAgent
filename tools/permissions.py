@@ -62,6 +62,7 @@ class RiskClassifier:
     READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "LS", "ListFiles"}
     WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
     INTERNAL_STATE_TOOLS = {"TodoWrite"}
+    PERSISTENT_MEMORY_TOOLS = {"Memory"}
     RECURSIVE_OR_MUTATING_TOOLS = {"Bash", "Task"}
     COORDINATION_TOOLS = {
         "AskUser",
@@ -139,6 +140,23 @@ class RiskClassifier:
                 action=PermissionAction.ALLOW,
                 risk=RiskLevel.LOW,
                 reason="internal planning state tool",
+                policy_source="permission_core",
+                input_summary=summary,
+            )
+
+        if tool_name in self.PERSISTENT_MEMORY_TOOLS:
+            if context.runtime_mode == "readonly_subagent":
+                return PermissionDecision(
+                    action=PermissionAction.DENY,
+                    risk=RiskLevel.HIGH,
+                    reason="readonly_subagent blocks Memory",
+                    policy_source="permission_core",
+                    input_summary=summary,
+                )
+            return PermissionDecision(
+                action=PermissionAction.ALLOW,
+                risk=RiskLevel.MEDIUM,
+                reason="persistent memory tool",
                 policy_source="permission_core",
                 input_summary=summary,
             )

@@ -15,6 +15,7 @@ from core.env import load_env
 load_env()
 from runtime.context import ContextEngine
 from runtime.history import HistoryManager, Message
+from runtime.memory import LongTermMemoryStore
 from runtime.prompt_builder import ContextBuilder
 from runtime.input_preprocess import preprocess_input
 from runtime.summary import create_summary_generator
@@ -29,6 +30,7 @@ from runtime.transcript import (
 )
 from tools.registry import ToolRegistry
 from tools.builtin.list_files import ListFilesTool
+from tools.builtin.memory import MemoryTool
 from tools.builtin.search_files_by_name import SearchFilesByNameTool
 from tools.builtin.search_code import GrepTool
 from tools.builtin.read_file import ReadTool
@@ -161,6 +163,18 @@ class CodeAgent(Agent):
         
         # 历史管理器（替代 Agent._history）
         self.history_manager = HistoryManager(config=self.config)
+        self.long_term_memory_store = None
+        self.long_term_memory_snapshot = None
+        if bool(getattr(self.config, "long_term_memory_enabled", True)):
+            self.long_term_memory_store = LongTermMemoryStore(
+                project_root=self.project_root,
+                memory_char_limit=int(getattr(self.config, "memory_char_limit", 3000) or 3000),
+                user_memory_char_limit=int(
+                    getattr(self.config, "user_memory_char_limit", 1500) or 1500
+                ),
+                user_memory_path=getattr(self.config, "user_memory_path", None),
+            )
+            self.long_term_memory_snapshot = self.long_term_memory_store.load()
         
         # Skills
         self._skills_prompt = ""
@@ -187,9 +201,24 @@ class CodeAgent(Agent):
             config=self.config,
             summary_generator=summary_generator,
         )
+        if self.long_term_memory_snapshot is not None:
+            self.context_engine.set_long_term_memory_snapshot(self.long_term_memory_snapshot)
 
         # Trace 日志（单实例贯穿 Agent 生命周期）
         self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
+        if self.long_term_memory_snapshot is not None:
+            self.trace_logger.log_event(
+                "long_term_memory_loaded",
+                {
+                    "memory_entry_count": self.long_term_memory_snapshot.memory.usage.entry_count,
+                    "memory_usage_chars": self.long_term_memory_snapshot.memory.usage.chars,
+                    "memory_limit_chars": self.long_term_memory_snapshot.memory.usage.limit,
+                    "user_entry_count": self.long_term_memory_snapshot.user.usage.entry_count,
+                    "user_usage_chars": self.long_term_memory_snapshot.user.usage.chars,
+                    "user_limit_chars": self.long_term_memory_snapshot.user.usage.limit,
+                },
+                step=0,
+            )
         transcript_session_id = resolve_transcript_session_id(
             getattr(self.trace_logger, "session_id", None)
         )
@@ -255,6 +284,10 @@ class CodeAgent(Agent):
         self.tool_registry.register_tool(EditTool(project_root=self.project_root))
         self.tool_registry.register_tool(MultiEditTool(project_root=self.project_root))
         self.tool_registry.register_tool(TodoWriteTool(project_root=self.project_root))
+        if self.long_term_memory_store is not None:
+            self.tool_registry.register_tool(
+                MemoryTool(project_root=self.project_root, store=self.long_term_memory_store)
+            )
         if self._skill_loader is not None:
             self.tool_registry.register_tool(
                 SkillTool(project_root=self.project_root, skill_loader=self._skill_loader)
@@ -380,6 +413,18 @@ class CodeAgent(Agent):
         if self._system_messages_override:
             return [dict(m) for m in self._system_messages_override]
         return self.context_builder.get_system_messages()
+
+    def refresh_long_term_memory_snapshot(self):
+        if self.long_term_memory_store is None:
+            self.long_term_memory_snapshot = None
+            self.context_engine.set_long_term_memory_snapshot(None)
+            return None
+        self.long_term_memory_snapshot = self.long_term_memory_store.load()
+        self.context_engine.set_long_term_memory_snapshot(self.long_term_memory_snapshot)
+        return self.long_term_memory_snapshot
+
+    def reset_long_term_memory_snapshot(self):
+        return self.refresh_long_term_memory_snapshot()
 
     def _build_messages(self, history_messages: list[dict]) -> list[dict]:
         system_messages = self._get_system_messages_for_run()

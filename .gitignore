@@ -20,4 +20,8 @@ claude_code_env.sh
 .vscode/
 techBlogs/
 memory/
+!runtime/memory/
+!runtime/memory/**
+runtime/memory/__pycache__/
+runtime/memory/*.pyc
 eval/

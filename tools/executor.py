@@ -72,6 +72,8 @@ class ToolExecutor:
         self.registry.record_execution_result(name, result_payload)
         if name == "Read":
             self.registry.cache_read_result(result_payload, parameters)
+        if name == "Memory" and trace_logger is not None:
+            self._log_long_term_memory_event(result_payload, trace_logger=trace_logger, step=step)
 
         return json.dumps(result_payload, ensure_ascii=False, indent=2)
 
@@ -132,3 +134,34 @@ class ToolExecutor:
                 "runtime_mode": self.context.permission_context.runtime_mode,
             },
         }
+
+    @staticmethod
+    def _log_long_term_memory_event(result_payload: dict[str, Any], *, trace_logger, step: int) -> None:
+        if not isinstance(result_payload, dict):
+            return
+        data = result_payload.get("data")
+        if not isinstance(data, dict):
+            return
+        state = data.get("state")
+        if not isinstance(state, dict):
+            return
+        usage = state.get("usage")
+        if not isinstance(usage, dict):
+            usage = {}
+        event_name = (
+            "long_term_memory_write"
+            if result_payload.get("status") != ToolStatus.ERROR.value
+            else "long_term_memory_rejected"
+        )
+        trace_logger.log_event(
+            event_name,
+            {
+                "action": data.get("action"),
+                "target": data.get("target"),
+                "entry_count": usage.get("entry_count", 0),
+                "usage_chars": usage.get("chars", 0),
+                "limit_chars": usage.get("limit", 0),
+                "reason": data.get("reason"),
+            },
+            step=step,
+        )
