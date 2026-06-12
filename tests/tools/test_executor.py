@@ -186,3 +186,28 @@ def test_tool_executor_emits_long_term_memory_rejected_trace_without_leaking_ent
     assert trace.events[-1][2]["target"] == "memory"
     assert trace.events[-1][2]["reason"] == "security_rejected"
     assert "entries" not in trace.events[-1][2]
+
+
+def test_tool_executor_does_not_trace_memory_list_as_write(tmp_path: Path):
+    from tools.executor import ToolExecutor
+
+    registry = ToolRegistry()
+    registry.register_tool(
+        MemoryTool(
+            project_root=tmp_path,
+            store=LongTermMemoryStore(project_root=tmp_path),
+        )
+    )
+    trace = _Trace()
+
+    result = json.loads(
+        ToolExecutor(registry).execute(
+            "Memory",
+            {"action": "list", "target": "memory"},
+            trace_logger=trace,
+            step=6,
+        )
+    )
+
+    assert result["status"] == ToolStatus.SUCCESS.value
+    assert trace.events == []

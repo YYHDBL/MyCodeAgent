@@ -142,6 +142,8 @@ class ToolExecutor:
         data = result_payload.get("data")
         if not isinstance(data, dict):
             return
+        if data.get("action") == "list":
+            return
         state = data.get("state")
         if not isinstance(state, dict):
             return

@@ -195,6 +195,7 @@ class CodeAgent(Agent):
             system_prompt_override=self.system_prompt,
             mcp_tools_prompt=self._mcp_tools_prompt,
             skills_prompt=self._skills_prompt,
+            tool_prompt_allowlist=frozenset(self.tool_registry.list_tools()) | {"Task"},
         )
         self.context_engine = ContextEngine(
             self.context_builder,

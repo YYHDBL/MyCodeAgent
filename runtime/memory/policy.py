@@ -45,6 +45,8 @@ _INVISIBLE_UNICODE = {
     "\u202e",
 }
 
+_RESERVED_DELIMITER_LINE = re.compile(r"(?m)^[ \t\r]*§[ \t\r]*$")
+
 
 def validate_memory_entry(content: str, *, max_entry_chars: int) -> tuple[str | None, str | None]:
     """Return (reason, message) when content must be rejected."""
@@ -57,6 +59,12 @@ def validate_memory_entry(content: str, *, max_entry_chars: int) -> tuple[str | 
         return (
             "entry_too_long",
             f"Memory entry exceeds the single-entry limit of {max_entry_chars} characters.",
+        )
+
+    if _RESERVED_DELIMITER_LINE.search(normalized):
+        return (
+            "reserved_delimiter",
+            "Memory entry contains the reserved entry delimiter.",
         )
 
     for char in _INVISIBLE_UNICODE:

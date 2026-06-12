@@ -84,6 +84,12 @@ def test_codeagent_registers_memory_tool_by_default(tmp_path: Path):
 
 
 def test_codeagent_omits_memory_tool_when_disabled(tmp_path: Path):
+    prompts_dir = tmp_path / "prompts" / "tools_prompts"
+    prompts_dir.mkdir(parents=True)
+    (prompts_dir / "memory_prompt.py").write_text(
+        'memory_prompt = """Tool name: Memory\\nDisabled memory contract."""\n',
+        encoding="utf-8",
+    )
     agent = CodeAgent(
         name="code",
         llm=_DummyLLM(),
@@ -97,3 +103,7 @@ def test_codeagent_omits_memory_tool_when_disabled(tmp_path: Path):
 
     assert "Memory" not in agent.tool_registry.list_tools()
     assert agent.long_term_memory_store is None
+    prompt_text = "\n".join(
+        message["content"] for message in agent.context_builder.get_system_messages()
+    )
+    assert "Tool name: Memory" not in prompt_text

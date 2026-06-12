@@ -171,7 +171,10 @@ class LongTermMemoryStore:
 
         path = self._path_for(target)
         with self._file_lock(path):
-            entries = list(self._read_entries(path))
+            try:
+                entries = list(self._read_entries(path))
+            except (OSError, UnicodeError) as exc:
+                return self._read_failure("add", target, exc)
             if str(content).strip() in entries:
                 return self._reject(
                     "add",
@@ -203,7 +206,10 @@ class LongTermMemoryStore:
 
         path = self._path_for(target)
         with self._file_lock(path):
-            entries = list(self._read_entries(path))
+            try:
+                entries = list(self._read_entries(path))
+            except (OSError, UnicodeError) as exc:
+                return self._read_failure("replace", target, exc)
             matches = self._find_matches(entries, str(old_text).strip())
             if not matches:
                 return self._reject(
@@ -242,7 +248,10 @@ class LongTermMemoryStore:
 
         path = self._path_for(target)
         with self._file_lock(path):
-            entries = list(self._read_entries(path))
+            try:
+                entries = list(self._read_entries(path))
+            except (OSError, UnicodeError) as exc:
+                return self._read_failure("remove", target, exc)
             matches = self._find_matches(entries, str(old_text).strip())
             if not matches:
                 return self._reject(
@@ -316,6 +325,25 @@ class LongTermMemoryStore:
             matches=matches,
         )
 
+    def _read_failure(
+        self,
+        action: str,
+        target: MemoryTarget,
+        exc: OSError | UnicodeError,
+    ) -> MemoryMutationResult:
+        return MemoryMutationResult(
+            success=False,
+            action=action,
+            target=target,
+            state=self._build_state(
+                target,
+                self._live_entries[target],
+                source="cached_live_state",
+            ),
+            reason="read_failed",
+            message=f"Unable to read long-term memory safely: {exc}",
+        )
+
     def _build_state(self, target: MemoryTarget, entries: tuple[str, ...], *, source: str) -> MemoryState:
         return MemoryState(
             target=target,
@@ -352,10 +380,7 @@ class LongTermMemoryStore:
     def _read_entries(path: Path) -> tuple[str, ...]:
         if not path.exists():
             return ()
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError:
-            return ()
+        raw = path.read_text(encoding="utf-8")
         return parse_entry_list(raw)
 
     @staticmethod
