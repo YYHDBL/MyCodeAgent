@@ -28,6 +28,7 @@
 `runtime/evals.py` 当前汇总：
 
 - `run_id`
+- `session_id`
 - `terminal_reason`
 - `failure_stage`
 - `step_count`
@@ -41,6 +42,12 @@
 - `prompt_fingerprint`
 - `tool_schema_fingerprint`
 - `total_tokens`
+- `projection_modes`
+- `subagent_invocation_count`
+- `child_tool_count`
+- `child_token_usage`
+- `child_failure_count`
+- `verification_verdict`
 
 其中 `failure_stage` 只用于粗粒度诊断，当前分类：
 
@@ -73,6 +80,18 @@
 
 批量 runner 会输出 JSON summary，可用于改造前后对比。
 
+## Phase 9 Portfolio Demo
+
+`demo/harness_portfolio.py` 在 Phase 0 场景之外提供四个面试演示：
+
+- `agent-loop`
+- `tool-harness`
+- `context-engineering`
+- `memory-subagent`
+
+每个 Demo 都输出逐事件 Trace。运行说明见
+[`demo/README.md`](../../demo/README.md)。
+
 ## 样例
 
-参见 [sample-summary.json](/Users/yyhdbl/Documents/算法/mycodeagent_v2/MyCodeAgent/docs/evals/sample-summary.json)。
+参见 [sample-summary.json](sample-summary.json)。

@@ -1,245 +1,139 @@
-# Harness Design
+# Harness Architecture
 
-本文档只描述 MyCodeAgent 当前有效的 harness 骨架。历史迁移过程和已完成的实施计划不再作为架构资料保留。
+本文档描述 MyCodeAgent 当前有效架构。面试入口见 [README](../README.md)，四个重点模块的问答材料见 [portfolio](portfolio/)。
 
-## 1. Agent Loop State
-
-`runtime/loop.py` 不是单纯的模型/工具 while loop，而是显式状态转移的运行时。
-
-```text
-user input
-  -> context decision
-  -> model request
-  -> tool calls or final answer
-  -> tool orchestration
-  -> next transition or terminal
-```
-
-`runtime/state.py` 定义：
-
-- `LoopState`：当前 step、模型视图、工具调用、恢复计数等状态
-- `TransitionReason`：为什么进入下一阶段
-- `TerminalReason`：为什么结束
-
-当前实现保留轻量取舍：不追求完整形式化状态机，但每条关键继续和结束路径必须有可观察原因。新增 fallback、hook、恢复机制时，应先定义状态转移，而不是在循环里增加隐式布尔变量。
-
-### 正式入口与实验边界
-
-Phase 0 之后，默认单 Agent 正式调用链固定为：
+## 1. 正式调用链
 
 ```text
 main.py
   -> app.cli
   -> runtime.host.CodeAgent
   -> RuntimeRunner.run()
-  -> RuntimeRunner._react_loop()
   -> ContextEngine.build_model_view()
   -> LLM
   -> ToolOrchestrator.run()
-  -> HistoryManager
-  -> terminal / run_end
+  -> HistoryManager + TranscriptRecorder
+  -> Completion Gate
+  -> terminal / next transition
 ```
 
-约束：
+不变量：
 
-- `CodeAgent.run()` 只委托给 `RuntimeRunner.run()`。
-- `CodeAgent._react_loop()` 仅保留兼容委托，不是第二套正式 loop。
-- `RuntimeRunner` 不在运行时临时构造新的 `ToolOrchestrator`；host 必须在装配阶段提供实例。
-- `runtime/subagents.py` 通过隔离 host 复用同一个 `RuntimeRunner`，不存在第二套正式 ReAct loop。
-- `tools/builtin/task.py` 只做 Explore 请求校验、profile 选择、launcher 调用和结构化结果映射。
-- `experimental/teams/` 继续保持实验边界，正式 Task 路径不依赖 Teams 或 `TurnExecutor`。
+- `runtime/loop.py` 是正式单 Agent 唯一循环。
+- `CodeAgent` 负责依赖装配，不维护第二套循环。
+- Explore / Verification 子 Agent 通过隔离 host 复用 `RuntimeRunner`。
+- 正式 `Task` 路径不依赖 `experimental/teams/`。
 
-## 2. Tool Orchestrator
+## 2. Runtime Control
 
-模型只负责提出 tool calls，`ToolOrchestrator` 决定如何执行。
+`LoopState`、`TransitionReason` 和 `TerminalReason` 让继续、恢复和结束路径可观察。模型 final text 先变成 `CompletionCandidate`，再由 Completion Gate 检查 Todo 和真实工具验证证据。
+
+模型/API 错误按阶段分类。空响应和 prompt-too-long 等可恢复路径有独立次数上限；无法恢复时进入明确 terminal，不无限反思。
+
+详见：
+
+- [Agent Loop 与 Completion Gate](portfolio/AGENT_LOOP.md)
+- [Completion Gate 协议](HARNESS_COMPLETION_GATE.md)
+
+## 3. Tool Harness
 
 ```text
-tool calls
-  -> parse and plan
+model tool calls
+  -> parse / plan
+  -> Permission Core
   -> safe batch partition
-  -> serial/concurrent execution
+  -> serial or concurrent execution
   -> ordered observations
-  -> result budgeting
+  -> single-tool / aggregate result budget
 ```
 
-核心规则：
+当前规则：
 
-- `Read`、`Grep`、`Glob`、`ListFiles` 是显式并发安全工具
-- 写入、编辑、Bash、Task、Skill、Todo 等工具串行执行
-- 未知工具和参数解析失败默认不安全
-- 并发批次完成后仍按模型调用顺序返回结果
-- 空结果会补充占位文本
-- 单工具和单轮聚合输出都有预算
-- 超预算结果保留完整落盘版本，历史只保存稳定的替换视图
+- `Read`、`Grep`、`Glob`、`ListFiles` 可组成连续并发批次。
+- 写入、Bash、Task、Skill、Todo 等保持串行。
+- 并发完成顺序不影响 observation 的模型调用顺序。
+- 未知工具、参数解析失败和无法判断的权限默认关闭。
+- Permission Core 是策略路由，不是 OS 级安全沙箱。
+- 超预算完整输出落盘，Model View 只接收稳定替换结果。
 
-这里不实现 StreamingToolExecutor、复杂权限 hooks 或 Bash 命令分类。对学习型 MVP，确定的安全分区比最大并发更重要。
+详见 [Tool Harness、权限与编排](portfolio/TOOL_HARNESS.md)。
 
-## 3. Context Engineering
-
-上下文系统区分“完整运行历史”和“模型本轮看到的视图”。
+## 4. Context Engineering
 
 ```text
-HistoryManager full log
+Prompt Assembly stable layers
+HistoryManager full history
+Session / Long-term Memory dynamic layers
   -> ContextBudgetPolicy
-  -> CompactStore / CompactCheckpoint
+  -> CompactCheckpoint
   -> ProjectionBuilder
   -> MessageNormalizer
   -> ModelView
 ```
 
-职责边界：
+关键边界：
 
-- `HistoryManager`：追加、读取和持久化完整消息
-- `ContextBudgetPolicy`：估算 active context 并决定是否 compact
-- `ContextCompactor`：生成摘要 checkpoint
-- `CompactStore`：保存当前 checkpoint
-- `ProjectionBuilder`：读时生成 `summary + recent history`
-- `MessageNormalizer`：转换为模型 API 消息
-- `ContextEngine`：统一编排 usage、compact 和 model view
+- Compact 创建 checkpoint，不修改或删除完整 history。
+- Summary 失败时保留原消息和上一份有效状态。
+- `ProjectionBuilder` 在读时生成 `summary + recent history`。
+- Session Memory 和 Long-term Memory 作为有预算的动态 system message 注入，不改变稳定 prompt fingerprint。
+- `RuntimeRunner` 只能通过 `ContextEngine.build_model_view()` 获取模型上下文。
 
-关键不变量：
+详见：
 
-- compact 不修改或删除完整历史
-- summary 失败时不丢弃任何消息
-- 同一份历史不会重复生成 checkpoint
-- history clear/session load 会同步清理 context runtime 状态
-- `RuntimeRunner` 只通过 `ContextEngine.build_model_view()` 获取模型上下文
+- [Context Engineering、Compact 与 Model View](portfolio/CONTEXT_ENGINEERING.md)
+- [Prompt Assembly](HARNESS_PROMPT_ASSEMBLY.md)
 
-### 记忆层边界
+## 5. Durable State
 
-Phase 8 之后，记忆相关边界固定为四层：
+四种状态不能合并成一份 messages：
 
-```text
-Transcript         完整会话事实和恢复来源
-Session Memory     当前任务目标、进度、决策、验证状态
-Long-term Memory   跨会话稳定事实
-Model View         当前模型实际看到的有限动态视图
-```
+| 状态 | 职责 |
+|---|---|
+| History | 当前进程内的完整消息历史 |
+| Transcript | append-only 会话事实与恢复来源 |
+| Session Memory | 从 Transcript 派生的目标、进度、风险和验证状态 |
+| Long-term Memory | 跨会话稳定事实，使用 frozen snapshot 注入 |
 
-约束：
+Resume 采用 at-least-once 事实语义。已完成工具不会自动重放；已 started 但未完成的副作用工具标记为 `uncertain`，由后续检查或用户确认解决。
 
-- `Transcript` 是 append-only 事实源，不被长期记忆覆写。
-- `Session Memory` 只服务当前会话，不自动写入长期记忆。
-- `Long-term Memory` 只保存稳定偏好、项目约束、环境事实和可复用经验。
-- `Model View` 在读时注入 Session/Long-term Memory，不改写原始 history。
-- 当前用户指令优先于长期记忆。
+详见：
 
-### Long-term Memory
+- [Transcript、Memory 与 Subagent](portfolio/MEMORY_SUBAGENT.md)
+- [Long-term Memory](HARNESS_LONG_TERM_MEMORY.md)
 
-长期记忆采用有界、可解释的文件存储，而不是数据库或向量检索：
+## 6. Restricted Subagents
 
-```text
-memory/long_term/MEMORY.md   项目环境、稳定约束、工具经验、架构决策
-memory/long_term/USER.md     用户身份、沟通偏好、工作习惯、明确纠正
-```
+正式子 Agent 只有两个不可变 profile：
 
-关键不变量：
+- Explore：只读搜索，返回 `ExploreResult`。
+- Verification：独立检查完成候选，返回 `VerificationResult`。
 
-- 文件格式是 `§` 分隔的 entry list，不引入复杂 record schema。
-- `MEMORY.md` 与 `USER.md` 有独立字符预算。
-- 写入前做轻量安全检查，拒绝 prompt injection、秘密外泄模式和不可见 Unicode。
-- 写入使用独立 lock file、同目录临时文件、`flush + fsync + os.replace`。
-- `CodeAgent` 在会话开始时加载 frozen snapshot；会话内写入立即落盘，但不会改变当前 snapshot。
-- Long-term Memory 作为独立动态层注入 `ModelView`，不进入 Prompt Assembly 稳定 fingerprint。
+两者使用独立 History、ContextEngine、Transcript、Session Memory 和 Trace；registry allowlist 与 `readonly_subagent` Permission Core 双重限制写入、Bash、Memory 和递归 Task。父 Agent 只接收有界结构化结果。
 
-## 4. 当前取舍
+## 7. Trace 与 Eval
 
-已经完成：
+核心事件协议见 [HARNESS_TRACE_PROTOCOL.md](HARNESS_TRACE_PROTOCOL.md)。`runtime/evals.py` 汇总 step、模型/工具调用、权限拒绝、恢复、compact、Completion Gate 和子 Agent 指标。
 
-- 显式 loop transition/terminal
-- 安全工具批次与结果预算
-- 非破坏性 compact checkpoint
-- 模型视图与完整历史分离
-- Phase 0 核心 Trace 协议冻结，见 `docs/HARNESS_TRACE_PROTOCOL.md`
-- Phase 0 mock 基线场景固定，见 `tests/scenarios/`
+确定性证据：
 
-暂不实现：
+- [Agent Loop Trace](traces/agent-loop.json)
+- [Tool Harness Trace](traces/tool-harness.json)
+- [Context Trace](traces/context-engineering.json)
+- [Memory / Subagent Trace](traces/memory-subagent.json)
 
-- StreamingToolExecutor
-- 多级 Context Collapse
-- compact 后文件/技能自动恢复
-- fallback 模型状态重建
-- Stop Hooks
-- token-budget continuation
+## 8. 正式与实验边界
 
-后续能力只有在现有边界能够自然承载时才加入，不为模仿 Claude Code 而复制全部复杂度。
-
-## 5. Prompt Assembly
-
-Phase 1 之后，提示词控制面不再把所有稳定信息与动态通知混成一条 system prompt，而是分成四层生命周期：
+正式 Harness Core：
 
 ```text
-Constitution
-Tool Contracts
-Project Rules
-Runtime Signals
+app/ core/ runtime/ tools/ extensions/
 ```
 
-当前边界：
-
-- `Constitution`：`L1_system_prompt.py`
-- `Tool Contracts`：本地工具提示、Skills、MCP 说明、disabled tools
-- `Project Rules`：`CODE_LAW.md`
-- `Runtime Signals`：teams runtime blocks 等逐轮动态信号
-
-关键不变量：
-
-- `Runtime Signals` 只在读时追加，不进入稳定 `system_fingerprint`
-- `CODE_LAW.md` 内容变化必须改变 project/system fingerprint
-- Skills、MCP、disabled tools 只有内容变化时才应改变工具契约层 fingerprint
-- 工具 schema 必须稳定排序并可输出 fingerprint
-
-设计细节见 `docs/HARNESS_PROMPT_ASSEMBLY.md`。
-
-## 6. Completion Gate
-
-Phase 2 之后，`RuntimeRunner` 不再把模型 final text 直接视为 terminal，而是先经过 `runtime/completion.py`：
+实验区：
 
 ```text
-final text
-  -> CompletionCandidate
-  -> CompletionRequirements
-  -> VerificationEvidence
-  -> DeterministicCompletionVerifier
-  -> PASS / FAIL / UNVERIFIED
+experimental/teams/
 ```
 
-当前边界：
-
-- `CompletionCandidate` 把模型 final response 与 terminal 分离
-- `CompletionRequirements` 只处理显式验证要求、可选 unverifiable 和最新 Todo 状态
-- `VerificationEvidence` 只来自实际工具执行，不接受模型自述
-- 验证后再发生 `Write` / `Edit` / `MultiEdit` 会使旧证据失效
-- Gate 阻塞通过 `STOP_HOOK_BLOCKING` 转移进入下一轮，并受重试上限约束
-- `DeterministicCompletionVerifier` 永远先执行，确定性 FAIL 不会启动或被模型 verifier 推翻
-- 配置启用且任务确实要求验证时，才启动独立 Verification Agent
-- Verification Agent 异常、超预算或非法结果映射为 `UNVERIFIED`，不会让父 loop 崩溃
-- Verification Agent 使用只读 registry 和 `readonly_subagent` 权限上下文，不能修改代码
-- 显式 `Memory` 工具、项目/用户长期记忆分离、frozen snapshot 与原子写入
-
-Trace 和协议细节见 `docs/HARNESS_COMPLETION_GATE.md`。
-
-## 7. Subagent Runtime
-
-Phase 7 的正式多 Agent 能力只有 Explore 与 Verification。两者由不可变
-`RuntimeProfile` 定义 system prompt、工具 allowlist、step/context/token
-预算、模型选择、上下文来源、完成策略、结果契约和递归策略。
-
-```text
-parent self-contained request
-  -> SubagentLauncher
-  -> isolated HistoryManager / ContextEngine / LoopState
-  -> filtered ToolRegistry + readonly PermissionContext
-  -> RuntimeRunner
-  -> ExploreResult or VerificationResult
-  -> bounded parent tool result
-```
-
-关键不变量：
-
-- 子 Agent 不读取父完整历史，也不修改父 `HistoryManager` 或 `ContextEngine`。
-- 子 Agent 有独立 Trace、Transcript 和 Session Memory。
-- Explore 只允许 `LS`、`Glob`、`Grep`、`Read`。
-- 子 registry 不注册 `Task` 或 `Memory`，Permission Core 也拒绝 `readonly_subagent` 调用 Task、Bash、`Memory` 或写工具。
-- 父上下文只接收结构化结果，不合并 child history、完整工具输出、Trace 或 Session Memory。
-- Task 注册不依赖 `enable_agent_teams`；persistent/parallel Teams 不属于正式 TaskTool。
+Teams 中的 persistent workers、tmux orchestration、mailbox、task board 和 parallel coordination 不进入正式架构承诺。当前项目进入维护状态，后续只接受缺陷修复、评估改进和材料完善。

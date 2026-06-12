@@ -1,0 +1,384 @@
+{
+  "demo": "agent-loop",
+  "purpose": "Completion is a runtime decision, not a model-side phrase.",
+  "result": "抱歉，我无法在限定步数内完成这个任务。",
+  "summary": {
+    "child_failure_count": 0,
+    "child_token_usage": 0,
+    "child_tool_count": 0,
+    "completion_gate_block_count": 2,
+    "context_compaction_count": 0,
+    "failure_stage": "completion_gate",
+    "model_call_count": 2,
+    "model_recovery_count": 0,
+    "permission_denied_count": 0,
+    "projection_modes": [
+      "full_history",
+      "full_history"
+    ],
+    "prompt_fingerprint": "system",
+    "run_id": 1,
+    "session_id": null,
+    "step_count": 2,
+    "subagent_invocation_count": 0,
+    "terminal_reason": "completion_gate_blocked",
+    "tool_call_count": 0,
+    "tool_error_count": 0,
+    "tool_schema_fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "total_tokens": 24,
+    "verification_verdict": null
+  },
+  "trace": [
+    {
+      "event": "system_messages",
+      "payload": {
+        "messages": [
+          {
+            "content": "system",
+            "role": "system"
+          }
+        ]
+      },
+      "step": 0
+    },
+    {
+      "event": "run_start",
+      "payload": {
+        "input": "Run pytest, but the scripted model immediately claims completion.",
+        "processed": "Run pytest, but the scripted model immediately claims completion.",
+        "run_id": 1
+      },
+      "step": 0
+    },
+    {
+      "event": "user_input",
+      "payload": {
+        "processed": "Run pytest, but the scripted model immediately claims completion.",
+        "text": "Run pytest, but the scripted model immediately claims completion."
+      },
+      "step": 0
+    },
+    {
+      "event": "state_transition",
+      "payload": {
+        "details": {
+          "pending_input_len": 65
+        },
+        "message_count": 0,
+        "reason": "user_input",
+        "step": 0,
+        "turn_count": 1
+      },
+      "step": 0
+    },
+    {
+      "event": "prompt_assembly",
+      "payload": {
+        "changed_layers": [],
+        "constitution_fingerprint": "constitution",
+        "project_rules_fingerprint": "project-rules",
+        "runtime_signal_count": 0,
+        "runtime_signals_fingerprint": "runtime-signals",
+        "stable_message_count": 1,
+        "system_fingerprint": "system",
+        "tool_contracts_fingerprint": "tool-contracts"
+      },
+      "step": 1
+    },
+    {
+      "event": "tool_schema",
+      "payload": {
+        "changed": false,
+        "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "tool_count": 0
+      },
+      "step": 1
+    },
+    {
+      "event": "context_compaction_decision",
+      "payload": {
+        "estimated_tokens": 43,
+        "message_count": 1,
+        "reason": "messages_not_enough",
+        "should_compact": false,
+        "threshold": 102400
+      },
+      "step": 1
+    },
+    {
+      "event": "model_view_build",
+      "payload": {
+        "compact_checkpoint_id": null,
+        "dynamic_context_sources": [],
+        "dynamic_message_count": 0,
+        "estimated_chars": 136,
+        "history_message_count": 1,
+        "long_term_memory_chars": 0,
+        "long_term_memory_message_count": 0,
+        "message_count": 2,
+        "projection_mode": "full_history",
+        "session_memory_chars": 0,
+        "session_memory_message_count": 0,
+        "source_message_count": 1,
+        "system_message_count": 1,
+        "warnings": []
+      },
+      "step": 1
+    },
+    {
+      "event": "context_build",
+      "payload": {
+        "history_count": 1,
+        "message_count": 2,
+        "projection_mode": "full_history",
+        "source_message_count": 1
+      },
+      "step": 1
+    },
+    {
+      "event": "model_output",
+      "payload": {
+        "meta": {},
+        "raw": "tests passed, task complete",
+        "raw_response": {
+          "choices": [
+            {
+              "message": {
+                "content": "tests passed, task complete"
+              }
+            }
+          ]
+        },
+        "tool_calls": [],
+        "usage": {
+          "total_tokens": 12
+        }
+      },
+      "step": 1
+    },
+    {
+      "event": "completion_candidate",
+      "payload": {
+        "final_length": 27,
+        "final_text": "tests passed, task complete",
+        "last_tool_name": null,
+        "last_tool_status": null,
+        "response_meta": {},
+        "step": 1
+      },
+      "step": 1
+    },
+    {
+      "event": "completion_requirements",
+      "payload": {
+        "allow_unverified": false,
+        "explicit_user_constraints": [
+          "tests"
+        ],
+        "has_incomplete_todos": false,
+        "incomplete_todos": [],
+        "requires_verification": true,
+        "verification_kinds": [
+          "tests"
+        ]
+      },
+      "step": 1
+    },
+    {
+      "event": "completion_gate_verdict",
+      "payload": {
+        "blocking_feedback": "Run tests before concluding.",
+        "passed_evidence": [],
+        "reasons": [
+          "missing_verification_evidence:tests"
+        ],
+        "verdict": "fail"
+      },
+      "step": 1
+    },
+    {
+      "event": "state_transition",
+      "payload": {
+        "details": {
+          "completion_verdict": "fail",
+          "reasons": [
+            "missing_verification_evidence:tests"
+          ],
+          "retry_count": 1,
+          "retry_limit": 2
+        },
+        "message_count": 2,
+        "reason": "stop_hook_blocking",
+        "step": 1,
+        "turn_count": 1
+      },
+      "step": 1
+    },
+    {
+      "event": "prompt_assembly",
+      "payload": {
+        "changed_layers": [],
+        "constitution_fingerprint": "constitution",
+        "project_rules_fingerprint": "project-rules",
+        "runtime_signal_count": 0,
+        "runtime_signals_fingerprint": "runtime-signals",
+        "stable_message_count": 1,
+        "system_fingerprint": "system",
+        "tool_contracts_fingerprint": "tool-contracts"
+      },
+      "step": 2
+    },
+    {
+      "event": "tool_schema",
+      "payload": {
+        "changed": false,
+        "fingerprint": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "tool_count": 0
+      },
+      "step": 2
+    },
+    {
+      "event": "context_compaction_decision",
+      "payload": {
+        "estimated_tokens": 61,
+        "message_count": 3,
+        "reason": "below_threshold",
+        "should_compact": false,
+        "threshold": 102400
+      },
+      "step": 2
+    },
+    {
+      "event": "model_view_build",
+      "payload": {
+        "compact_checkpoint_id": null,
+        "dynamic_context_sources": [],
+        "dynamic_message_count": 0,
+        "estimated_chars": 191,
+        "history_message_count": 3,
+        "long_term_memory_chars": 0,
+        "long_term_memory_message_count": 0,
+        "message_count": 4,
+        "projection_mode": "full_history",
+        "session_memory_chars": 0,
+        "session_memory_message_count": 0,
+        "source_message_count": 3,
+        "system_message_count": 1,
+        "warnings": []
+      },
+      "step": 2
+    },
+    {
+      "event": "context_build",
+      "payload": {
+        "history_count": 3,
+        "message_count": 4,
+        "projection_mode": "full_history",
+        "source_message_count": 3
+      },
+      "step": 2
+    },
+    {
+      "event": "model_output",
+      "payload": {
+        "meta": {},
+        "raw": "tests passed, task complete",
+        "raw_response": {
+          "choices": [
+            {
+              "message": {
+                "content": "tests passed, task complete"
+              }
+            }
+          ]
+        },
+        "tool_calls": [],
+        "usage": {
+          "total_tokens": 12
+        }
+      },
+      "step": 2
+    },
+    {
+      "event": "completion_candidate",
+      "payload": {
+        "final_length": 27,
+        "final_text": "tests passed, task complete",
+        "last_tool_name": null,
+        "last_tool_status": null,
+        "response_meta": {},
+        "step": 2
+      },
+      "step": 2
+    },
+    {
+      "event": "completion_requirements",
+      "payload": {
+        "allow_unverified": false,
+        "explicit_user_constraints": [
+          "tests"
+        ],
+        "has_incomplete_todos": false,
+        "incomplete_todos": [],
+        "requires_verification": true,
+        "verification_kinds": [
+          "tests"
+        ]
+      },
+      "step": 2
+    },
+    {
+      "event": "completion_gate_verdict",
+      "payload": {
+        "blocking_feedback": "Run tests before concluding.",
+        "passed_evidence": [],
+        "reasons": [
+          "missing_verification_evidence:tests"
+        ],
+        "verdict": "fail"
+      },
+      "step": 2
+    },
+    {
+      "event": "state_transition",
+      "payload": {
+        "details": {
+          "completion_verdict": "fail",
+          "reasons": [
+            "missing_verification_evidence:tests"
+          ],
+          "retry_count": 2,
+          "retry_limit": 2
+        },
+        "message_count": 4,
+        "reason": "stop_hook_blocking",
+        "step": 2,
+        "turn_count": 1
+      },
+      "step": 2
+    },
+    {
+      "event": "terminal",
+      "payload": {
+        "details": {
+          "completion_verdict": "fail",
+          "reasons": [
+            "missing_verification_evidence:tests"
+          ],
+          "retry_count": 2,
+          "retry_limit": 2
+        },
+        "reason": "completion_gate_blocked"
+      },
+      "step": 2
+    },
+    {
+      "event": "run_end",
+      "payload": {
+        "final": "抱歉，我无法在限定步数内完成这个任务。",
+        "run_id": 1
+      },
+      "step": 0
+    }
+  ]
+}

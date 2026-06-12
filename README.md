@@ -1,165 +1,128 @@
 # MyCodeAgent
 
-MyCodeAgent 是一个用于学习 code agent harness 工程的本地 Python 项目。它不追求企业级平台能力，而是用尽量小的代码展示生产级 Agent 最重要的三个骨架：
+MyCodeAgent 是一个用于展示 **Harness Engineering** 的本地 Python 项目。它研究的不是“模型会不会写代码”，而是模型之外的运行时如何让代码 Agent **可控、可恢复、可验证、可解释**。
 
-- Agent Loop 状态机
-- 工具编排与结果预算
-- 非破坏性的上下文工程
-
-当前还包含一个明确的 Prompt Assembly 控制面，用来分离稳定提示词与动态运行时信号。
-Phase 2 之后，主 runtime 还包含 Completion Gate，用来把“模型宣布完成”与“运行时批准完成”分开。
-Phase 8 之后，还包含一个最小闭环的 Long-term Memory，用来分离 Transcript、Session Memory 与跨会话稳定事实。
-
-## 架构
+普通 ReAct 循环通常只有：
 
 ```text
-main.py
-  -> app/                 CLI 与依赖装配
-  -> runtime/             Agent Loop、状态、历史、上下文、会话
-  -> tools/               工具执行、编排、内置工具
-  -> extensions/          MCP、Skills、Tracing
-  -> experimental/teams/  实验性多 Agent 运行时
+model -> tool -> observation -> model -> final answer
 ```
 
-默认路径是单 Agent：
+MyCodeAgent 在这条链路外增加完成判定、权限、工具编排、上下文投影、持久化恢复和受限子 Agent。模型负责提出动作与完成候选，Harness 才拥有执行和终止决定权。
+
+## 六层架构
+
+```mermaid
+flowchart TB
+    A["1. App / Host<br/>CLI、依赖装配、模型适配"] --> B
+    B["2. Runtime Control<br/>Agent Loop、Recovery、Completion Gate"] --> C
+    C["3. Tool Harness<br/>Registry、Permission、Orchestration、Result Budget"] --> D
+    D["4. Context Engineering<br/>Prompt Assembly、Compact、Model View"] --> E
+    E["5. Durable State<br/>History、Transcript、Session / Long-term Memory"] --> F
+    F["6. Extensions<br/>Trace / Eval、MCP、Skills、Restricted Subagents"]
+
+    B -. "state_transition / terminal" .-> T["JSONL Trace"]
+    C -. "permission / tool lifecycle" .-> T
+    D -. "projection / compact" .-> T
+    E -. "resume facts" .-> T
+
+    X["experimental/teams<br/>非正式 Harness Core"] -. "隔离" .-> A
+```
+
+正式单 Agent 调用链只有一条：
 
 ```text
-RuntimeRunner
-  -> ContextEngine.build_model_view()
-  -> LLM
-  -> ToolOrchestrator
-  -> HistoryManager
-  -> next loop state
+main.py -> app.cli -> runtime.host.CodeAgent
+        -> RuntimeRunner -> ContextEngine -> LLM
+        -> ToolOrchestrator -> History / Transcript -> Completion Gate
 ```
 
-详细设计见 [docs/HARNESS.md](docs/HARNESS.md)。
-核心 Trace 协议见 [docs/HARNESS_TRACE_PROTOCOL.md](docs/HARNESS_TRACE_PROTOCOL.md)。
+## 核心能力
 
-## 当前能力
+| 机制 | Runtime 保证 | 关键证据 |
+|---|---|---|
+| Agent Loop | 显式 transition、有限恢复、final 必须通过 Completion Gate | [`agent-loop.json`](docs/traces/agent-loop.json) |
+| Tool Harness | 输入级权限、失败关闭、安全批次、顺序保持、结果预算 | [`tool-harness.json`](docs/traces/tool-harness.json) |
+| Context Engineering | 完整历史不被 compact 删除，模型只读投影视图 | [`context-engineering.json`](docs/traces/context-engineering.json) |
+| Memory / Subagent | Transcript 恢复事实、Session/Long-term 生命周期分离、子 Agent 隔离 | [`memory-subagent.json`](docs/traces/memory-subagent.json) |
 
-### Agent Loop
+它与普通 ReAct 的关键区别：
 
-- `runtime/loop.py` 是唯一的主循环
-- `runtime.host.CodeAgent` 只负责装配依赖并委托给 `RuntimeRunner`
-- `runtime/state.py` 记录显式 transition 和 terminal reason
-- 支持空响应重试、最大步数终止、工具调用继续和上下文压缩转移
-- trace 可以解释每一轮为什么继续或结束
+- **完成不是一句话**：模型输出 final 只生成 `CompletionCandidate`，验证证据不足会继续循环或明确失败。
+- **工具不是模型直连环境**：`ToolExecutor` 在执行前做权限决策，`ToolOrchestrator` 决定并发、顺序和预算。
+- **上下文不是一份不断增长的 messages**：History、Transcript、Session Memory、Long-term Memory 和 Model View 是不同生命周期的数据。
+- **失败不是异常后重开循环**：模型错误、权限拒绝、工具失败和恢复都进入 Trace，并受明确预算限制。
 
-### Tool Harness
+对照实验见 [`docs/portfolio/REACT_COMPARISON.md`](docs/portfolio/REACT_COMPARISON.md)。
 
-- `tools/orchestrator.py` 负责工具规划、分批和执行
-- 连续的只读工具可以并发，副作用工具保持串行
-- 工具结果保持模型调用顺序
-- 支持单工具和单轮聚合结果预算
-- 大结果落盘，模型只接收稳定的压缩视图
+## 十分钟阅读路径
 
-### Context Engineering
+1. 本 README：理解问题、分层和证据入口。
+2. [`docs/HARNESS.md`](docs/HARNESS.md)：查看当前有效架构与正式边界。
+3. 四个模块设计：
+   - [`Agent Loop 与 Completion Gate`](docs/portfolio/AGENT_LOOP.md)
+   - [`Tool Harness、权限与编排`](docs/portfolio/TOOL_HARNESS.md)
+   - [`Context Engineering、Compact 与 Model View`](docs/portfolio/CONTEXT_ENGINEERING.md)
+   - [`Transcript、Memory 与 Subagent`](docs/portfolio/MEMORY_SUBAGENT.md)
+4. [`Demo 运行说明`](demo/README.md) 与 [`Trace 协议`](docs/HARNESS_TRACE_PROTOCOL.md)。
+5. [`项目边界与测试口径`](docs/portfolio/PROJECT_STATUS.md)。
 
-- `HistoryManager` 只保存完整运行历史
-- `ContextEngine` 负责预算判断、usage、compact 和模型视图
-- `CompactCheckpoint` 保存摘要边界，不删除原始历史
-- `ProjectionBuilder` 在请求模型时投影 `summary + recent history`
-- 清空或加载会话时同步重置 context runtime 状态
+## 确定性 Demo
 
-### Long-term Memory
+不需要真实 API Key：
 
-- `MEMORY.md` 保存项目/环境长期事实
-- `USER.md` 保存用户稳定偏好与纠正
-- 会话开始时加载 frozen snapshot，会话内写入不回流当前 snapshot
-- `Memory` 工具显式管理长期记忆，子 Agent 不可用
+```bash
+.venv/bin/python demo/harness_portfolio.py all
+```
 
-### Prompt Assembly
+分别运行并保存 JSON Trace：
 
-- 稳定层拆分为 `Constitution`、`Tool Contracts`、`Project Rules`
-- 动态层单独承载 `Runtime Signals`
-- `CODE_LAW.md`、Skills、MCP、disabled tools 都有独立 fingerprint 语义
-- 工具 schema 稳定排序，并可输出 fingerprint 用于 Trace 对比
+```bash
+.venv/bin/python demo/harness_portfolio.py agent-loop
+.venv/bin/python demo/harness_portfolio.py tool-harness
+.venv/bin/python demo/harness_portfolio.py context-engineering
+.venv/bin/python demo/harness_portfolio.py memory-subagent
+```
 
-### Completion Gate
+每个 Demo 都输出 `summary` 和逐事件 `trace`，不是只打印最终答案。
 
-- final response 会先变成 `CompletionCandidate`，不再直接 terminal
-- `CompletionRequirements` 只处理显式验证要求和未完成 Todo
-- `VerificationEvidence` 只接受真实工具执行证据，不相信模型自述
-- 验证后再修改文件会使旧证据失效
-- Gate 返回 `PASS`、`FAIL` 或 `UNVERIFIED`
-
-### Tools
-
-内置文件读取、搜索、写入、编辑、Bash、Todo、Skill、Task 和用户询问工具。工具响应遵循 [通用工具响应协议](docs/通用工具响应协议.md)。
-
-注意：
-
-- `Task` 当前仍连接到 `experimental/teams/` 的实验性子运行时。
-- 这条路径在 Phase 0 只做边界标记，不算默认单 Agent harness 的正式入口。
-
-## 快速开始
+## 运行项目
 
 环境要求：Python 3.10+，推荐使用 `uv`。
 
 ```bash
-git clone <repository-url>
-cd MyCodeAgent
 uv venv
 source .venv/bin/activate
 uv pip install -r requirements.txt
 cp .env.example .env
 ```
 
-至少配置：
-
-```bash
-LLM_PROVIDER=siliconflow
-LLM_MODEL_ID=your-model
-LLM_API_KEY=your-api-key
-```
-
-运行：
+配置 `LLM_PROVIDER`、`LLM_MODEL_ID`、`LLM_API_KEY` 后运行真实交互：
 
 ```bash
 .venv/bin/python main.py
 ```
 
-覆盖模型配置：
-
-```bash
-.venv/bin/python main.py --provider zhipu --model GLM-4.7
-```
+Demo 和测试不需要 API Key。
 
 ## 测试
-
-全量测试：
 
 ```bash
 .venv/bin/python -m pytest -q
 ```
 
-按 harness 层验证：
+按边界运行：
 
 ```bash
-.venv/bin/python -m pytest tests/runtime tests/tools -q
+.venv/bin/python -m pytest tests/runtime tests/tools tests/scenarios -q
 .venv/bin/python -m pytest tests/extensions -q
-.venv/bin/python -m pytest tests/scenarios -q
 .venv/bin/python -m pytest tests/experimental -q
 ```
 
-## 目录
+截至 2026-06-12，测试套件收集 `739` 个测试：`629` 个正式 Core/Tool/Extension/Scenario 测试，`110` 个 experimental Teams 测试。详细口径见 [`PROJECT_STATUS.md`](docs/portfolio/PROJECT_STATUS.md)。
 
-```text
-app/                 CLI 与启动装配
-core/                配置、LLM、基础抽象
-runtime/             单 Agent 运行时
-runtime/context/     上下文运行时
-tools/               工具边界、编排器与内置工具
-extensions/          可选 MCP / Skills / Tracing
-experimental/teams/  实验性多 Agent 系统
-tests/               按运行时边界组织的测试
-docs/                当前设计与工具协议
-```
+## 项目边界
 
-## 设计原则
+正式 Harness Core 位于 `runtime/`、`tools/`、`app/` 和 `extensions/`。`experimental/teams/` 保留为研究资料，不是默认 Task/Subagent 的正式实现。
 
-- 学习 harness，而不是堆产品功能
-- 完整历史与模型视图分离
-- 模型提出行动，运行时决定如何安全执行
-- 状态转移必须可观察、可测试
-- 默认选择简单、确定、可恢复的实现
+项目不追求完整复刻 Claude Code。当前明确不实现 StreamingToolExecutor、跨模型状态重建、OS 级沙箱、远程 worker、复杂 Teams/Coordinator、远程遥测和产品级 UI。取舍原因是把代码和测试集中在可解释的 Harness 机制，而不是复制一个闭源产品的功能表。

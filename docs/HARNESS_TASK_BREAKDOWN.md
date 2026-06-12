@@ -748,6 +748,9 @@
 
 ## Phase 9：求职材料与架构收口
 
+状态：已完成。实际输出位于 `README.md`、`docs/portfolio/`、`demo/` 和
+`docs/traces/`；未新增 Agent Runtime 功能，未修改 `experimental/teams/`。
+
 ### P9-T1：总架构 README
 
 **目标**：十分钟内让面试官理解项目价值。

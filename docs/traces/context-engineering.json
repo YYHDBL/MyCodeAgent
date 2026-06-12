@@ -1,0 +1,75 @@
+{
+  "demo": "context-engineering",
+  "model_view": [
+    {
+      "content": "Deterministic harness demo.",
+      "role": "system"
+    },
+    {
+      "content": "## Archived History Summary\nArchived 4 messages.",
+      "role": "system"
+    },
+    {
+      "content": "Keep the latest decision.",
+      "role": "user"
+    },
+    {
+      "content": "Use non-destructive projection.",
+      "role": "assistant"
+    }
+  ],
+  "purpose": "Compact changes the model projection, never the full history.",
+  "summary": {
+    "checkpoint_id": "compact_662bffe0115349a689d5d5e4a7a54207",
+    "history_message_count": 3,
+    "history_preserved": true,
+    "projection_mode": "compact_checkpoint",
+    "source_message_count": 6
+  },
+  "trace": [
+    {
+      "event": "context_compaction_decision",
+      "payload": {
+        "estimated_tokens": 903,
+        "message_count": 6,
+        "reason": "threshold_exceeded",
+        "should_compact": true,
+        "threshold": 100
+      },
+      "step": 1
+    },
+    {
+      "event": "context_compaction_completed",
+      "payload": {
+        "checkpoint_id": "compact_662bffe0115349a689d5d5e4a7a54207",
+        "compacted": true,
+        "messages_before": 6,
+        "messages_compacted": 4,
+        "retain_start_idx": 4,
+        "summary_generated": true,
+        "summary_len": 20
+      },
+      "step": 1
+    },
+    {
+      "event": "model_view_build",
+      "payload": {
+        "compact_checkpoint_id": "compact_662bffe0115349a689d5d5e4a7a54207",
+        "dynamic_context_sources": [],
+        "dynamic_message_count": 0,
+        "estimated_chars": 140,
+        "history_message_count": 3,
+        "long_term_memory_chars": 0,
+        "long_term_memory_message_count": 0,
+        "message_count": 4,
+        "projection_mode": "compact_checkpoint",
+        "session_memory_chars": 0,
+        "session_memory_message_count": 0,
+        "source_message_count": 6,
+        "system_message_count": 1,
+        "warnings": []
+      },
+      "step": 1
+    }
+  ]
+}
