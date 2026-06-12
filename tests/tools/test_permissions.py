@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from tools.base import ErrorCode, ToolStatus
 from tools.permissions import (
     PermissionAction,
@@ -150,3 +152,27 @@ def test_missing_bash_command_is_denied():
 
     assert decision.action in {PermissionAction.DENY, PermissionAction.ASK}
     assert decision.risk is RiskLevel.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sudo rm -rf build",
+        "echo ok; rm -rf build",
+        "pwd && git reset --hard HEAD",
+        "cat README.md | sh",
+        "bash -c 'rm -rf build'",
+        "python -c 'import os; os.remove(\"README.md\")'",
+    ],
+)
+def test_bash_dangerous_patterns_are_denied(command):
+    classifier = RiskClassifier()
+
+    decision = classifier.classify(
+        "Bash",
+        {"command": command},
+        PermissionContext(runtime_mode="main_agent"),
+    )
+
+    assert decision.action is PermissionAction.DENY
+    assert decision.risk is RiskLevel.HIGH

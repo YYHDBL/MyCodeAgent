@@ -93,7 +93,7 @@ main.py -> app.cli -> runtime.host.CodeAgent
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -r requirements-dev.txt
 cp .env.example .env
 ```
 
@@ -119,7 +119,7 @@ Demo 和测试不需要 API Key。
 .venv/bin/python -m pytest tests/experimental -q
 ```
 
-截至 2026-06-12，测试套件收集 `739` 个测试：`629` 个正式 Core/Tool/Extension/Scenario 测试，`110` 个 experimental Teams 测试。详细口径见 [`PROJECT_STATUS.md`](docs/portfolio/PROJECT_STATUS.md)。
+截至 2026-06-12，测试套件收集 `754` 个测试：`644` 个正式 Core/Tool/Extension/Scenario 测试，`110` 个 experimental Teams 测试。详细口径见 [`PROJECT_STATUS.md`](docs/portfolio/PROJECT_STATUS.md)。
 
 ## 项目边界
 

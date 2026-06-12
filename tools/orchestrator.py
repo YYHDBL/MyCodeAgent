@@ -10,6 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from tools.observation_budget import force_truncate_observation
+
 @dataclass(frozen=True)
 class ToolObservation:
     tool_name: str
@@ -392,8 +394,6 @@ class ToolOrchestrator:
             raw_total_bytes += raw_bytes
             next_obs = obs
             if raw_bytes > budget.max_tool_bytes:
-                from runtime.observation_store import force_truncate_observation
-
                 compressed = force_truncate_observation(
                     obs.tool_name,
                     raw_text,
@@ -449,8 +449,6 @@ class ToolOrchestrator:
                     break
                 if (obs.metadata or {}).get("replaced") is True:
                     continue
-                from runtime.observation_store import force_truncate_observation
-
                 source_text = obs.raw_observation if obs.raw_observation is not None else obs.observation
                 previous_visible = self._byte_len(obs.observation)
                 compressed = force_truncate_observation(

@@ -1,21 +1,8 @@
-"""异常体系"""
+"""Exceptions used across core boundaries."""
+
 
 class HelloAgentsException(Exception):
-    """HelloAgents基础异常类"""
-    pass
+    """Base error exposed by the public core API."""
 
-class LLMException(HelloAgentsException):
-    """LLM相关异常"""
-    pass
 
-class AgentException(HelloAgentsException):
-    """Agent相关异常"""
-    pass
-
-class ConfigException(HelloAgentsException):
-    """配置相关异常"""
-    pass
-
-class ToolException(HelloAgentsException):
-    """工具相关异常"""
-    pass
+__all__ = ["HelloAgentsException"]

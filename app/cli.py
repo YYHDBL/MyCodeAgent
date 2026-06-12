@@ -495,7 +495,7 @@ def main() -> None:
                         console.print("Cancelled.")
                         continue
 
-                console.print("[info]Initiailizing Agent Protocol...[/info]")
+                console.print("[info]Initializing Agent Protocol...[/info]")
                 enhanced_input = (
                     f"{CODE_LAW_GENERATION_PROMPT}\n\n"
                     "请使用 LS、Glob、Grep、Read 等工具探索项目，然后使用 Write 工具生成 code_law.md 文件。"

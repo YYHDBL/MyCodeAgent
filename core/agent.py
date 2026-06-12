@@ -1,13 +1,14 @@
-"""Agent基类"""
+"""Minimal protocol shared by runtime agent implementations."""
 
 from abc import ABC, abstractmethod
 from typing import Optional
+
 from .llm import HelloAgentsLLM
 from .config import Config
-from runtime.history import Message
+
 
 class Agent(ABC):
-    """Agent基类"""
+    """Identity, model, and configuration shared by concrete agents."""
     
     def __init__(
         self,
@@ -20,24 +21,11 @@ class Agent(ABC):
         self.llm = llm
         self.system_prompt = system_prompt
         self.config = config or Config.from_env()
-        self._history: list[Message] = []
     
     @abstractmethod
     def run(self, input_text: str, **kwargs) -> str:
-        """运行Agent"""
-        pass
-    
-    def add_message(self, message: Message):
-        """添加消息到历史记录"""
-        self._history.append(message)
-    
-    def clear_history(self):
-        """清空历史记录"""
-        self._history.clear()
-    
-    def get_history(self) -> list[Message]:
-        """获取历史记录"""
-        return self._history.copy()
+        """Run one user request."""
+        raise NotImplementedError
     
     def __str__(self) -> str:
         return f"Agent(name={self.name}, provider={self.llm.provider})"

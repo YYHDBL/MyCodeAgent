@@ -356,7 +356,7 @@ class Tool(ABC):
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": [param.dict() for param in self.get_parameters()]
+            "parameters": [param.model_dump() for param in self.get_parameters()]
         }
     
     def __str__(self) -> str:

@@ -3,8 +3,8 @@
 ## 2026-06-12 收口快照
 
 ```text
-pytest total                         739
-formal Core/Tool/Extension/Scenario 629
+pytest total                         754
+formal Core/Tool/Extension/Scenario 644
 experimental Teams                  110
 tests/scenarios collected            11
 ```
@@ -52,7 +52,7 @@ tests/scenarios collected            11
 
 ## 保留的历史设计资料
 
-工具级中文设计文档、Phase 6A/7/8 实施计划和协议文档仍有参考价值，因此保留。它们用于解释演进过程，不替代 [`docs/HARNESS.md`](../HARNESS.md) 的当前架构。
+工具级中文设计文档与通用工具协议文档仍有参考价值，因此保留。它们用于解释工具层设计，不替代 [`docs/HARNESS.md`](../HARNESS.md) 的当前架构。
 
 已删除的旧 `demo/` 项目概览、网页和执行复盘引用了不存在的目录与旧子 Agent 模式，继续保留会造成事实冲突。
 

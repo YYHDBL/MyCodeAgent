@@ -95,12 +95,38 @@ class RiskClassifier:
         ("git", "diff"),
         ("git", "log"),
     )
-    _BASH_DENY = {
-        "rm": "destructive delete command",
-        "git checkout": "git checkout mutates working tree",
-        "git reset": "git reset mutates working tree/history",
-        "git clean": "git clean removes files",
-    }
+    _BASH_DENY_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"(^|[;&|]\s*)sudo(?:\s|$)"), "sudo crosses the process privilege boundary"),
+        (re.compile(r"(^|[;&|]\s*)rm(?:\s|$)"), "destructive delete command"),
+        (
+            re.compile(r"(^|[;&|]\s*)git\s+checkout(?:\s|$)"),
+            "git checkout mutates working tree",
+        ),
+        (
+            re.compile(r"(^|[;&|]\s*)git\s+reset(?:\s|$)"),
+            "git reset mutates working tree/history",
+        ),
+        (
+            re.compile(r"(^|[;&|]\s*)git\s+clean(?:\s|$)"),
+            "git clean removes files",
+        ),
+        (
+            re.compile(r"(^|[;&|]\s*)(?:sh|bash|zsh)\s+-c(?:\s|$)"),
+            "nested shell execution bypasses command classification",
+        ),
+        (
+            re.compile(r"(^|[;&|]\s*)(?:python|python3)\s+-c(?:\s|$)"),
+            "inline Python execution bypasses command classification",
+        ),
+        (
+            re.compile(r"\|\s*(?:sh|bash|zsh)(?:\s|$)"),
+            "piping data into a shell executes unreviewed code",
+        ),
+        (
+            re.compile(r"`|\$\("),
+            "shell command substitution executes nested commands",
+        ),
+    )
     _BASH_ASK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         (re.compile(r"(^|[;&|]\s*)mv\b"), "mv may rewrite project files"),
         (re.compile(r"(^|[;&|]\s*)cp\b"), "cp may write new project files"),
@@ -257,8 +283,8 @@ class RiskClassifier:
         normalized = " ".join(command.strip().split())
         lowered = normalized.lower()
 
-        for prefix, reason in self._BASH_DENY.items():
-            if lowered.startswith(prefix):
+        for pattern, reason in self._BASH_DENY_PATTERNS:
+            if pattern.search(lowered):
                 return PermissionDecision(
                     action=PermissionAction.DENY,
                     risk=RiskLevel.HIGH,
@@ -295,6 +321,8 @@ class RiskClassifier:
         )
 
     def _is_low_risk_bash(self, command: str) -> bool:
+        if re.search(r"[;&|<>]", command):
+            return False
         try:
             parts = shlex.split(command)
         except ValueError:

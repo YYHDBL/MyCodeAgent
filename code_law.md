@@ -1,108 +1,61 @@
-# Repository Guidelines
+# MyCodeAgent Project Rules
 
-## Project Structure & Module Organization
+This file is injected into the model context. Keep it short, current, and
+limited to repository facts and invariants that affect implementation.
 
-```
-agents/          - Main agent implementations (e.g., CodeAgent)
-core/            - Core runtime, context engineering, LLM integration
-  ├── context_engine/  - History management, compression, trace logging
-  └── skills/         - Skill loading mechanism
-tools/           - Tool system and registry
-  ├── builtin/       - Built-in tools (LS, Glob, Grep, Read, Write, Edit, etc.)
-  └── mcp/           - MCP server loader
-prompts/         - System and tool prompts
-tests/           - Test suite (pytest-based)
-scripts/         - CLI entry points
-skills/          - Skill definitions (SKILL.md per skill)
-docs/            - Design documentation
-memory/          - Trace/session output (local)
-tool-output/     - Long output persistence
-```
+## Current Structure
 
-## Build, Test, and Development Commands
+- `main.py` delegates to `app/cli.py`.
+- `app/` owns CLI and dependency bootstrap.
+- `runtime/` owns the canonical single-agent loop, completion/recovery,
+  context projection, transcript/session state, memory, and subagents.
+- `tools/` owns tool contracts, registry, permissions, execution,
+  orchestration, and built-in tools.
+- `extensions/` owns optional MCP, skills, and tracing integrations.
+- `prompts/` contains agent and tool prompt text.
+- `tests/` mirrors runtime, tools, extensions, scenarios, and experimental
+  behavior.
+- `experimental/teams/` is research code and is not part of the default
+  single-agent runtime.
+- `docs/` contains design and portfolio documentation.
+- `demo/` contains deterministic harness demonstrations.
+- `memory/` and `tool-output/` are generated runtime data.
+
+## Commands
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install runtime dependencies
+uv pip install -r requirements.txt
 
-# Run interactive CLI
-python scripts/chat_test_agent.py
+# Install development and test dependencies
+uv pip install -r requirements-dev.txt
 
-# Run with specific provider/model
-python scripts/chat_test_agent.py --provider zhipu --model GLM-4.7
+# Run the interactive agent
+.venv/bin/python main.py
 
-# Enable raw output for debugging
-python scripts/chat_test_agent.py --show-raw
+# Run all tests
+.venv/bin/python -m pytest -q
 
-# Run tests
-python -m pytest tests/ -v
+# Run deterministic demos
+.venv/bin/python demo/harness_portfolio.py all
 ```
 
-## Coding Style & Naming Conventions
+## Invariants
 
-- **Language**: Python 3.x
-- **Indentation**: 4 spaces (PEP 8)
-- **Naming**: 
-  - Classes: `PascalCase` (e.g., `CodeAgent`, `ListFilesTool`)
-  - Functions/variables: `snake_case` (e.g., `run_agent`, `project_root`)
-  - Constants: `UPPER_SNAKE_CASE` (e.g., `CONTEXT_WINDOW`)
-- **Docstrings**: Use triple quotes for class/function documentation
-- **Type hints**: Required for function parameters and returns
-
-## Testing Guidelines
-
-- **Framework**: pytest
-- **Fixtures**: Shared fixtures in `tests/conftest.py`
-- **Test naming**: `test_<module>_<feature>.py` (e.g., `test_read_tool.py`)
-- **Test functions**: `def test_<scenario>(...)`
-- **Temp projects**: Use `temp_project` fixture for sandboxed testing
-- **Run specific tests**: `python -m pytest tests/test_read_tool.py -v`
-
-## Commit & Pull Request Guidelines
-
-- **Commit messages**: Use conventional commits
-  - `feat:` - New features
-  - `docs:` - Documentation updates
-  - `fix:` - Bug fixes
-  - Example: `feat: function calling + mvp enhancements`
-- **Pull requests**: Include clear descriptions, link related issues, add tests for new features
-
-## MCP Tools Integration
-
-Configure external MCP tools in `mcp_servers.json`:
-```json
-{
-  "mcpServers": {
-    "tool-name": {
-      "command": "npx",
-      "args": ["-y", "some-mcp-server"]
-    }
-  }
-}
-```
-
-## Skills Directory Convention
-
-```
-skills/<skill-name>/SKILL.md
-```
-
-SKILL.md format:
-```markdown
----
-name: skill-name
-description: Skill description
----
-# Skill Title
-
-Instructions here...
-$ARGUMENTS
-```
-
-## Environment Variables
-
-Key variables (see README.md for full list):
-- `CONTEXT_WINDOW` - Default 128000
-- `TOOL_OUTPUT_MAX_LINES` - Default 2000
-- `TRACE_ENABLED` - Default true
-- `SUBAGENT_MAX_STEPS` - Default 15
+- The canonical call path is
+  `main.py -> app.cli -> runtime.host.CodeAgent -> RuntimeRunner`.
+- `HistoryManager` owns conversation history. The `Agent` base class must not
+  maintain a second history store.
+- The model proposes tool calls; `ToolExecutor` and `RiskClassifier` decide
+  whether execution is allowed.
+- Tool observations use the standard response envelope and are budgeted before
+  entering model context.
+- Full history is durable. Compaction changes the model view, not the source
+  history.
+- A model final answer is only a completion candidate; the runtime completion
+  gate owns termination.
+- Optional integrations must fail closed or degrade without breaking the
+  default single-agent runtime.
+- Tool orchestration and result-budget modules must not import higher-level
+  `runtime` implementations.
+- Pydantic v2 is the supported major version.

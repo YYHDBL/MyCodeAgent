@@ -13,12 +13,8 @@ from core.config import Config
 from core.env import load_env
 
 load_env()
-from runtime.context import ContextEngine
 from runtime.history import HistoryManager, Message
-from runtime.memory import LongTermMemoryStore
-from runtime.prompt_builder import ContextBuilder
 from runtime.input_preprocess import preprocess_input
-from runtime.summary import create_summary_generator
 from runtime.session import build_session_snapshot, save_session_snapshot, load_session_snapshot
 from runtime.session_memory import SessionMemory, SessionMemoryManager
 from runtime.transcript import (
@@ -41,9 +37,9 @@ from tools.builtin.todo_write import TodoWriteTool
 from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
+from tools.builtin.task import TaskTool
 from extensions.mcp.bootstrap import register_mcp_servers
 from extensions.mcp.prompt import format_mcp_tools_prompt
-from extensions.skills import SkillLoader
 from extensions.skills.prompt import format_skills_for_prompt
 from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
@@ -51,8 +47,8 @@ from tools.orchestrator import ToolOrchestrator
 from tools.context import ToolExecutionContext
 from tools.permissions import PermissionContext, RiskClassifier
 from utils import setup_logger
+from runtime.factory import RuntimeComponentFactory
 from runtime.loop import RuntimeRunner
-from runtime.subagents import SubagentCompletionVerifier, SubagentLauncher
 
 
 def resolve_teammate_mode(requested_mode: Optional[str]):
@@ -154,89 +150,17 @@ class CodeAgent(Agent):
             self.delegate_mode,
         )
         
-        # 创建 Summary 生成器（Phase 7）
-        summary_generator = create_summary_generator(
-            llm=self.llm,
-            config=self.config,
-            verbose=self.verbose,
-        )
-        
-        # 历史管理器（替代 Agent._history）
-        self.history_manager = HistoryManager(config=self.config)
-        self.long_term_memory_store = None
-        self.long_term_memory_snapshot = None
-        if bool(getattr(self.config, "long_term_memory_enabled", True)):
-            self.long_term_memory_store = LongTermMemoryStore(
-                project_root=self.project_root,
-                memory_char_limit=int(getattr(self.config, "memory_char_limit", 3000) or 3000),
-                user_memory_char_limit=int(
-                    getattr(self.config, "user_memory_char_limit", 1500) or 1500
-                ),
-                user_memory_path=getattr(self.config, "user_memory_path", None),
-            )
-            self.long_term_memory_snapshot = self.long_term_memory_store.load()
-        
-        # Skills
-        self._skills_prompt = ""
-        self._skill_loader = SkillLoader(self.project_root) if self.enable_skills else None
-        self._refresh_skills_prompt()
+        self._initialize_runtime_components()
 
-        # 注册工具
-        self._register_builtin_tools()
-        self._mcp_clients = []
-        self._mcp_tools_prompt = ""
-        if self.enable_mcp:
-            self._register_mcp_tools()
-        
-        # 上下文构建器
-        self.context_builder = ContextBuilder(
-            tool_registry=self.tool_registry,
-            project_root=self.project_root,
-            system_prompt_override=self.system_prompt,
-            mcp_tools_prompt=self._mcp_tools_prompt,
-            skills_prompt=self._skills_prompt,
-            tool_prompt_allowlist=frozenset(self.tool_registry.list_tools()) | {"Task"},
+    def _initialize_runtime_components(self) -> None:
+        """Build runtime components in dependency order."""
+        factory = RuntimeComponentFactory(
+            self,
+            trace_logger_factory=create_trace_logger,
+            null_trace_logger_factory=NullTraceLogger,
         )
-        self.context_engine = ContextEngine(
-            self.context_builder,
-            config=self.config,
-            summary_generator=summary_generator,
-        )
-        if self.long_term_memory_snapshot is not None:
-            self.context_engine.set_long_term_memory_snapshot(self.long_term_memory_snapshot)
-
-        # Trace 日志（单实例贯穿 Agent 生命周期）
-        self.trace_logger = create_trace_logger() if self.enable_tracing else NullTraceLogger()
-        if self.long_term_memory_snapshot is not None:
-            self.trace_logger.log_event(
-                "long_term_memory_loaded",
-                {
-                    "memory_entry_count": self.long_term_memory_snapshot.memory.usage.entry_count,
-                    "memory_usage_chars": self.long_term_memory_snapshot.memory.usage.chars,
-                    "memory_limit_chars": self.long_term_memory_snapshot.memory.usage.limit,
-                    "user_entry_count": self.long_term_memory_snapshot.user.usage.entry_count,
-                    "user_usage_chars": self.long_term_memory_snapshot.user.usage.chars,
-                    "user_limit_chars": self.long_term_memory_snapshot.user.usage.limit,
-                },
-                step=0,
-            )
-        transcript_session_id = resolve_transcript_session_id(
-            getattr(self.trace_logger, "session_id", None)
-        )
-        self.transcript_store = TranscriptStore(
-            Path(self.project_root) / "memory" / "transcripts" / f"transcript-{transcript_session_id}.jsonl",
-            session_id=transcript_session_id,
-        )
-        self.session_memory_manager = SessionMemoryManager(on_update=self._apply_session_memory)
-        self.transcript_recorder = TranscriptRecorder(
-            self.transcript_store,
-            on_recorded=self.session_memory_manager.ingest_event,
-        )
-        self.resume_state: ResumeState | None = None
-        self.session_memory: SessionMemory = SessionMemory()
-        self._system_messages_logged = False
-        self._run_id = 0
-        self._system_messages_override: Optional[List[dict]] = None
+        factory.initialize_context()
+        factory.initialize_persistence()
         self.tool_executor = ToolExecutor(
             self.tool_registry,
             context=ToolExecutionContext(
@@ -247,26 +171,13 @@ class CodeAgent(Agent):
             ),
         )
         self.tool_orchestrator = ToolOrchestrator(self)
-        self.runner = RuntimeRunner(self)
-        self.subagent_launcher = SubagentLauncher(
-            project_root=Path(self.project_root),
-            main_llm=self.llm,
-            tool_registry=self.tool_registry,
-            parent_trace_logger=self.trace_logger,
-            parent_history_manager=self.history_manager,
-            parent_context_engine=self.context_engine,
-            parent_host=self,
-        )
-        from tools.builtin.task import TaskTool
-
+        factory.initialize_subagents()
         self.tool_registry.register_tool(
             TaskTool(
                 project_root=Path(self.project_root),
                 launcher=self.subagent_launcher,
             )
         )
-        if bool(getattr(self.config, "enable_verification_agent", True)):
-            self.completion_verifier = SubagentCompletionVerifier(self.subagent_launcher)
 
     def _apply_session_memory(self, memory: SessionMemory) -> None:
         self.session_memory = memory
@@ -845,8 +756,6 @@ class CodeAgent(Agent):
         try:
             if hasattr(raw_response, "model_dump"):
                 return raw_response.model_dump()
-            if hasattr(raw_response, "dict"):
-                return raw_response.dict()
             if isinstance(raw_response, dict):
                 return raw_response
         except Exception:

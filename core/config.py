@@ -89,4 +89,4 @@ class Config(BaseModel):
     
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
-        return self.dict()
+        return self.model_dump()
