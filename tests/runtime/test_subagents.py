@@ -19,7 +19,10 @@ from runtime.subagents import (
     SubagentStatus,
     VerificationResult,
     VerificationVerdict,
+    _SubagentRuntimeHost,
+    _summarize_child_messages,
 )
+from extensions.tracing import NullTraceLogger
 from tools.permissions import PermissionAction, PermissionContext, RiskClassifier
 from tools.registry import ToolRegistry
 
@@ -103,6 +106,46 @@ def test_filtered_registry_and_permission_core_both_block_mutation():
     assert readonly.action is PermissionAction.ALLOW
 
 
+def test_subagent_prompt_only_describes_allowed_tools():
+    trace = Mock(wraps=NullTraceLogger())
+    trace.session_id = "child-test"
+    host = _SubagentRuntimeHost(
+        profile=EXPLORE_PROFILE,
+        llm=Mock(),
+        registry=_registry(),
+        project_root=Path("."),
+        trace_logger=trace,
+    )
+
+    tool_contracts = "\n".join(
+        message["content"]
+        for message in host.context_builder.get_system_messages()
+        if message["content"].startswith("# Tool Contracts")
+    )
+
+    assert "Tool name: Read" in tool_contracts
+    assert "Tool name: Bash" not in tool_contracts
+    assert "Tool name: Task" not in tool_contracts
+    assert "Write: Create or overwrite" not in tool_contracts
+
+
+def test_child_compaction_summary_preserves_bounded_facts():
+    messages = [
+        Mock(role="user", content="Find the runtime ownership boundary.", metadata={}),
+        Mock(
+            role="tool",
+            content="RuntimeRunner is the canonical loop in runtime/loop.py.",
+            metadata={"tool_name": "Read"},
+        ),
+    ]
+
+    summary = _summarize_child_messages(messages)
+
+    assert "Find the runtime ownership boundary." in summary
+    assert "RuntimeRunner is the canonical loop" in summary
+    assert len(summary) <= 8000
+
+
 def test_formal_task_path_has_no_legacy_runner_or_turn_executor_reference():
     task_source = Path("tools/builtin/task.py").read_text(encoding="utf-8")
     task_prompt = Path("prompts/tools_prompts/task_prompt.py").read_text(encoding="utf-8")
@@ -153,6 +196,36 @@ def test_launcher_invalid_or_failed_child_maps_to_failed_result(tmp_path):
         result = launcher.launch(SubagentRequest(profile_name="explore", task="inspect"))
     assert result.status is SubagentStatus.FAILED
     assert result.terminal_reason == "runtime_error"
+
+
+def test_disabled_parent_tracing_stays_disabled_with_unique_child_sessions(tmp_path):
+    launcher = SubagentLauncher(
+        project_root=tmp_path,
+        main_llm=Mock(),
+        tool_registry=_registry(),
+        parent_trace_logger=NullTraceLogger(),
+    )
+    raw = json.dumps(
+        {
+            "status": "completed",
+            "summary": "isolated",
+            "findings": [],
+            "evidence": [],
+            "unresolved_questions": [],
+        }
+    )
+
+    with (
+        patch("runtime.subagents.RuntimeRunner.run", return_value=raw),
+        patch("runtime.subagents.create_trace_logger") as create_trace,
+    ):
+        first = launcher.launch(SubagentRequest(profile_name="explore", task="first"))
+        second = launcher.launch(SubagentRequest(profile_name="explore", task="second"))
+
+    create_trace.assert_not_called()
+    assert first.child_session_id != second.child_session_id
+    assert first.child_session_id != "disabled"
+    assert second.child_session_id != "disabled"
 
 
 def test_verification_completion_adapter_maps_verdicts():

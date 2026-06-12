@@ -14,7 +14,7 @@ from typing import Any
 
 from core.config import Config
 from core.llm import HelloAgentsLLM
-from extensions.tracing import create_trace_logger
+from extensions.tracing import NullTraceLogger, create_trace_logger
 from runtime.completion import (
     CompletionCandidate,
     CompletionGateResult,
@@ -240,10 +240,12 @@ SubagentResult = SubagentLaunchResult
 
 
 class _RecordingTrace:
-    def __init__(self, delegate: Any):
+    def __init__(self, delegate: Any, *, session_id: str | None = None):
         self.delegate = delegate
         self.events: list[tuple[str, int, dict[str, Any]]] = []
-        self.session_id = str(getattr(delegate, "session_id", f"child-{uuid.uuid4().hex}"))
+        self.session_id = session_id or str(
+            getattr(delegate, "session_id", f"child-{uuid.uuid4().hex}")
+        )
 
     def log_event(self, name: str, payload: dict[str, Any], step: int = 0) -> None:
         self.events.append((name, step, payload))
@@ -296,11 +298,12 @@ class _SubagentRuntimeHost:
             system_prompt_override=profile.system_prompt,
             mcp_tools_prompt="",
             skills_prompt="",
+            tool_prompt_allowlist=profile.tool_allowlist,
         )
         self.context_engine = ContextEngine(
             self.context_builder,
             config=self.config,
-            summary_generator=lambda messages: f"Read-only child summary ({len(messages)} messages)",
+            summary_generator=_summarize_child_messages,
         )
         self.trace_logger = trace_logger
         transcript_session = f"subagent-{trace_logger.session_id}"
@@ -337,6 +340,9 @@ class _SubagentRuntimeHost:
             self._system_messages_logged = True
 
     def _log_message_write(self, *args, **kwargs) -> None:
+        return None
+
+    def _print_context_preview(self, _messages: list[dict[str, Any]]) -> None:
         return None
 
     def _get_openai_tools_for_current_mode(self) -> list[dict[str, Any]]:
@@ -434,7 +440,7 @@ class SubagentLauncher:
         if requested_model not in {"main", "light"}:
             raise ValueError(f"unsupported subagent model choice: {requested_model}")
         llm, model_choice = self._select_llm(requested_model)
-        child_trace = _RecordingTrace(create_trace_logger())
+        child_trace = self._create_child_trace()
         child_session_id = child_trace.session_id
         child_run_id = "run-1"
         self._parent_event(
@@ -554,6 +560,19 @@ class SubagentLauncher:
             if self.light_llm is not None:
                 return self.light_llm, "light"
         return self.main_llm, "main"
+
+    def _create_child_trace(self) -> _RecordingTrace:
+        if (
+            self.parent_trace_logger is not None
+            and getattr(self.parent_trace_logger, "enabled", True) is False
+        ):
+            return _RecordingTrace(
+                NullTraceLogger(),
+                session_id=f"child-{uuid.uuid4().hex}",
+            )
+        return _RecordingTrace(
+            create_trace_logger(trace_dir=str(self.project_root / "memory" / "traces"))
+        )
 
     def _parent_event(
         self,
@@ -696,6 +715,26 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("result list fields must be string arrays")
     return tuple(item for item in value if item.strip())
+
+
+def _summarize_child_messages(messages: list[Any], *, char_budget: int = 8000) -> str | None:
+    if not messages:
+        return None
+    lines = ["[Compacted child history]"]
+    for message in messages:
+        role = str(getattr(message, "role", "unknown") or "unknown")
+        content = str(getattr(message, "content", "") or "")
+        metadata = getattr(message, "metadata", {}) or {}
+        label = role
+        if role == "tool":
+            label = f"tool:{metadata.get('tool_name', 'unknown')}"
+        content = content[:1200]
+        line = f"[{label}] {content}"
+        remaining = char_budget - len("\n".join(lines)) - 1
+        if remaining <= 0:
+            break
+        lines.append(line[:remaining])
+    return "\n".join(lines)[:char_budget]
 
 
 def _attr(value: Any, name: str) -> Any:

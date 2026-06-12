@@ -70,6 +70,7 @@ class ContextBuilder:
     system_prompt_override: Optional[str] = None
     mcp_tools_prompt: Optional[str] = None
     skills_prompt: Optional[str] = None
+    tool_prompt_allowlist: Optional[frozenset[str]] = None
     _cached_code_law: str = field(default="", init=False)
     _cached_code_law_mtime: Optional[float] = field(default=None, init=False)
     _cached_code_law_hash: str = field(default="", init=False)
@@ -228,6 +229,12 @@ class ContextBuilder:
         """加载所有工具的 prompt"""
         prompts_dir = Path(self.project_root) / "prompts" / "tools_prompts"
         prompts: List[str] = []
+        allowed_names = None
+        if self.tool_prompt_allowlist is not None:
+            allowed_names = {
+                "".join(character for character in tool_name.lower() if character.isalnum())
+                for tool_name in self.tool_prompt_allowlist
+            }
         if prompts_dir.exists():
             for path in sorted(prompts_dir.glob("*.py")):
                 if path.name.startswith("__"):
@@ -235,6 +242,14 @@ class ContextBuilder:
                 data = runpy.run_path(str(path))
                 for name, value in data.items():
                     if name.endswith("_prompt") and isinstance(value, str):
+                        if allowed_names is not None:
+                            prompt_tool_name = "".join(
+                                character
+                                for character in name[: -len("_prompt")].lower()
+                                if character.isalnum()
+                            )
+                            if prompt_tool_name not in allowed_names:
+                                continue
                         prompt_value = value.strip()
                         if self._skills_prompt and "{{available_skills}}" in prompt_value:
                             prompt_value = prompt_value.replace("{{available_skills}}", self._skills_prompt)
