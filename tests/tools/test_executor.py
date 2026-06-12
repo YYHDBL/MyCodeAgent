@@ -117,6 +117,30 @@ def test_tool_executor_returns_permission_denied_payload_with_decision_metadata(
     assert result["error"]["details"]["permission"]["policy_source"] == "unit_test"
 
 
+def test_tool_executor_keeps_runtime_allowlist_after_policy_allow():
+    from tools.context import ToolExecutionContext
+    from tools.executor import ToolExecutor
+
+    registry = ToolRegistry()
+    registry.register_tool(EchoTool())
+    context = ToolExecutionContext(
+        permission_checker=lambda _name: False,
+        permission_decider=lambda name, params, ctx: PermissionDecision(
+            action=PermissionAction.ALLOW,
+            risk=RiskLevel.LOW,
+            reason=f"{name} allowed by classifier",
+            policy_source="unit_test",
+            input_summary=json.dumps(params, ensure_ascii=False, sort_keys=True),
+        ),
+    )
+    executor = ToolExecutor(registry, context=context)
+
+    result = json.loads(executor.execute("Echo", {"value": "hello"}))
+
+    assert result["status"] == ToolStatus.ERROR.value
+    assert result["error"]["code"] == ErrorCode.PERMISSION_DENIED.value
+
+
 class _Trace:
     def __init__(self):
         self.events = []

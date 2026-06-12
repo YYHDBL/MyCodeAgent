@@ -7,7 +7,7 @@ from typing import Any, Callable, Optional
 
 from .base import ErrorCode, ToolStatus
 from .context import ToolExecutionContext
-from .permissions import PermissionAction
+from .permissions import PermissionAction, PermissionDecision, RiskLevel
 
 
 class ToolExecutor:
@@ -83,6 +83,22 @@ class ToolExecutor:
             decision = decider(name, parameters, self.context.permission_context)
             effective_action = decision.action
             if effective_action is PermissionAction.ASK and self.context.permission_context.ask_policy == "deny":
+                effective_action = PermissionAction.DENY
+            if (
+                effective_action is PermissionAction.ALLOW
+                and not self.context.permission_checker(name)
+            ):
+                decision = PermissionDecision(
+                    action=PermissionAction.DENY,
+                    risk=RiskLevel.HIGH,
+                    reason="tool blocked by runtime allowlist",
+                    policy_source="runtime_allowlist",
+                    input_summary=json.dumps(
+                        parameters,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
+                )
                 effective_action = PermissionAction.DENY
             if trace_logger:
                 trace_logger.log_event(
