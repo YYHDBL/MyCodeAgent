@@ -26,8 +26,8 @@ TodoWrite 是面向 Code Agent 的**任务列表管理工具**，用于在复杂
 
 ## 3. 接口规范
 ### 3.1 工具定义
-- Internal Class Name: `TodoWriteTool`（待实现）
-- Python Module: `tools/builtin/todo_write.py`（规划路径）
+- Internal Class Name: `TodoWriteTool`（已实现）
+- Python Module: `tools/builtin/todo_write.py`
 - Agent Exposed Name: **`TodoWrite`**
 
 ### 3.2 输入参数（声明式覆盖）

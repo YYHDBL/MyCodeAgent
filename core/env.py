@@ -1,8 +1,6 @@
 """Environment loader helper to ensure .env is applied early."""
 
 import os
-from typing import Optional
-
 
 _ENV_LOADED = False
 
@@ -23,9 +21,3 @@ def load_env() -> None:
         # Fail silently: rely on system environment if dotenv is missing.
         pass
     _ENV_LOADED = True
-
-
-def getenv(key: str, default: Optional[str] = None) -> Optional[str]:
-    """Get env var after ensuring .env is loaded."""
-    load_env()
-    return os.getenv(key, default)

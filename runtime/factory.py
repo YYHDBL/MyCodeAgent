@@ -43,7 +43,7 @@ class RuntimeComponentFactory:
         host.history_manager = HistoryManager(config=host.config)
         host.long_term_memory_store = None
         host.long_term_memory_snapshot = None
-        if bool(getattr(host.config, "long_term_memory_enabled", True)):
+        if host.config.long_term_memory_enabled:
             host.long_term_memory_store = LongTermMemoryStore(
                 project_root=host.project_root,
                 memory_char_limit=int(getattr(host.config, "memory_char_limit", 3000) or 3000),
@@ -132,7 +132,7 @@ class RuntimeComponentFactory:
             parent_context_engine=host.context_engine,
             parent_host=host,
         )
-        if bool(getattr(host.config, "enable_verification_agent", True)):
+        if host.config.enable_verification_agent:
             host.completion_verifier = SubagentCompletionVerifier(host.subagent_launcher)
 
 

@@ -554,9 +554,6 @@ class HelloAgentsLLM:
                 time.sleep(wait_s)
 
     def stream_invoke(self, messages: list[dict[str, str]], **kwargs) -> Iterator[str]:
-        """
-        流式调用LLM的别名方法，与think方法功能相同。
-        保持向后兼容性。
-        """
+        """Alias for think()."""
         temperature = kwargs.get('temperature')
         yield from self.think(messages, temperature)

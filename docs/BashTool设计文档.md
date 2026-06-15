@@ -14,7 +14,7 @@ BashTool 用于在**项目根目录沙箱**内执行 Shell 命令。它允许命
 ## 2. 接口规范
 ### 2.1 工具定义
 - Internal Class Name: `BashTool`
-- Python Module: `tools/builtin/bash.py`（规划）
+- Python Module: `tools/builtin/bash.py`（已实现）
 - Agent Exposed Name: **`Bash`**
 
 ### 2.2 输入参数（JSON Schema）

@@ -206,14 +206,6 @@ class ContextBuilder:
         self._runtime_system_blocks = normalized
         self._cached_assembly = None
 
-    def _with_runtime_system_blocks(self, base_messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        if not self._runtime_system_blocks:
-            return list(base_messages)
-        messages = list(base_messages)
-        for block in self._runtime_system_blocks:
-            messages.append({"role": "system", "content": block})
-        return messages
-
     def _load_system_prompt(self) -> str:
         """加载 L1 系统 prompt"""
         if self.system_prompt_override:

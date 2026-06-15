@@ -1,246 +1,243 @@
-"""测试 TraceLogger 功能
+"""Tests for TraceLogger and NullTraceLogger."""
 
-测试内容：
-1. TraceLogger 创建（启用/禁用）
-2. 事件记录（user_input/model_output/tool_call/tool_result/error/finish）
-3. session_summary 生成
-4. JSONL 文件写入
-"""
-
-import os
-import sys
 import json
-from pathlib import Path
 
-# 添加项目根目录到 sys.path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import pytest
 
-from extensions.tracing.logger import create_trace_logger
-
-
-def test_trace_logger_disabled():
-    """测试 TraceLogger 禁用模式"""
-    print("=" * 60)
-    print("Test 1: TraceLogger (disabled)")
-    print("=" * 60)
-    
-    # 确保禁用
-    os.environ['TRACE_ENABLED'] = 'false'
-    
-    logger = create_trace_logger()
-    print(f"Session ID: {logger.session_id}")
-    print(f"Enabled: {logger.enabled}")
-    
-    # 禁用时不应写入文件
-    logger.log_event('user_input', {'text': 'test'}, step=0)
-    logger.finalize()
-    
-    print("✅ Disabled mode test passed\n")
+from extensions.tracing.logger import TraceLogger
+from extensions.tracing import NullTraceLogger
 
 
-def test_trace_logger_enabled():
-    """测试 TraceLogger 启用模式"""
-    print("=" * 60)
-    print("Test 2: TraceLogger (enabled)")
-    print("=" * 60)
-    
-    # 启用
-    os.environ['TRACE_ENABLED'] = 'true'
-    os.environ['TRACE_DIR'] = 'memory/traces'
-    
-    logger = create_trace_logger()
-    print(f"Session ID: {logger.session_id}")
-    print(f"Enabled: {logger.enabled}")
-    print(f"Trace file: {logger._filepath}")
-    
-    # 记录各种事件
-    print("\n--- Recording events ---")
-    
-    # 1. user_input
-    logger.log_event('user_input', {
-        'text': '列出当前目录的文件'
-    }, step=0)
-    print("✓ user_input")
-    
-    # 2. model_output (step 1)
-    logger.log_event('model_output', {
-        'raw': '',
-        'tool_calls': [{'id': 'call_1', 'name': 'LS', 'arguments': {'path': '.'}}],
-        'usage': {
-            'prompt_tokens': 1234,
-            'completion_tokens': 56,
-            'total_tokens': 1290
-        }
-    }, step=1)
-    print("✓ model_output (step 1)")
-    
-    # 3. tool_call
-    logger.log_event('tool_call', {
-        'tool': 'LS',
-        'args': {'path': '.'},
-        'tool_call_id': 'call_1'
-    }, step=1)
-    print("✓ tool_call")
-    
-    # 5. tool_result
-    logger.log_event('tool_result', {
-        'tool': 'LS',
-        'result': {
-            'status': 'success',
-            'data': {
-                'entries': [
-                    {'path': 'core', 'type': 'dir'},
-                    {'path': 'README.md', 'type': 'file'}
-                ],
-                'truncated': False
+class TestTraceLoggerDisabled:
+    """Tests for TraceLogger when enabled=False."""
+
+    def test_no_file_created(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-20260101-120000-abcd",
+            trace_dir=tmp_path / "traces",
+            enabled=False,
+        )
+        assert logger.enabled is False
+        assert logger.session_id == "s-20260101-120000-abcd"
+        assert logger._filepath is None
+
+        logger.log_event("user_input", {"text": "hello"}, step=0)
+        logger.log_system_messages([{"role": "system", "content": "be helpful"}])
+        logger.finalize()
+
+        jsonl_files = list((tmp_path / "traces").glob("trace-*.jsonl"))
+        assert len(jsonl_files) == 0
+
+    def test_events_are_no_ops(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-20260101-120000-abcd",
+            trace_dir=tmp_path,
+            enabled=False,
+        )
+        logger.log_event("user_input", {"text": "hello"})
+        logger.log_event("model_output", {"raw": "hi", "usage": {"total_tokens": 10}})
+        logger.log_system_messages([{"role": "system", "content": "be helpful"}])
+
+        assert logger._total_steps == 0
+        assert logger._tools_used == 0
+        assert logger._total_usage["total_tokens"] == 0
+
+
+class TestTraceLoggerEnabled:
+    """Tests for TraceLogger when enabled=True."""
+
+    def test_jsonl_file_created(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-test",
+            trace_dir=tmp_path / "traces",
+            enabled=True,
+        )
+        assert logger.enabled is True
+        assert logger._filepath is not None
+        assert logger._filepath.exists()
+        logger.finalize()
+
+    def test_log_event_writes_valid_jsonl(self, tmp_path):
+        trace_dir = tmp_path / "traces"
+        logger = TraceLogger(
+            session_id="s-test",
+            trace_dir=trace_dir,
+            enabled=True,
+        )
+        logger.log_event("user_input", {"text": "hello"}, step=0)
+        logger.log_event(
+            "model_output",
+            {
+                "raw": "hi there",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                },
             },
-            'text': 'Listed 2 entries in "."',
-            'stats': {'time_ms': 5, 'total_entries': 2},
-            'context': {'cwd': '.', 'params_input': {'path': '.'}}
+            step=1,
+        )
+        logger.finalize()
+
+        lines = logger._filepath.read_text(encoding="utf-8").strip().split("\n")
+        # events: user_input, model_output, session_summary
+        assert len(lines) >= 3
+
+        for line in lines:
+            obj = json.loads(line)
+            for field in ("ts", "session_id", "step", "event", "payload"):
+                assert field in obj, f"missing field '{field}' in line: {line}"
+
+    def test_required_fields_in_each_event(self, tmp_path):
+        """Each JSONL line must have ts, session_id, step, event, payload."""
+        logger = TraceLogger(
+            session_id="s-reqfields",
+            trace_dir=tmp_path / "traces",
+            enabled=True,
+        )
+        logger.log_event("tool_call", {"tool": "LS", "args": {}}, step=1)
+        logger.log_event("tool_result", {"tool": "LS", "result": {"status": "ok"}}, step=1)
+        logger.log_event("error", {"message": "something went wrong"}, step=2)
+        logger.finalize()
+
+        required = {"ts", "session_id", "step", "event", "payload"}
+        for line in logger._filepath.read_text(encoding="utf-8").strip().split("\n"):
+            obj = json.loads(line)
+            assert obj["session_id"] == "s-reqfields"
+            assert obj["event"]
+            assert isinstance(obj["step"], int)
+            assert isinstance(obj["payload"], dict)
+            assert required <= set(obj.keys())
+
+    def test_log_system_messages(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-sysmsg",
+            trace_dir=tmp_path / "traces",
+            enabled=True,
+        )
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "system", "content": "Use tools when needed."},
+        ]
+        logger.log_system_messages(messages)
+        # Calling again should be a no-op
+        logger.log_system_messages([{"role": "system", "content": "again"}])
+        logger.finalize()
+
+        lines = logger._filepath.read_text(encoding="utf-8").strip().split("\n")
+        system_message_events = [
+            json.loads(line)
+            for line in lines
+            if json.loads(line)["event"] == "system_messages"
+        ]
+        assert len(system_message_events) == 1
+        payload = system_message_events[0]["payload"]
+        assert len(payload["messages"]) == 2
+        assert payload["messages"][0]["role"] == "system"
+
+    def test_finalize_writes_session_summary(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-summary",
+            trace_dir=tmp_path / "traces",
+            enabled=True,
+        )
+        logger.log_event("model_output", {"raw": "a", "usage": {"total_tokens": 10}}, step=1)
+        logger.log_event("tool_call", {"tool": "Read", "args": {"filePath": "x.py"}}, step=1)
+        logger.log_event("model_output", {"raw": "b", "usage": {"total_tokens": 20}}, step=2)
+        logger.finalize()
+
+        lines = logger._filepath.read_text(encoding="utf-8").strip().split("\n")
+        last = json.loads(lines[-1])
+        assert last["event"] == "session_summary"
+        summary = last["payload"]
+        assert summary["steps"] == 2
+        assert summary["tools_used"] == 1
+        assert summary["total_usage"]["total_tokens"] == 30
+        assert summary["total_usage"]["prompt_tokens"] == 0
+        assert summary["total_usage"]["completion_tokens"] == 0
+
+    def test_total_usage_tracks_tokens(self, tmp_path):
+        logger = TraceLogger(
+            session_id="s-usage",
+            trace_dir=tmp_path / "traces",
+            enabled=True,
+        )
+        assert logger._total_usage == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
         }
-    }, step=1)
-    print("✓ tool_result")
-    
-    # 6. model_output (step 2)
-    logger.log_event('model_output', {
-        'raw': '当前目录包含 core 目录和 README.md 文件',
-        'usage': {
-            'prompt_tokens': 1567,
-            'completion_tokens': 89,
-            'total_tokens': 1656
+
+        logger.log_event(
+            "model_output",
+            {
+                "raw": "first",
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 30,
+                    "total_tokens": 130,
+                },
+            },
+            step=1,
+        )
+        logger.log_event(
+            "model_output",
+            {
+                "raw": "second",
+                "usage": {
+                    "prompt_tokens": 200,
+                    "completion_tokens": 50,
+                    "total_tokens": 250,
+                },
+            },
+            step=2,
+        )
+        logger.log_event("finish", {"final": "done"}, step=2)
+
+        assert logger._total_usage["prompt_tokens"] == 300
+        assert logger._total_usage["completion_tokens"] == 80
+        assert logger._total_usage["total_tokens"] == 380
+        assert logger._total_steps == 2
+
+    def test_context_manager_auto_finalizes(self, tmp_path):
+        trace_dir = tmp_path / "traces"
+        with TraceLogger(
+            session_id="s-ctx",
+            trace_dir=trace_dir,
+            enabled=True,
+        ) as logger:
+            logger.log_event("user_input", {"text": "hello"}, step=0)
+
+        # After exiting the with block, finalize() should have been called
+        content = logger._filepath.read_text(encoding="utf-8").strip().split("\n")
+        assert len(content) >= 2
+        last = json.loads(content[-1])
+        assert last["event"] == "session_summary"
+
+
+class TestNullTraceLogger:
+    """Tests for the no-op NullTraceLogger."""
+
+    def test_all_methods_are_no_ops(self):
+        logger = NullTraceLogger()
+        assert logger.enabled is False
+        assert logger.session_id == "disabled"
+        assert logger._total_usage == {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
         }
-    }, step=2)
-    print("✓ model_output (step 2)")
-    
-    # 7. finish
-    logger.log_event('finish', {
-        'final': '当前目录包含 core 目录和 README.md 文件'
-    }, step=2)
-    print("✓ finish")
-    
-    # 8. finalize (写入 session_summary)
-    print("\n--- Finalizing ---")
-    logger.finalize()
-    
-    print(f"\n✅ Enabled mode test passed")
-    print(f"✅ Trace saved to: {logger._filepath}")
-    
-    assert logger._filepath is not None
 
+        # All methods should return None and not raise
+        assert logger.log_event("user_input", {"text": "x"}) is None
+        assert logger.log_system_messages([{"role": "system", "content": "x"}]) is None
+        assert logger.finalize() is None
 
-def test_trace_logger_with_error():
-    """测试 TraceLogger 错误记录"""
-    print("\n" + "=" * 60)
-    print("Test 3: TraceLogger (with error)")
-    print("=" * 60)
-    
-    os.environ['TRACE_ENABLED'] = 'true'
-    
-    logger = create_trace_logger()
-    print(f"Session ID: {logger.session_id}")
-    
-    # 记录用户输入
-    logger.log_event('user_input', {'text': '测试错误处理'}, step=0)
-    
-    # 记录工具调用错误
-    logger.log_event('error', {
-        'stage': 'tool_execution',
-        'error_code': 'INVALID_PARAM',
-        'message': 'Parameter "path" is required',
-        'tool': 'Read',
-        'args': {},
-        'traceback': 'Traceback (most recent call last):\n  ...'
-    }, step=1)
-    print("✓ error event recorded")
-    
-    logger.finalize()
-    print(f"✅ Error test passed")
-    print(f"✅ Trace saved to: {logger._filepath}")
-    
-    assert logger._filepath is not None
+    def test_no_file_created(self, tmp_path):
+        logger = NullTraceLogger()
+        logger.log_event("user_input", {"text": "hello"})
+        logger.finalize()
 
-
-def verify_jsonl_file(filepath: Path):
-    """验证 JSONL 文件内容"""
-    print("\n" + "=" * 60)
-    print("Verifying JSONL file content")
-    print("=" * 60)
-    
-    if not filepath or not filepath.exists():
-        print("❌ File does not exist")
-        return
-    
-    print(f"File: {filepath}")
-    print(f"Size: {filepath.stat().st_size} bytes")
-    
-    # 读取并解析每一行
-    with open(filepath, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-    
-    print(f"Total events: {len(lines)}")
-    print("\nEvents:")
-    
-    for i, line in enumerate(lines, 1):
-        try:
-            event = json.loads(line)
-            event_type = event.get('event', 'unknown')
-            step = event.get('step', 0)
-            print(f"  {i}. {event_type} (step={step})")
-            
-            # 验证必填字段
-            required = ['ts', 'session_id', 'step', 'event', 'payload']
-            missing = [f for f in required if f not in event]
-            if missing:
-                print(f"     ⚠️  Missing fields: {missing}")
-            
-        except json.JSONDecodeError as e:
-            print(f"  {i}. ❌ Invalid JSON: {e}")
-    
-    print("\n✅ JSONL verification completed")
-
-
-def main():
-    """运行所有测试"""
-    print("\n" + "🧪 " * 30)
-    print("TraceLogger Test Suite")
-    print("🧪 " * 30 + "\n")
-    
-    try:
-        # 测试 1: 禁用模式
-        test_trace_logger_disabled()
-        
-        # 测试 2: 启用模式（完整流程）
-        filepath1 = test_trace_logger_enabled()
-        
-        # 测试 3: 错误记录
-        filepath2 = test_trace_logger_with_error()
-        
-        # 验证文件内容
-        if filepath1:
-            verify_jsonl_file(filepath1)
-        
-        print("\n" + "=" * 60)
-        print("🎉 All tests passed!")
-        print("=" * 60)
-        
-        # 打印生成的文件路径
-        print("\nGenerated trace files:")
-        if filepath1:
-            print(f"  - {filepath1}")
-        if filepath2:
-            print(f"  - {filepath2}")
-        
-        print("\n💡 Tip: You can view the trace files with:")
-        print("  cat memory/traces/trace-*.jsonl")
-        print("  or")
-        print("  cat memory/traces/trace-*.jsonl | jq")
-        
-    except Exception as e:
-        print(f"\n❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == '__main__':
-    main()
+        # NullTraceLogger has no _filepath attribute, and no file should be created
+        jsonl_files = list(tmp_path.glob("*.jsonl"))
+        assert len(jsonl_files) == 0

@@ -83,11 +83,7 @@ class RiskClassifier:
     }
     _WRITE_PATH_KEYS = ("path", "file_path")
     _BASH_ALLOW_EXACT = {
-        "ls",
         "pwd",
-        "cat",
-        "grep",
-        "rg",
     }
     _BASH_ALLOW_PREFIXES = (
         ("sed", "-n"),

@@ -53,16 +53,16 @@ def test_unknown_tool_fails_closed():
     assert "unknown tool" in decision.reason.lower()
 
 
-def test_bash_ls_and_git_status_are_allowed():
+def test_bash_git_status_allowed_ls_not_low_risk():
     classifier = RiskClassifier()
     context = PermissionContext(runtime_mode="main_agent")
 
     ls_decision = classifier.classify("Bash", {"command": "ls"}, context)
     git_status_decision = classifier.classify("Bash", {"command": "git status"}, context)
 
-    assert ls_decision.action is PermissionAction.ALLOW
+    assert ls_decision.action is not PermissionAction.ALLOW
+    assert ls_decision.risk is RiskLevel.MEDIUM
     assert git_status_decision.action is PermissionAction.ALLOW
-    assert ls_decision.risk is RiskLevel.LOW
     assert git_status_decision.risk is RiskLevel.LOW
 
 

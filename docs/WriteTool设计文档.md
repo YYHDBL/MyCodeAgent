@@ -14,7 +14,7 @@ WriteTool 是 Code Agent 修改/创建文件的核心工具，提供全量覆盖
 - **沙箱安全**：强制限制在 PROJECT_ROOT 内
 - **预演模式**：支持 dry_run，仅计算 diff 不落盘
 - **读写约束（已实现）**：已有文件必须先 Read（由框架自动注入乐观锁参数）
-- **乐观锁（已实现）**：`expected_mtime_ms` + `expected_size_bytes` 校验，防止覆盖用户修改（详见 `docs/details/乐观锁设计方案.md`）
+- **乐观锁（已实现）**：`expected_mtime_ms` + `expected_size_bytes` 校验，防止覆盖用户修改（实现位于 `tools/registry.py:_inject_optimistic_lock_params`）
 
 ---
 

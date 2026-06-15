@@ -1,4 +1,6 @@
-# Task Tool MVP Design
+# [已归档] Task Tool MVP Design
+
+> **归档说明**：本文档描述了 4 种子 agent 类型（general、explore、plan、summary），但实际仅实现了 "explore" 类型；其他三种类型（general、plan、summary）从未建造。本文档保留供历史参考。
 
 ## Purpose
 Provide a minimal subagent system so the primary agent can delegate focused work to a subagent. The subagent runs in an isolated session with a filtered toolset and optional model override.

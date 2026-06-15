@@ -45,8 +45,6 @@ class Config(BaseModel):
     user_memory_path: Optional[str] = None
     memory_nudge_interval: int = 0
     enable_verification_agent: bool = True
-    # 工具消息序列化策略（已弃用，当前固定为 function calling 严格模式）
-    tool_message_format: str = "strict"
     
     @classmethod
     def from_env(cls) -> "Config":
@@ -84,7 +82,6 @@ class Config(BaseModel):
             memory_nudge_interval=int(os.getenv("MEMORY_NUDGE_INTERVAL", "0")),
             enable_verification_agent=os.getenv("ENABLE_VERIFICATION_AGENT", "true").lower()
             in {"1", "true", "yes", "y", "on"},
-            tool_message_format=os.getenv("TOOL_MESSAGE_FORMAT", "strict"),
         )
     
     def to_dict(self) -> Dict[str, Any]:

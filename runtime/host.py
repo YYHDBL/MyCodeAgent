@@ -3,7 +3,6 @@ import os
 import logging
 import sys
 import hashlib
-import traceback as tb
 from pathlib import Path
 from typing import Any, Optional, List, Tuple
 
@@ -114,7 +113,7 @@ class CodeAgent(Agent):
         self.enable_skills = bool(enable_skills)
         self.enable_tracing = bool(enable_tracing)
         self.interactive = os.getenv("AGENT_INTERACTIVE", "true").lower() in {"1", "true", "yes", "y", "on"}
-        self.enable_agent_teams = bool(getattr(self.config, "enable_agent_teams", False))
+        self.enable_agent_teams = self.config.enable_agent_teams
         self.team_store_dir = str(getattr(self.config, "agent_teams_store_dir", ".teams") or ".teams")
         self.task_store_dir = str(getattr(self.config, "agent_tasks_store_dir", ".tasks") or ".tasks")
         self.teammate_mode = str(getattr(self.config, "teammate_mode", "auto") or "auto")
@@ -122,7 +121,7 @@ class CodeAgent(Agent):
             self.teammate_runtime_mode, self.teammate_mode_warning = resolve_teammate_mode(self.teammate_mode)
         else:
             self.teammate_runtime_mode, self.teammate_mode_warning = "disabled", None
-        self.delegate_mode = bool(getattr(self.config, "delegate_mode", False))
+        self.delegate_mode = self.config.delegate_mode
         if self.teammate_mode_warning:
             self.logger.warning(self.teammate_mode_warning)
         self.team_manager = None

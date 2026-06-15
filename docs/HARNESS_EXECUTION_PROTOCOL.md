@@ -1,4 +1,6 @@
-# Harness Execution Protocol
+# [已归档] Harness Execution Protocol
+
+> **归档说明**：开发执行协议，所有 Phase 均已完成，不再需要。保留供参考。
 
 本文档规定 agent 如何执行 `docs/HARNESS_TASK_BREAKDOWN.md`。路线图回答“做什么”，任务拆分回答“拆成哪些任务”，本协议回答“如何安全执行”。
 

@@ -1,4 +1,6 @@
-# Harness Task Breakdown
+# [已归档] Harness Task Breakdown
+
+> **归档说明**：本文档描述的所有 Phase 均已完成。保留供参考。
 
 本文档把 `docs/HARNESS_ROADMAP.md` 拆成可执行子任务。它不是代码级实施计划，不包含完整代码；每个任务应能独立交给一个 agent 执行，并在完成后通过测试、Trace 或文档验收。
 
