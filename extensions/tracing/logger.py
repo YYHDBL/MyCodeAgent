@@ -58,6 +58,8 @@ class TraceLogger:
         self.session_id = session_id
         self.trace_dir = Path(trace_dir)
         self.enabled = enabled
+
+        self._current_run_events: list[dict] = []
         
         # 统计数据（用于 session_summary）
         self._total_steps = 0
@@ -135,7 +137,9 @@ class TraceLogger:
                 "event": event,
                 "payload": safe_payload,
             }
-            
+
+            self._current_run_events.append(event_obj)
+
             # 写入文件
             self._write_line(event_obj)
             
@@ -619,6 +623,12 @@ class TraceLogger:
         if lines:
             self._html_handle.write("".join(lines) + "\n")
             self._html_handle.flush()
+    
+    def get_current_run_events(self) -> list[dict]:
+        return list(self._current_run_events)
+
+    def clear_current_run_events(self):
+        self._current_run_events.clear()
     
     def __enter__(self):
         """支持 with 语句"""

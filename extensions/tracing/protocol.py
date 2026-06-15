@@ -70,4 +70,9 @@ SUBAGENT_TRACE_EVENTS: dict[str, TraceEventSpec] = {
 }
 
 
-__all__ = ["CORE_TRACE_EVENTS", "SUBAGENT_TRACE_EVENTS", "TraceEventSpec"]
+EVOLUTION_TRACE_EVENTS: dict[str, TraceEventSpec] = {
+    "skill_evolution_event": TraceEventSpec(("event_type", "skill_id", "details")),
+}
+
+
+__all__ = ["CORE_TRACE_EVENTS", "SUBAGENT_TRACE_EVENTS", "EVOLUTION_TRACE_EVENTS", "TraceEventSpec"]

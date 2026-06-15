@@ -28,6 +28,12 @@ class NullTraceLogger:
     def finalize(self):
         return None
 
+    def get_current_run_events(self) -> list[dict]:
+        return []
+
+    def clear_current_run_events(self):
+        pass
+
 
 __all__ = [
     "NullTraceLogger",
