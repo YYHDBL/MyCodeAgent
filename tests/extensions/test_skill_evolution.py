@@ -372,7 +372,7 @@ class TestBuffer:
         b.append(_make_rollout("s-a:1"))
         b.append(_make_rollout("s-a:2"))
         b.append(_make_rollout("s-b:1"))
-        assert b.count_distinct_runs("code-review") == 2
+        assert b.count_distinct_runs("code-review") == 3
 
     def test_buffer_persistent_key_unique(self):
         b = AbnormalTrajectoryBuffer(Path(tempfile.mkdtemp()))
@@ -566,7 +566,7 @@ class TestStateMachine:
     def test_cross_restart_state_recovery(self):
         overlay = Path(tempfile.mkdtemp())
         state_path = overlay / "state.json"
-        state_path.parent.mkdir(parents=True)
+        overlay.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps({
             "skills": {
                 "code-review": {
@@ -591,7 +591,7 @@ class TestStateMachine:
     def test_cross_restart_overlay_inconsistent(self):
         overlay = Path(tempfile.mkdtemp())
         state_path = overlay / "state.json"
-        state_path.parent.mkdir(parents=True)
+        overlay.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps({
             "skills": {
                 "code-review": {

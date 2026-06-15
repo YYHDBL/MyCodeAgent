@@ -50,15 +50,21 @@ class AbnormalTrajectoryBuffer:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             for e in entries:
+                r = e.rollout
                 obj = {
                     "consumed": e.consumed,
                     "rollout": {
-                        "persistent_run_id": e.rollout.persistent_run_id,
-                        "attributing_skill": e.rollout.attributing_skill,
-                        "task_success": e.rollout.task_success,
-                        "hard_error": e.rollout.hard_error,
-                        "error_signatures": e.rollout.error_signatures,
-                        "summary": e.rollout.summary,
+                        "trace_id": r.trace_id,
+                        "persistent_run_id": r.persistent_run_id,
+                        "input_fingerprint": r.input_fingerprint,
+                        "skills_invoked": r.skills_invoked,
+                        "attributing_skill": r.attributing_skill,
+                        "skill_version": r.skill_version,
+                        "task_success": r.task_success,
+                        "hard_error": r.hard_error,
+                        "human_intervention": r.human_intervention,
+                        "error_signatures": r.error_signatures,
+                        "summary": r.summary,
                     },
                 }
                 fh.write(json.dumps(obj, ensure_ascii=False) + "\n")

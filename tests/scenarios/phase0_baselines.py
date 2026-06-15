@@ -25,6 +25,12 @@ class RecordingTraceLogger:
     def log_system_messages(self, messages):
         self.events.append(("system_messages", 0, {"messages": messages}))
 
+    def get_current_run_events(self):
+        return []
+
+    def clear_current_run_events(self):
+        pass
+
 
 class ScenarioHistoryManager:
     def __init__(self):
