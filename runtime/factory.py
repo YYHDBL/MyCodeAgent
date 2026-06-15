@@ -135,5 +135,20 @@ class RuntimeComponentFactory:
         if host.config.enable_verification_agent:
             host.completion_verifier = SubagentCompletionVerifier(host.subagent_launcher)
 
+        if getattr(host, "enable_skill_evolution", False) and host._skill_loader is not None:
+            from extensions.skill_evolution.config import EvolutionConfig
+            from extensions.skill_evolution.state_machine import SkillEvolutionManager
+
+            overlay_dir = Path(host.project_root) / "memory" / "skill_evolution" / "active"
+            host._skill_evolution_manager = SkillEvolutionManager(
+                skill_loader=host._skill_loader,
+                llm=host.llm,
+                config=EvolutionConfig(enabled=True),
+                overlay_dir=overlay_dir,
+                on_skills_changed=lambda: host._refresh_skills_prompt(),
+            )
+            host._skill_evolution_manager.load_state()
+            host._skill_loader.set_overlay_dir(overlay_dir)
+
 
 __all__ = ["RuntimeComponentFactory"]

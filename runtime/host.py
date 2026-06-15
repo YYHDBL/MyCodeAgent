@@ -95,6 +95,7 @@ class CodeAgent(Agent):
         enable_mcp: bool = True,
         enable_skills: bool = True,
         enable_tracing: bool = True,
+        enable_skill_evolution: bool = False,
         logger=None,
     ):
         super().__init__(name, llm, system_prompt=system_prompt, config=config)
@@ -148,6 +149,9 @@ class CodeAgent(Agent):
             self.teammate_runtime_mode,
             self.delegate_mode,
         )
+
+        self.enable_skill_evolution = bool(enable_skill_evolution)
+        self._skill_evolution_manager = None
         
         self._initialize_runtime_components()
 
@@ -177,6 +181,22 @@ class CodeAgent(Agent):
                 launcher=self.subagent_launcher,
             )
         )
+
+    def _on_run_finished(self, processed_input: str):
+        if self._skill_evolution_manager is None:
+            return
+        try:
+            events = self.trace_logger.get_current_run_events()
+            session_id = self.trace_logger.session_id
+            run_id = self._run_id
+            self._skill_evolution_manager.on_run_finished(
+                trace_events=events,
+                session_id=session_id,
+                run_id=run_id,
+                processed_input=processed_input,
+            )
+        except Exception:
+            self.logger.warning("Skill Evolution on_run_finished failed", exc_info=True)
 
     def _apply_session_memory(self, memory: SessionMemory) -> None:
         self.session_memory = memory

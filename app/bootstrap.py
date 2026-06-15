@@ -80,6 +80,12 @@ def build_runtime(
     if agent_kwargs_factory is not None:
         agent_kwargs.update(agent_kwargs_factory(config, llm, resolved_project_root))
 
+    skill_evolution_enabled = (
+        getattr(args, "skill_evolution", False)
+        or config.enable_skill_evolution
+    )
+    agent_kwargs["enable_skill_evolution"] = skill_evolution_enabled
+
     agent = agent_class(**agent_kwargs)
 
     return RuntimeBootstrap(

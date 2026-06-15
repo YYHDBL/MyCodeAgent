@@ -46,6 +46,9 @@ class Config(BaseModel):
     memory_nudge_interval: int = 0
     enable_verification_agent: bool = True
     
+    # Skill Evolution 配置（实验性）
+    enable_skill_evolution: bool = False
+    
     @classmethod
     def from_env(cls) -> "Config":
         """从环境变量创建配置"""
@@ -81,6 +84,8 @@ class Config(BaseModel):
             user_memory_path=os.getenv("USER_MEMORY_PATH") or None,
             memory_nudge_interval=int(os.getenv("MEMORY_NUDGE_INTERVAL", "0")),
             enable_verification_agent=os.getenv("ENABLE_VERIFICATION_AGENT", "true").lower()
+            in {"1", "true", "yes", "y", "on"},
+            enable_skill_evolution=os.getenv("SKILL_EVOLUTION_ENABLED", "false").lower()
             in {"1", "true", "yes", "y", "on"},
         )
     

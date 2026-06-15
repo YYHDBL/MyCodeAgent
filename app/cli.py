@@ -284,6 +284,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="teammate display mode (override TEAMMATE_MODE)",
     )
     parser.add_argument("--show-raw", action="store_true", help="print raw response structure")
+    parser.add_argument(
+        "--skill-evolution", action="store_true",
+        help="enable controlled skill evolution (experimental)",
+    )
     return parser
 
 

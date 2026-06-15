@@ -333,6 +333,7 @@ class RuntimeRunner:
     def run(self, input_text: str, **kwargs) -> str:
         show_raw = kwargs.pop("show_raw", False)
         processed_input, trace_logger, run_id = self._prepare_run(input_text, show_raw)
+        raw_input = processed_input
         response_text = ""
         try:
             response_text = self._react_loop(
@@ -342,6 +343,9 @@ class RuntimeRunner:
             )
         finally:
             self._finish_run(trace_logger, run_id, response_text)
+            host = self.host
+            if hasattr(host, "_on_run_finished"):
+                host._on_run_finished(processed_input=raw_input)
         return response_text
 
     def _prepare_run(self, input_text: str, show_raw: bool) -> tuple[str, Any, int]:
@@ -368,6 +372,7 @@ class RuntimeRunner:
                     host.logger.debug("另有 %d 个文件被省略", preprocess_result.truncated_count)
 
         trace_logger = host.trace_logger
+        trace_logger.clear_current_run_events()
         host._run_id += 1
         run_id = host._run_id
         host._active_transcript_run_id = f"run-{run_id}"
