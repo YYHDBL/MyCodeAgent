@@ -170,7 +170,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         target = store.ensure_overlay_exists("code-review")
         assert target.exists()
         assert target.read_text() == SAMPLE_SKILL
@@ -182,7 +182,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         store.ensure_overlay_exists("code-review")
         ver = store.snapshot_current("code-review")
         assert ver.startswith("v")
@@ -196,7 +196,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         store.ensure_overlay_exists("code-review")
         v1 = store.snapshot_current("code-review")
         assert v1 == "v1"
@@ -208,7 +208,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         store.ensure_overlay_exists("code-review")
         patch = PatchOp(patch_type="replace", target_section="Review Process",
                          old_text="1. Read the changed files", new_text="1. Read carefully")
@@ -224,7 +224,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         store.ensure_overlay_exists("code-review")
         store.snapshot_current("code-review")
         versions = store.list_versions("code-review")
@@ -237,7 +237,7 @@ class TestStore:
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL)
 
-        store = SkillVersionStore(source_skill_path=skill_dir / "SKILL.md", overlay_dir=overlay)
+        store = SkillVersionStore(source_skills_dir=source, overlay_dir=overlay)
         store.ensure_overlay_exists("code-review")
         patch = PatchOp(patch_type="replace", target_section="Review Process",
                          old_text="1. Read the changed files", new_text="1. Read carefully")

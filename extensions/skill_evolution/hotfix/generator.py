@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from extensions.skill_evolution.types import PatchOp, Proposal, ProposalType, RolloutRecord
 
@@ -81,7 +82,7 @@ class HotfixGenerator:
             proposal_type=ProposalType.USER_DIRECTED_HOTFIX,
             target_skill=rollout.attributing_skill or "",
             base_version="v0",
-            source_trace_ids=[rollout.trace_id],
+            source_trace_ids=[rollout.persistent_run_id],
             problem=f"User requested: {user_instruction}",
             reason=parsed.get("reason", "User explicit instruction"),
             target_section=parsed.get("target_section", ""),
@@ -112,9 +113,9 @@ Return ONLY a JSON object as specified in the system instructions."""
     def _parse_response(self, response: str) -> dict | None:
         try:
             text = response.strip()
-            if text.startswith("```"):
-                lines = text.splitlines()
-                text = "\n".join(lines[1:-1])
+            match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
             return json.loads(text)
         except (json.JSONDecodeError, Exception):
             logger.warning("HotfixGenerator failed to parse LLM response")

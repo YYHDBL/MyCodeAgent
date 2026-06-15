@@ -45,14 +45,6 @@ class ProposalType(str, Enum):
     AGENT_INFERRED = "agent_inferred"
 
 
-class SkillState(str, Enum):
-    STABLE = "stable"
-    CANDIDATE = "candidate"
-    ROLLED_BACK = "rolled_back"
-    SUPERSEDED = "superseded"
-    ARCHIVED = "archived"
-
-
 class FeedbackRoute(str, Enum):
     USER_HOTFIX_CANDIDATE = "user_hotfix_candidate"
     ABNORMAL_ROLLOUT = "abnormal_rollout"
@@ -129,7 +121,7 @@ class SkillVersionMeta:
     skill_id: str
     version: str
     parent_version: str | None
-    state: SkillState
+    state: str
     proposal_id: str | None = None
     source_type: str | None = None
 
@@ -159,7 +151,6 @@ __all__ = [
     "EvolutionState",
     "ProposalStatus",
     "ProposalType",
-    "SkillState",
     "FeedbackRoute",
     "BatchReviewDecision",
     "ObservationResult",

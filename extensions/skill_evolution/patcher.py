@@ -57,11 +57,21 @@ def _heading_depth(line: str) -> int:
     return depth
 
 
-def replace_text(content: str, old: str, new: str) -> str | None:
-    """全文精确匹配 *old* 并替换为 *new*。
-    
-    要求 *old* 唯一出现；返回 ``None`` 表示替换失败。
+def replace_text(content: str, old: str, new: str, section_range: tuple[int, int] | None = None) -> str | None:
+    """匹配 *old* 并替换为 *new*。
+
+    若 pass section_range，仅在段落区间内匹配替换；
+    否则全文匹配（要求唯一出现）。返回 ``None`` 表示失败。
     """
+    if section_range:
+        lines = content.splitlines()
+        section_text = "\n".join(lines[section_range[0]:section_range[1]])
+        if old not in section_text:
+            return None
+        if section_text.count(old) > 1:
+            return None
+        new_section = section_text.replace(old, new, 1)
+        return "\n".join(lines[:section_range[0]] + [new_section] + lines[section_range[1]:])
     count = content.count(old)
     if count == 0:
         return None
@@ -95,7 +105,8 @@ def apply_patch(content: str, patch: PatchOp) -> str | None:
     """根据 patch_type 分发到对应函数。失败返回 ``None``。"""
     pt = patch.patch_type
     if pt == "replace":
-        return replace_text(content, patch.old_text, patch.new_text)
+        section_range = locate_section(content, patch.target_section)
+        return replace_text(content, patch.old_text, patch.new_text, section_range=section_range)
     if pt == "insert_after":
         return insert_after_section(content, patch.target_section, patch.new_text)
     if pt == "append":

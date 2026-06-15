@@ -44,12 +44,14 @@ class SkillEvolutionManager:
         config: EvolutionConfig,
         overlay_dir: Path,
         on_skills_changed: Callable[[], None] | None = None,
+        trace_logger=None,
     ):
         self._skill_loader = skill_loader
         self._llm = llm
         self._config = config
         self._overlay_dir = Path(overlay_dir)
         self._on_skills_changed = on_skills_changed
+        self._trace_logger = trace_logger
 
         self._states: dict[str, EvolutionStateRecord] = {}
         self._observers: dict[str, CandidateObserver] = {}
@@ -64,7 +66,7 @@ class SkillEvolutionManager:
         project_root = getattr(skill_loader, "_project_root", Path("."))
         source_dir = Path(str(project_root)) / "skills"
         self._store = SkillVersionStore(
-            source_skill_path=source_dir,
+            source_skills_dir=source_dir,
             overlay_dir=self._overlay_dir,
         )
 
@@ -158,7 +160,6 @@ class SkillEvolutionManager:
             self._states[skill_name] = state
 
         route = self._router.route(rollout)
-        self._source_base = self._store._source_skill_path  # 每个 skill 可能不同
 
         if route == FeedbackRoute.USER_HOTFIX_CANDIDATE:
             self._handle_hotfix_candidate(rollout, skill_name, state)
@@ -217,6 +218,8 @@ class SkillEvolutionManager:
             active_proposal = pm.get_active()
             if active_proposal:
                 result = observer.observe(rollout, active_proposal)
+                state.observer_relevant_pass_count = observer.relevant_pass_count
+                state.observer_total_relevant_count = observer.total_relevant_count
                 if result == ObservationResult.IRRELEVANT:
                     return
                 if result == ObservationResult.PASS:
@@ -225,7 +228,7 @@ class SkillEvolutionManager:
                     elif observer.is_exceeded():
                         self._rollback(skill_name, "EXPIRED")
                     return
-                self._rollback(skill_name, str(result.value))
+                self._rollback(skill_name, str(result.value), rollout.persistent_run_id)
                 return
 
         if state.state in ("stable", "cooldown"):
@@ -264,6 +267,7 @@ class SkillEvolutionManager:
                     new_content = apply_patch(current_skill, proposal.patch)
                     if new_content is None:
                         return
+                    self._store.snapshot_current(skill_name)
                     ver = f"{self._store.get_current_version(skill_name)}-candidate"
                     self._store.create_candidate(skill_name, new_content, ver)
 
@@ -297,6 +301,8 @@ class SkillEvolutionManager:
             active_proposal = pm.get_active()
             if active_proposal:
                 result = observer.observe(rollout, active_proposal)
+                state.observer_relevant_pass_count = observer.relevant_pass_count
+                state.observer_total_relevant_count = observer.total_relevant_count
                 if result == ObservationResult.IRRELEVANT:
                     pass
                 elif result == ObservationResult.PASS:
@@ -305,7 +311,7 @@ class SkillEvolutionManager:
                     elif observer.is_exceeded():
                         self._rollback(skill_name, "EXPIRED")
                 else:
-                    self._rollback(skill_name, str(result.value))
+                    self._rollback(skill_name, str(result.value), rollout.persistent_run_id)
 
         if state.cooldown_tasks_remaining > 0:
             state.cooldown_tasks_remaining -= 1
@@ -339,14 +345,14 @@ class SkillEvolutionManager:
 
         self._emit_trace("candidate_promoted", skill_name, {"version": ver})
 
-    def _rollback(self, skill_name: str, reason: str):
+    def _rollback(self, skill_name: str, reason: str, failure_run_id: str | None = None):
         state = self._states[skill_name]
         pm = self._get_proposal_manager(skill_name)
         self._store.restore_version(skill_name, state.lkg_version)
 
         failure_ids: list[str] = []
-        if reason not in ("EXPIRED",):
-            failure_ids = [reason]
+        if failure_run_id and reason not in ("EXPIRED",):
+            failure_ids = [failure_run_id]
 
         pm.reject(state.active_proposal_id, reason, failure_trace_ids=failure_ids)
 
@@ -420,6 +426,12 @@ class SkillEvolutionManager:
 
     def _emit_trace(self, event_type: str, skill_id: str, details: dict):
         try:
+            if self._trace_logger and hasattr(self._trace_logger, "log_event"):
+                self._trace_logger.log_event("skill_evolution_event", {
+                    "event_type": event_type,
+                    "skill_id": skill_id,
+                    "details": details,
+                })
             logger.info("skill_evolution: %s skill=%s %s", event_type, skill_id, json.dumps(details, ensure_ascii=False))
         except Exception:
             pass

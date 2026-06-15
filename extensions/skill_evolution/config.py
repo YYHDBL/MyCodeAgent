@@ -21,7 +21,6 @@ class EvolutionConfig:
     # ---- Candidate 观察 ----
     minimum_relevant_tasks: int = 3
     max_observation_tasks: int = 15
-    lock_during_evaluation: bool = True
 
     # ---- 冷却期 (任务计数) ----
     tasks_after_accept: int = 3
@@ -30,14 +29,6 @@ class EvolutionConfig:
     # ---- 拒绝限制 ----
     max_consecutive_rejections: int = 2
     recent_rejected_proposals_in_prompt: int = 5
-
-    # ---- Patch 约束 ----
-    max_sections: int = 2
-    allow_full_rewrite: bool = False
-
-    # ---- 存储 ----
-    rollout_retention_days: int = 30
-    version_retention_count: int = 20
 
 
 __all__ = ["EvolutionConfig"]

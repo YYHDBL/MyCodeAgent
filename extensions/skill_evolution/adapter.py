@@ -63,7 +63,7 @@ def trace_events_to_rollout(
         summary_parts.append(f"skills:{','.join(skills)}")
 
     return RolloutRecord(
-        trace_id=session_id,
+        trace_id=persistent_run_id,
         persistent_run_id=persistent_run_id,
         input_fingerprint=fingerprint,
         skills_invoked=skills,

@@ -146,6 +146,7 @@ class RuntimeComponentFactory:
                 config=EvolutionConfig(enabled=True),
                 overlay_dir=overlay_dir,
                 on_skills_changed=lambda: host._refresh_skills_prompt(),
+                trace_logger=host.trace_logger,
             )
             host._skill_evolution_manager.load_state()
             host._skill_loader.set_overlay_dir(overlay_dir)

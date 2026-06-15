@@ -14,109 +14,101 @@ import json
 import shutil
 from pathlib import Path
 
-from extensions.skill_evolution.types import PatchOp, SkillState, SkillVersionMeta
+from extensions.skill_evolution.types import PatchOp, SkillVersionMeta
 from extensions.skill_evolution.patcher import apply_patch
 
 
 class SkillVersionStore:
-    def __init__(self, source_skill_path: Path, overlay_dir: Path):
-        self._source_skill_path = source_skill_path.resolve()
+    def __init__(self, source_skills_dir: Path, overlay_dir: Path):
+        self._source_skills_dir = source_skills_dir.resolve()
         self._overlay_dir = overlay_dir.resolve()
-        self._version_counter: int = 0
 
-    def _skill_name(self) -> str:
-        return self._source_skill_path.parent.name
+    def _source_skill_path(self, skill_name: str) -> Path:
+        return self._source_skills_dir / skill_name / "SKILL.md"
 
-    def _overlay_skill_path(self) -> Path:
-        return self._overlay_dir / self._skill_name() / "SKILL.md"
+    def _overlay_skill_path(self, skill_name: str) -> Path:
+        return self._overlay_dir / skill_name / "SKILL.md"
 
-    def _evolution_dir(self) -> Path:
-        return self._overlay_dir / self._skill_name() / ".evolution"
+    def _evolution_dir(self, skill_name: str) -> Path:
+        return self._overlay_dir / skill_name / ".evolution"
 
-    def _versions_dir(self) -> Path:
-        return self._evolution_dir() / "versions"
+    def _versions_dir(self, skill_name: str) -> Path:
+        return self._evolution_dir(skill_name) / "versions"
 
-    def _proposals_dir(self) -> Path:
-        return self._evolution_dir() / "proposals"
+    def _proposals_dir(self, skill_name: str) -> Path:
+        return self._evolution_dir(skill_name) / "proposals"
 
     # ------------------------------------------------------------------
     # 公开 API
     # ------------------------------------------------------------------
 
     def ensure_overlay_exists(self, skill_name: str) -> Path:
-        _ = skill_name
-        target = self._overlay_skill_path()
+        target = self._overlay_skill_path(skill_name)
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self._source_skill_path, target)
+            source = self._source_skill_path(skill_name)
+            if source.exists():
+                shutil.copy2(source, target)
         return target
 
     def snapshot_current(self, skill_name: str) -> str:
-        _ = skill_name
-        self._versions_dir().mkdir(parents=True, exist_ok=True)
-        ver = self._next_version()
-        src = self._overlay_skill_path()
-        dst = self._versions_dir() / f"{ver}.md"
+        self._versions_dir(skill_name).mkdir(parents=True, exist_ok=True)
+        ver = self._next_version(skill_name)
+        src = self._overlay_skill_path(skill_name)
+        dst = self._versions_dir(skill_name) / f"{ver}.md"
         if src.exists():
             shutil.copy2(src, dst)
         return ver
 
     def apply_patch(self, skill_name: str, patch: PatchOp) -> str:
-        _ = skill_name
         content = self.read_skill(skill_name)
         new_content = apply_patch(content, patch)
         if new_content is None:
             raise ValueError(f"Patch application failed for skill '{skill_name}'")
-        ver = self._next_version()
-        self._versions_dir().mkdir(parents=True, exist_ok=True)
-        self._overlay_skill_path().write_text(new_content, encoding="utf-8")
+        ver = self._next_version(skill_name)
+        self._versions_dir(skill_name).mkdir(parents=True, exist_ok=True)
+        self._overlay_skill_path(skill_name).write_text(new_content, encoding="utf-8")
         return ver
 
     def create_candidate(self, skill_name: str, content: str, version: str):
-        _ = skill_name, version
-        self._overlay_skill_path().write_text(content, encoding="utf-8")
+        self._overlay_skill_path(skill_name).write_text(content, encoding="utf-8")
 
     def apply_candidate_as_stable(self, skill_name: str, version: str):
-        _ = skill_name
-        ver = self._next_version()
-        self._versions_dir().mkdir(parents=True, exist_ok=True)
-        src = self._overlay_skill_path()
+        ver = self._next_version(skill_name)
+        self._versions_dir(skill_name).mkdir(parents=True, exist_ok=True)
+        src = self._overlay_skill_path(skill_name)
         if src.exists():
-            shutil.copy2(src, self._versions_dir() / f"{ver}.md")
+            shutil.copy2(src, self._versions_dir(skill_name) / f"{ver}.md")
         return ver
 
     def restore_version(self, skill_name: str, version: str):
-        _ = skill_name
-        src = self._versions_dir() / f"{version}.md"
+        src = self._versions_dir(skill_name) / f"{version}.md"
         if src.exists():
-            shutil.copy2(src, self._overlay_skill_path())
+            shutil.copy2(src, self._overlay_skill_path(skill_name))
 
     def get_current_version(self, skill_name: str) -> str:
-        _ = skill_name
-        versions = self._list_version_numbers()
+        versions = self._list_version_numbers(skill_name)
         return versions[-1] if versions else "v0"
 
     def read_skill(self, skill_name: str) -> str:
-        _ = skill_name
-        overlay = self._overlay_skill_path()
+        overlay = self._overlay_skill_path(skill_name)
         if overlay.exists():
             return overlay.read_text(encoding="utf-8")
-        if self._source_skill_path.exists():
-            return self._source_skill_path.read_text(encoding="utf-8")
+        source = self._source_skill_path(skill_name)
+        if source.exists():
+            return source.read_text(encoding="utf-8")
         raise FileNotFoundError(f"No SKILL.md for '{skill_name}'")
 
     def get_lkg_version(self, skill_name: str) -> str:
-        _ = skill_name
-        versions = self._list_version_numbers()
+        versions = self._list_version_numbers(skill_name)
         for v in reversed(versions):
             if not v.endswith("-candidate"):
                 return v
         return "v0"
 
     def list_versions(self, skill_name: str) -> list[SkillVersionMeta]:
-        _ = skill_name
         result: list[SkillVersionMeta] = []
-        ver_dir = self._versions_dir()
+        ver_dir = self._versions_dir(skill_name)
         if not ver_dir.exists():
             return result
         meta_path = ver_dir / "meta.json"
@@ -127,8 +119,7 @@ class SkillVersionStore:
         return sorted(result, key=lambda m: m.version)
 
     def save_metadata(self, skill_name: str, meta: SkillVersionMeta):
-        _ = skill_name
-        ver_dir = self._versions_dir()
+        ver_dir = self._versions_dir(skill_name)
         ver_dir.mkdir(parents=True, exist_ok=True)
         meta_path = ver_dir / "meta.json"
         items: list[dict] = []
@@ -138,7 +129,7 @@ class SkillVersionStore:
             "skill_id": meta.skill_id,
             "version": meta.version,
             "parent_version": meta.parent_version,
-            "state": meta.state.value,
+            "state": meta.state.value if hasattr(meta.state, 'value') else meta.state,
             "proposal_id": meta.proposal_id,
             "source_type": meta.source_type,
         })
@@ -148,8 +139,8 @@ class SkillVersionStore:
     # 内部
     # ------------------------------------------------------------------
 
-    def _list_version_numbers(self) -> list[str]:
-        ver_dir = self._versions_dir()
+    def _list_version_numbers(self, skill_name: str) -> list[str]:
+        ver_dir = self._versions_dir(skill_name)
         if not ver_dir.exists():
             return []
         nums: list[str] = []
@@ -159,8 +150,8 @@ class SkillVersionStore:
                 nums.append(stem)
         return sorted(nums, key=_parse_version_key)
 
-    def _next_version(self) -> str:
-        existing = self._list_version_numbers()
+    def _next_version(self, skill_name: str) -> str:
+        existing = self._list_version_numbers(skill_name)
         if not existing:
             return "v1"
         last = existing[-1]

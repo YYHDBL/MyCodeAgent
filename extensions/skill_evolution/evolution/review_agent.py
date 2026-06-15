@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from extensions.skill_evolution.types import (
     BatchReviewDecision,
@@ -133,9 +134,9 @@ class BatchReviewAgent:
 
     def _parse_response(self, response: str) -> dict:
         text = response.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1])
+        match = re.search(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
         return json.loads(text)
 
 
