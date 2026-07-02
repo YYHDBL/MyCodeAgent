@@ -176,3 +176,27 @@ def test_codeagent_traces_long_term_memory_loaded_without_leaking_entries(tmp_pa
     loaded = [event for event in trace.events if event[0] == "long_term_memory_loaded"]
     assert loaded
     assert "entries" not in loaded[-1][2]
+
+
+def test_codeagent_close_shuts_down_skill_evolution(tmp_path):
+    agent = CodeAgent(
+        name="code",
+        llm=_DummyLLM(),
+        tool_registry=ToolRegistry(),
+        project_root=str(tmp_path),
+        config=Config(),
+        enable_skills=False,
+        enable_mcp=False,
+        enable_tracing=False,
+    )
+    manager = type("Manager", (), {"shutdown_called": False})()
+
+    def shutdown():
+        manager.shutdown_called = True
+
+    manager.shutdown = shutdown
+    agent._skill_evolution_manager = manager
+
+    agent.close()
+
+    assert manager.shutdown_called is True

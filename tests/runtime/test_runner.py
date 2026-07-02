@@ -1242,6 +1242,24 @@ def test_runtime_runner_records_tool_lifecycle_and_checkpoints_in_transcript():
     assert checkpoint_payload["created_at"]
 
 
+def test_runtime_runner_notifies_host_when_context_compacts():
+    from runtime.loop import RuntimeRunner
+
+    host = _CompressingHost()
+    compacted = []
+
+    def on_context_compacted(info, messages):
+        compacted.append((info, messages))
+
+    host._on_context_compacted = on_context_compacted
+
+    RuntimeRunner(host).run("hello world", show_raw=False)
+
+    assert compacted
+    assert compacted[-1][0]["compacted"] is True
+    assert compacted[-1][1]
+
+
 def test_resume_restored_history_is_still_projected_by_context_engine(tmp_path):
     from runtime.transcript import ResumeLoader, TranscriptStore
 

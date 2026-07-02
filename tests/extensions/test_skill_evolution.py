@@ -41,6 +41,7 @@ from extensions.skill_evolution.store import SkillVersionStore
 from extensions.skill_evolution.evolution.buffer import AbnormalTrajectoryBuffer
 from extensions.skill_evolution.evolution.observer import CandidateObserver
 from extensions.skill_evolution.evolution.proposal_manager import ProposalManager
+from extensions.skill_evolution.evolution.curator import SkillEvolutionCurator
 from extensions.skills.loader import SkillLoader
 
 
@@ -669,6 +670,41 @@ class TestStateMachine:
         for i in range(3):
             mgr.on_run_finished(events, f"s-{chr(97+i)}", i, f"input-{i}")
         # should not raise
+
+    def test_lifecycle_hooks_emit_report_only_curator_events(self):
+        overlay = Path(tempfile.mkdtemp())
+        mgr = self._make_manager(overlay_dir=overlay)
+
+        mgr.on_session_switch("s-new", parent_session_id="s-old", reason="compression")
+        mgr.on_pre_compress([{"role": "user", "content": "old"}])
+        mgr.on_session_end([{"role": "assistant", "content": "done"}])
+        mgr.shutdown()
+
+        reports = sorted((overlay / ".evolution" / "reports").glob("*.json"))
+        payloads = [json.loads(path.read_text(encoding="utf-8")) for path in reports]
+        assert [p["event"] for p in payloads] == [
+            "session_switch",
+            "pre_compress",
+            "session_end",
+            "shutdown",
+        ]
+
+    def test_curator_report_includes_state_and_counts_without_mutating(self):
+        overlay = Path(tempfile.mkdtemp())
+        mgr = self._make_manager(overlay_dir=overlay)
+        mgr._states["code-review"] = EvolutionStateRecord(
+            skill_id="code-review",
+            state="paused",
+            consecutive_rejections=2,
+        )
+        mgr._buffer.append(_make_rollout(persistent_run_id="s-1:1", hard_error=True))
+
+        report = SkillEvolutionCurator(overlay).write_report("manual", mgr._states, mgr._buffer)
+
+        data = json.loads(report.read_text(encoding="utf-8"))
+        assert data["event"] == "manual"
+        assert data["skills"]["code-review"]["state"] == "paused"
+        assert data["skills"]["code-review"]["pending_abnormal_traces"] == 1
 
 
 # ============================================================================

@@ -309,6 +309,15 @@ class CodeAgent(Agent):
 
     def close(self):
         """关闭 Agent 并写入 trace 总结"""
+        manager = getattr(self, "_skill_evolution_manager", None)
+        if manager is not None:
+            try:
+                if hasattr(manager, "on_session_end"):
+                    manager.on_session_end(self._history_as_dicts())
+                if hasattr(manager, "shutdown"):
+                    manager.shutdown()
+            except Exception:
+                self.logger.warning("Skill Evolution shutdown failed", exc_info=True)
         if self.trace_logger:
             self.trace_logger.finalize()
             self.trace_logger = None
@@ -317,6 +326,16 @@ class CodeAgent(Agent):
                 client.close_sync()
             except Exception:
                 pass
+
+    def _history_as_dicts(self) -> list[dict]:
+        return [
+            {
+                "role": message.role,
+                "content": message.content,
+                "metadata": dict(message.metadata or {}),
+            }
+            for message in self.history_manager.get_messages()
+        ]
 
     # =========================================================================
     # ReAct Core（Message List 自然累积模式）
@@ -412,6 +431,7 @@ class CodeAgent(Agent):
 
     def load_transcript(self, path: str, *, run_id: str) -> ResumeState:
         """从 transcript 恢复恢复事实，不恢复执行中的线程或进程。"""
+        previous_session_id = self.transcript_store.session_id
         session_id = TranscriptStore.infer_session_id(path) or self.transcript_store.session_id
         store = TranscriptStore(path, session_id=session_id)
         resume = ResumeLoader(store).load(run_id=run_id)
@@ -420,7 +440,36 @@ class CodeAgent(Agent):
         resume.apply_to_host(self)
         self.resume_state = resume
         self.session_memory = resume.session_memory
+        manager = getattr(self, "_skill_evolution_manager", None)
+        if manager is not None:
+            try:
+                manager.on_session_switch(
+                    session_id,
+                    parent_session_id=previous_session_id,
+                    reason="transcript_resume",
+                )
+            except Exception:
+                self.logger.warning("Skill Evolution session switch failed", exc_info=True)
         return resume
+
+    def _on_context_compacted(self, info: dict, messages: list) -> None:
+        manager = getattr(self, "_skill_evolution_manager", None)
+        if manager is None:
+            return
+        try:
+            manager.on_context_compacted(
+                info,
+                [
+                    {
+                        "role": getattr(message, "role", ""),
+                        "content": getattr(message, "content", ""),
+                        "metadata": dict(getattr(message, "metadata", {}) or {}),
+                    }
+                    for message in messages
+                ],
+            )
+        except Exception:
+            self.logger.warning("Skill Evolution context compaction hook failed", exc_info=True)
 
     def _print_context_preview(
         self,

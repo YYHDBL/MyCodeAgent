@@ -157,6 +157,15 @@ class RuntimeRunner:
             },
         )
 
+    def _notify_context_compacted(self, compact_info: dict[str, Any]) -> None:
+        callback = getattr(self.host, "_on_context_compacted", None)
+        if not callback:
+            return
+        try:
+            callback(compact_info, self.host.history_manager.get_messages())
+        except Exception:
+            self.host.logger.warning("Context compaction lifecycle hook failed", exc_info=True)
+
     def _record_transcript_terminal(self, *, reason: str, step: int, details: dict[str, Any]) -> None:
         recorder = self._get_transcript_recorder()
         if recorder is None:
@@ -487,6 +496,7 @@ class RuntimeRunner:
                             trace_logger=trace_logger,
                         )
                         if compact_info.get("compacted"):
+                            self._notify_context_compacted(compact_info)
                             self._record_active_transcript_checkpoint(step=step)
                             state = self._transition(
                                 state,
@@ -1091,6 +1101,7 @@ class RuntimeRunner:
             trace_logger=trace_logger,
         )
         if compact_info.get("compacted"):
+            self._notify_context_compacted(compact_info)
             self._record_active_transcript_checkpoint(step=step)
             state = self._transition(
                 state,

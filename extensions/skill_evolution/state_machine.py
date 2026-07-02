@@ -27,6 +27,7 @@ from extensions.skill_evolution.store import SkillVersionStore
 from extensions.skill_evolution.validator import validate_proposal
 from extensions.skill_evolution.patcher import apply_patch
 from extensions.skill_evolution.evolution.buffer import AbnormalTrajectoryBuffer
+from extensions.skill_evolution.evolution.curator import SkillEvolutionCurator
 from extensions.skill_evolution.evolution.observer import CandidateObserver
 from extensions.skill_evolution.evolution.proposal_manager import ProposalManager
 from extensions.skill_evolution.evolution.success_store import RecentSuccessStore
@@ -61,6 +62,7 @@ class SkillEvolutionManager:
         self._hotfix_gen = HotfixGenerator(llm)
         self._review_agent = BatchReviewAgent(llm)
         self._buffer = AbnormalTrajectoryBuffer(self._overlay_dir)
+        self._curator = SkillEvolutionCurator(self._overlay_dir)
         self._router = FeedbackRouter()
 
         project_root = getattr(skill_loader, "_project_root", Path("."))
@@ -176,6 +178,55 @@ class SkillEvolutionManager:
             self._handle_normal(rollout, skill_name, state)
 
         self.save_state()
+
+    # ------------------------------------------------------------------
+    # Lifecycle hooks
+    # ------------------------------------------------------------------
+
+    def on_session_switch(
+        self,
+        new_session_id: str,
+        *,
+        parent_session_id: str = "",
+        reason: str = "",
+    ) -> None:
+        if not self._config.enabled:
+            return
+        self._write_curator_report(
+            "session_switch",
+            {
+                "new_session_id": new_session_id,
+                "parent_session_id": parent_session_id,
+                "reason": reason,
+            },
+        )
+
+    def on_pre_compress(self, messages: list[dict]) -> None:
+        if not self._config.enabled:
+            return
+        self._write_curator_report("pre_compress", {"message_count": len(messages or [])})
+
+    def on_context_compacted(self, info: dict, messages: list[dict]) -> None:
+        if not self._config.enabled:
+            return
+        self._write_curator_report(
+            "context_compacted",
+            {
+                "message_count": len(messages or []),
+                "checkpoint_id": info.get("checkpoint_id"),
+                "messages_compacted": info.get("messages_compacted"),
+            },
+        )
+
+    def on_session_end(self, messages: list[dict]) -> None:
+        if not self._config.enabled:
+            return
+        self._write_curator_report("session_end", {"message_count": len(messages or [])})
+
+    def shutdown(self) -> None:
+        if not self._config.enabled:
+            return
+        self._write_curator_report("shutdown", {})
 
     # ------------------------------------------------------------------
     # Hotfix
@@ -463,6 +514,12 @@ class SkillEvolutionManager:
                 self._on_skills_changed()
             except Exception:
                 logger.warning("on_skills_changed callback failed", exc_info=True)
+
+    def _write_curator_report(self, event: str, details: dict):
+        try:
+            self._curator.write_report(event, self._states, self._buffer, details=details)
+        except Exception:
+            logger.debug("Skill Evolution curator report failed", exc_info=True)
 
     def _emit_trace(self, event_type: str, skill_id: str, details: dict):
         try:
