@@ -113,7 +113,7 @@ class ProposalManager:
                 result.append(Proposal(**obj))
             except Exception:
                 continue
-        return result[-n:]
+        return result[:n]
 
     def is_duplicate(self, proposal: Proposal) -> bool:
         fingerprint = (proposal.error_signature, proposal.target_section, proposal.patch.patch_type)
@@ -151,7 +151,9 @@ class ProposalManager:
             "rejection_reason": proposal.rejection_reason,
             "failure_trace_ids": proposal.failure_trace_ids,
         }
-        self._path(proposal.proposal_id).write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path = self._path(proposal.proposal_id).with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        tmp_path.replace(self._path(proposal.proposal_id))
 
     def _append_rejected(self, proposal: Proposal):
         data = {

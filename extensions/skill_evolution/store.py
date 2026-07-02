@@ -66,7 +66,9 @@ class SkillVersionStore:
         if new_content is None:
             raise ValueError(f"Patch application failed for skill '{skill_name}'")
         ver = self._next_version(skill_name)
-        self._versions_dir(skill_name).mkdir(parents=True, exist_ok=True)
+        ver_dir = self._versions_dir(skill_name)
+        ver_dir.mkdir(parents=True, exist_ok=True)
+        (ver_dir / f"{ver}.md").write_text(new_content, encoding="utf-8")
         self._overlay_skill_path(skill_name).write_text(new_content, encoding="utf-8")
         return ver
 
@@ -74,17 +76,32 @@ class SkillVersionStore:
         self._overlay_skill_path(skill_name).write_text(content, encoding="utf-8")
 
     def apply_candidate_as_stable(self, skill_name: str, version: str):
+        src = self._overlay_skill_path(skill_name)
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Cannot promote candidate for skill '{skill_name}': "
+                f"overlay file does not exist. The candidate may have been removed externally."
+            )
         ver = self._next_version(skill_name)
         self._versions_dir(skill_name).mkdir(parents=True, exist_ok=True)
-        src = self._overlay_skill_path(skill_name)
-        if src.exists():
-            shutil.copy2(src, self._versions_dir(skill_name) / f"{ver}.md")
+        shutil.copy2(src, self._versions_dir(skill_name) / f"{ver}.md")
         return ver
 
     def restore_version(self, skill_name: str, version: str):
+        if version == "v0":
+            source = self._source_skill_path(skill_name)
+            if not source.exists():
+                raise FileNotFoundError(f"Source SKILL.md not found for '{skill_name}'")
+            self._overlay_skill_path(skill_name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, self._overlay_skill_path(skill_name))
+            return
         src = self._versions_dir(skill_name) / f"{version}.md"
-        if src.exists():
-            shutil.copy2(src, self._overlay_skill_path(skill_name))
+        if not src.exists():
+            raise FileNotFoundError(
+                f"Version '{version}' not found for skill '{skill_name}'. "
+                f"Cannot restore to a version that was never snapshotted."
+            )
+        shutil.copy2(src, self._overlay_skill_path(skill_name))
 
     def get_current_version(self, skill_name: str) -> str:
         versions = self._list_version_numbers(skill_name)

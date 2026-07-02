@@ -82,14 +82,21 @@ class SkillEvolutionManager:
 
         data = json.loads(path.read_text())
         for skill_name, raw in data.get("skills", {}).items():
-            record = EvolutionStateRecord(**raw)
+            try:
+                record = EvolutionStateRecord(**raw)
+            except (TypeError, ValueError) as e:
+                logger.warning(
+                    "Skipping corrupted state record for skill '%s': %s", skill_name, e
+                )
+                continue
+            record.state = _normalize_state(record.state)
 
             overlay_skill = self._overlay_dir / skill_name / "SKILL.md"
-            if record.state == "EVALUATING" and not overlay_skill.exists():
+            if record.state == "evaluating" and not overlay_skill.exists():
                 record.state = "stable"
                 record.active_proposal_id = None
 
-            if record.state == "EVALUATING" and record.active_proposal_id:
+            if record.state == "evaluating" and record.active_proposal_id:
                 pm = self._get_proposal_manager(skill_name)
                 proposal = pm.load(record.active_proposal_id)
                 if proposal:
@@ -181,7 +188,15 @@ class SkillEvolutionManager:
         if proposal is None:
             return
 
-        if state.state == "EVALUATING":
+        if not validate_proposal(proposal, current_skill):
+            self._emit_trace("hotfix_validation_failed", skill_name, {
+                "reason": "proposal validation failed",
+                "patch_type": proposal.patch.patch_type,
+                "target_section": proposal.patch.target_section,
+            })
+            return
+
+        if state.state == "evaluating":
             self._abort_candidate(skill_name)
 
         self._store.ensure_overlay_exists(skill_name)
@@ -212,7 +227,7 @@ class SkillEvolutionManager:
     # ------------------------------------------------------------------
 
     def _handle_abnormal(self, rollout: RolloutRecord, skill_name: str, state: EvolutionStateRecord):
-        if state.state == "EVALUATING":
+        if state.state == "evaluating":
             observer = self._get_observer(skill_name)
             pm = self._get_proposal_manager(skill_name)
             active_proposal = pm.get_active()
@@ -267,8 +282,8 @@ class SkillEvolutionManager:
                     new_content = apply_patch(current_skill, proposal.patch)
                     if new_content is None:
                         return
-                    self._store.snapshot_current(skill_name)
-                    ver = f"{self._store.get_current_version(skill_name)}-candidate"
+                    lkg_ver = self._store.snapshot_current(skill_name)
+                    ver = f"{lkg_ver}-candidate"
                     self._store.create_candidate(skill_name, new_content, ver)
 
                     pm.stage(proposal.proposal_id)
@@ -280,7 +295,8 @@ class SkillEvolutionManager:
                     self._skill_loader.set_overlay_dir(self._overlay_dir)
                     self._notify_skills_changed()
 
-                    state.state = "EVALUATING"
+                    state.state = "evaluating"
+                    state.lkg_version = lkg_ver
                     state.active_proposal_id = proposal.proposal_id
                     state.current_version = ver
 
@@ -295,7 +311,7 @@ class SkillEvolutionManager:
     # ------------------------------------------------------------------
 
     def _handle_normal(self, rollout: RolloutRecord, skill_name: str, state: EvolutionStateRecord):
-        if state.state == "EVALUATING":
+        if state.state == "evaluating":
             observer = self._get_observer(skill_name)
             pm = self._get_proposal_manager(skill_name)
             active_proposal = pm.get_active()
@@ -326,7 +342,14 @@ class SkillEvolutionManager:
     def _promote(self, skill_name: str):
         state = self._states[skill_name]
         pm = self._get_proposal_manager(skill_name)
-        ver = self._store.apply_candidate_as_stable(skill_name, state.current_version)
+        try:
+            ver = self._store.apply_candidate_as_stable(skill_name, state.current_version)
+        except FileNotFoundError:
+            logger.warning(
+                "Promote failed for skill '%s': overlay not found. Aborting candidate.", skill_name
+            )
+            self._abort_candidate(skill_name)
+            return
         pm.accept(state.active_proposal_id)
 
         proposal = pm.load(state.active_proposal_id)
@@ -348,7 +371,16 @@ class SkillEvolutionManager:
     def _rollback(self, skill_name: str, reason: str, failure_run_id: str | None = None):
         state = self._states[skill_name]
         pm = self._get_proposal_manager(skill_name)
-        self._store.restore_version(skill_name, state.lkg_version)
+        try:
+            self._store.restore_version(skill_name, state.lkg_version)
+        except FileNotFoundError:
+            logger.warning(
+                "Rollback failed for skill '%s': LKG version '%s' not found. Falling back to v0.",
+                skill_name, state.lkg_version,
+            )
+            state.lkg_version = "v0"
+            state.current_version = "v0"
+            self._store.restore_version(skill_name, "v0")
 
         failure_ids: list[str] = []
         if failure_run_id and reason not in ("EXPIRED",):
@@ -367,7 +399,7 @@ class SkillEvolutionManager:
         state.consecutive_rejections += 1
 
         if state.consecutive_rejections >= self._config.max_consecutive_rejections:
-            state.state = "PAUSED"
+            state.state = "paused"
 
         self._skill_loader.set_overlay_dir(self._overlay_dir)
         self._notify_skills_changed()
@@ -378,7 +410,15 @@ class SkillEvolutionManager:
     def _abort_candidate(self, skill_name: str):
         state = self._states[skill_name]
         pm = self._get_proposal_manager(skill_name)
-        self._store.restore_version(skill_name, state.lkg_version)
+        try:
+            self._store.restore_version(skill_name, state.lkg_version)
+        except FileNotFoundError:
+            logger.warning(
+                "Abort candidate failed for skill '%s': LKG version '%s' not found. Falling back to v0.",
+                skill_name, state.lkg_version,
+            )
+            state.lkg_version = "v0"
+            state.current_version = "v0"
         pm.supersede(state.active_proposal_id)
 
         state.state = "stable"
@@ -438,3 +478,10 @@ class SkillEvolutionManager:
 
 
 __all__ = ["SkillEvolutionManager"]
+
+
+def _normalize_state(raw: str) -> str:
+    """将历史上可能使用的大写/混合 case 的状态字符串归一化为小写。"""
+    normalized = raw.strip().lower()
+    valid = {"stable", "evaluating", "cooldown", "paused"}
+    return normalized if normalized in valid else "stable"

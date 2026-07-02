@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from extensions.skills import SkillLoader
 from runtime.context import ContextEngine
 from runtime.history import HistoryManager
 from runtime.loop import RuntimeRunner
@@ -55,7 +54,11 @@ class RuntimeComponentFactory:
             host.long_term_memory_snapshot = host.long_term_memory_store.load()
 
         host._skills_prompt = ""
-        host._skill_loader = SkillLoader(host.project_root) if host.enable_skills else None
+        if host.enable_skills:
+            from extensions.skills import SkillLoader
+            host._skill_loader = SkillLoader(host.project_root)
+        else:
+            host._skill_loader = None
         host._refresh_skills_prompt()
         host._register_builtin_tools()
 

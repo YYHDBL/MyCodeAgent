@@ -17,49 +17,9 @@ from extensions.skill_evolution.types import (
     ReviewResult,
     RolloutRecord,
 )
+from extensions.skill_evolution.templates.review_prompt import REVIEW_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
-
-REVIEW_SYSTEM_PROMPT = """\
-You are reviewing multiple execution trajectories to decide whether a skill requires a localized update.
-
-## Default Decision
-
-The default decision is NO_UPDATE. Do NOT create a patch merely because a batch is available.
-A valid review result is often NO_UPDATE.
-
-## Do NOT create a patch for:
-
-- Isolated failures (only one task affected).
-- Temporary environment issues (network, disk, API rate limits).
-- Task-specific identifiers (file names, URLs, user names).
-- Stylistic improvements with no behavioral impact.
-- Behavior already clearly covered by the current skill.
-- Issues that should be fixed in tool implementations or runtime code, not skills.
-
-## A patch MAY be proposed when:
-
-- Multiple DISTINCT runs (different inputs, different tasks) exhibit the same problem.
-- The current skill LACKS relevant guidance for the observed failure.
-- The proposed rule can GENERALIZE across future similar tasks.
-- The expected behavior CAN BE OBSERVED in later rollouts.
-
-## Patch Constraints
-
-- Modify at most ONE or TWO local sections.
-- Prefer REPLACE over APPEND. Do not rewrite the full skill.
-- Include: problem, reason, target_section, old_text (for replace), new_text, expected_behavior, error_signature.
-- error_signature should be a short snake_case identifier for the target problem (e.g., RETRY_WITHOUT_STATE_REFRESH).
-- Do NOT repeat previously rejected proposal directions (see Rejected Proposals section).
-
-## Output Format
-
-Return EXACTLY a JSON object with NO markdown wrappers, NO explanatory text outside the JSON.
-
-For NO_UPDATE:   {"decision": "NO_UPDATE", "reasoning": "..."}
-For KEEP_COLLECTING: {"decision": "KEEP_COLLECTING", "reasoning": "..."}
-For PROPOSE_PATCH: {"decision": "PROPOSE_PATCH", "problem": "...", "reason": "...", "target_section": "...", "patch_type": "replace|insert_after|append", "old_text": "...", "new_text": "...", "expected_behavior": "...", "error_signature": "...", "risk_level": "low|medium|high"}
-"""
 
 
 class BatchReviewAgent:
@@ -75,9 +35,24 @@ class BatchReviewAgent:
     ) -> ReviewResult:
         try:
             prompt = self._build_prompt(current_skill, abnormal_rollouts, success_summaries, rejected_proposals)
-            response = self._llm.invoke(prompt)
+            response = self._llm.invoke([
+                {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ])
             parsed = self._parse_response(response)
-            decision = BatchReviewDecision(parsed["decision"])
+            raw_decision = str(parsed.get("decision", "")).lower().strip()
+            valid_decisions = {d.value for d in BatchReviewDecision}
+            if raw_decision not in valid_decisions:
+                logger.warning(
+                    "BatchReviewAgent received unexpected decision '%s', falling back to NO_UPDATE. "
+                    "Raw LLM output: %.200s",
+                    raw_decision, response[:200],
+                )
+                return ReviewResult(
+                    decision=BatchReviewDecision.NO_UPDATE,
+                    reasoning=f"Unexpected decision value: {parsed.get('decision', '')!r}",
+                )
+            decision = BatchReviewDecision(raw_decision)
             if decision == BatchReviewDecision.PROPOSE_PATCH:
                 proposal = Proposal(
                     proposal_id="",

@@ -51,7 +51,10 @@ class HotfixGenerator:
     ) -> Proposal | None:
         prompt = self._build_prompt(current_skill_content, user_instruction, rollout)
         try:
-            response = self._llm.invoke(prompt)
+            response = self._llm.invoke([
+                {"role": "system", "content": HOTFIX_GENERATOR_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ])
         except Exception:
             logger.warning("HotfixGenerator LLM invoke failed", exc_info=True)
             return None

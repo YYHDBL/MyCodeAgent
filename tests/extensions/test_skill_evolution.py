@@ -621,6 +621,41 @@ class TestStateMachine:
         assert mgr._states["skill-a"].state == "PAUSED"
         assert mgr._states["skill-b"].state == "stable"
 
+    def test_rollback_missing_lkg_restores_source_v0(self):
+        from extensions.skill_evolution.state_machine import SkillEvolutionManager
+
+        root = Path(tempfile.mkdtemp())
+        skill_dir = root / "skills" / "code-review"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(SAMPLE_SKILL, encoding="utf-8")
+
+        overlay = root / "memory" / "skill_evolution" / "active"
+        overlay_skill = overlay / "code-review" / "SKILL.md"
+        overlay_skill.parent.mkdir(parents=True)
+        overlay_skill.write_text(SAMPLE_SKILL.replace("Report findings", "BROKEN CANDIDATE"), encoding="utf-8")
+
+        mock_loader = MagicMock()
+        mock_loader._project_root = root
+        mock_loader.set_overlay_dir = MagicMock()
+        mgr = SkillEvolutionManager(
+            skill_loader=mock_loader,
+            llm=MagicMock(),
+            config=EvolutionConfig(enabled=True),
+            overlay_dir=overlay,
+        )
+        mgr._states["code-review"] = EvolutionStateRecord(
+            skill_id="code-review",
+            state="evaluating",
+            active_proposal_id="P-missing",
+            lkg_version="missing",
+            current_version="missing-candidate",
+        )
+
+        mgr._rollback("code-review", "HARD_FAILURE")
+
+        assert overlay_skill.read_text(encoding="utf-8") == SAMPLE_SKILL
+        assert mgr._states["code-review"].current_version == "v0"
+
     def test_review_llm_exception_isolated(self):
         overlay = Path(tempfile.mkdtemp())
         mock_llm = MagicMock()

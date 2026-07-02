@@ -10,7 +10,7 @@ from extensions.skill_evolution.types import FeedbackRoute, RolloutRecord
 
 class FeedbackRouter:
     def route(self, rollout: RolloutRecord) -> FeedbackRoute:
-        if rollout.is_long_term_instruction:
+        if rollout.is_long_term_instruction or rollout.is_explicit_correction:
             return FeedbackRoute.USER_HOTFIX_CANDIDATE
 
         if rollout.attributing_skill is None:

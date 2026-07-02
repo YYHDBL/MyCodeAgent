@@ -372,7 +372,8 @@ class RuntimeRunner:
                     host.logger.debug("另有 %d 个文件被省略", preprocess_result.truncated_count)
 
         trace_logger = host.trace_logger
-        trace_logger.clear_current_run_events()
+        if hasattr(trace_logger, "clear_current_run_events"):
+            trace_logger.clear_current_run_events()
         host._run_id += 1
         run_id = host._run_id
         host._active_transcript_run_id = f"run-{run_id}"

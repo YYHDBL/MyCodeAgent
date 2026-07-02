@@ -37,14 +37,11 @@ from tools.builtin.skill import SkillTool
 from tools.builtin.bash import BashTool
 from tools.builtin.ask_user import AskUserTool
 from tools.builtin.task import TaskTool
-from extensions.mcp.bootstrap import register_mcp_servers
-from extensions.mcp.prompt import format_mcp_tools_prompt
-from extensions.skills.prompt import format_skills_for_prompt
-from extensions.tracing import NullTraceLogger, create_trace_logger
 from tools.executor import ToolExecutor
 from tools.orchestrator import ToolOrchestrator
 from tools.context import ToolExecutionContext
 from tools.permissions import PermissionContext, RiskClassifier
+from extensions.tracing import NullTraceLogger, create_trace_logger
 from utils import setup_logger
 from runtime.factory import RuntimeComponentFactory
 from runtime.loop import RuntimeRunner
@@ -55,6 +52,15 @@ def resolve_teammate_mode(requested_mode: Optional[str]):
     from experimental.teams.display_mode import resolve_teammate_mode as _resolve_teammate_mode
 
     return _resolve_teammate_mode(requested_mode)
+
+
+def _get_response_attr(obj, key: str):
+    """Safely get attribute from dict or object (OpenAI response)."""
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
 
 
 class CodeAgent(Agent):
@@ -273,11 +279,14 @@ class CodeAgent(Agent):
         elif not self._skills_prompt:
             self._skill_loader.scan()
         budget = int(os.getenv("SKILLS_PROMPT_CHAR_BUDGET", "12000"))
+        from extensions.skills.prompt import format_skills_for_prompt
         self._skills_prompt = format_skills_for_prompt(self._skill_loader.list_skills(refresh=False), budget)
 
     def _register_mcp_tools(self) -> None:
         """可选：注册 MCP 工具（基于 MCP_SERVERS 配置）"""
         try:
+            from extensions.mcp.bootstrap import register_mcp_servers
+            from extensions.mcp.prompt import format_mcp_tools_prompt
             clients, tools_meta = register_mcp_servers(self.tool_registry, self.project_root)
             self._mcp_clients = clients
             self._mcp_tools_prompt = format_mcp_tools_prompt(tools_meta)
@@ -633,23 +642,16 @@ class CodeAgent(Agent):
 
     @staticmethod
     def _extract_reasoning_content(raw_response: Any) -> Optional[str]:
-        def _get_attr(obj, key: str):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return obj.get(key)
-            return getattr(obj, key, None)
-
         try:
-            choices = _get_attr(raw_response, "choices")
+            choices = _get_response_attr(raw_response, "choices")
             if not choices:
                 return None
             choice = choices[0]
-            message = _get_attr(choice, "message")
+            message = _get_response_attr(choice, "message")
             if not message:
                 return None
 
-            reasoning = _get_attr(message, "reasoning_content") or _get_attr(message, "reasoning")
+            reasoning = _get_response_attr(message, "reasoning_content") or _get_response_attr(message, "reasoning")
             if reasoning:
                 return reasoning
 
@@ -691,29 +693,22 @@ class CodeAgent(Agent):
         """
         从原始响应中提取 tool_calls，统一成 {id,name,arguments} 列表。
         """
-        def _get_attr(obj, key: str):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return obj.get(key)
-            return getattr(obj, key, None)
-
         try:
-            choices = _get_attr(raw_response, "choices")
+            choices = _get_response_attr(raw_response, "choices")
             if not choices:
                 return []
             choice = choices[0]
-            message = _get_attr(choice, "message")
+            message = _get_response_attr(choice, "message")
             if not message:
                 return []
-            tool_calls = _get_attr(message, "tool_calls") or []
+            tool_calls = _get_response_attr(message, "tool_calls") or []
             calls: list[dict[str, Any]] = []
             if tool_calls:
                 for call in tool_calls:
-                    fn = _get_attr(call, "function") or {}
-                    name = _get_attr(fn, "name") or _get_attr(call, "name") or "unknown_tool"
-                    arguments = _get_attr(fn, "arguments") or _get_attr(call, "arguments") or {}
-                    call_id = _get_attr(call, "id")
+                    fn = _get_response_attr(call, "function") or {}
+                    name = _get_response_attr(fn, "name") or _get_response_attr(call, "name") or "unknown_tool"
+                    arguments = _get_response_attr(fn, "arguments") or _get_response_attr(call, "arguments") or {}
+                    call_id = _get_response_attr(call, "id")
                     calls.append({
                         "id": call_id,
                         "name": name,
@@ -722,10 +717,10 @@ class CodeAgent(Agent):
                 return calls
 
             # 兼容旧 function_call
-            function_call = _get_attr(message, "function_call")
+            function_call = _get_response_attr(message, "function_call")
             if function_call:
-                name = _get_attr(function_call, "name") or "unknown_tool"
-                arguments = _get_attr(function_call, "arguments") or {}
+                name = _get_response_attr(function_call, "name") or "unknown_tool"
+                arguments = _get_response_attr(function_call, "arguments") or {}
                 return [{"id": None, "name": name, "arguments": arguments}]
         except Exception:
             return []
@@ -735,30 +730,23 @@ class CodeAgent(Agent):
     @staticmethod
     def _extract_response_meta(raw_response: Any) -> dict:
         """提取响应元信息，辅助定位空响应原因"""
-        def _get_attr(obj, key: str):
-            if obj is None:
-                return None
-            if isinstance(obj, dict):
-                return obj.get(key)
-            return getattr(obj, key, None)
-
         meta: dict = {}
         try:
-            choices = _get_attr(raw_response, "choices") or []
+            choices = _get_response_attr(raw_response, "choices") or []
             if not choices:
                 return meta
             choice = choices[0]
-            meta["finish_reason"] = _get_attr(choice, "finish_reason")
-            message = _get_attr(choice, "message")
+            meta["finish_reason"] = _get_response_attr(choice, "finish_reason")
+            message = _get_response_attr(choice, "message")
             if not message:
                 return meta
-            meta["role"] = _get_attr(message, "role")
+            meta["role"] = _get_response_attr(message, "role")
 
-            content = _get_attr(message, "content")
-            reasoning_content = _get_attr(message, "reasoning_content") or _get_attr(message, "reasoning")
-            refusal = _get_attr(message, "refusal")
-            tool_calls = _get_attr(message, "tool_calls")
-            function_call = _get_attr(message, "function_call")
+            content = _get_response_attr(message, "content")
+            reasoning_content = _get_response_attr(message, "reasoning_content") or _get_response_attr(message, "reasoning")
+            refusal = _get_response_attr(message, "refusal")
+            tool_calls = _get_response_attr(message, "tool_calls")
+            function_call = _get_response_attr(message, "function_call")
 
             meta["content_len"] = len(str(content)) if content is not None else 0
             meta["reasoning_len"] = len(str(reasoning_content)) if reasoning_content is not None else 0
