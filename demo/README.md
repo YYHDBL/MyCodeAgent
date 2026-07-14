@@ -14,7 +14,7 @@
 .venv/bin/python demo/harness_portfolio.py agent-loop
 .venv/bin/python demo/harness_portfolio.py tool-harness
 .venv/bin/python demo/harness_portfolio.py context-engineering
-.venv/bin/python demo/harness_portfolio.py memory-subagent
+.venv/bin/python demo/harness_portfolio.py recovery-subagent
 ```
 
 保存输出：
@@ -39,10 +39,10 @@
 
 | Demo | 观察重点 | 已提交样例 |
 |---|---|---|
-| `agent-loop` | final candidate 被 Completion Gate 阻塞并有限终止 | [`agent-loop.json`](../docs/traces/agent-loop.json) |
-| `tool-harness` | 只读并发批次、原顺序 observation、Write 权限拒绝 | [`tool-harness.json`](../docs/traces/tool-harness.json) |
-| `context-engineering` | compact checkpoint 与 `compact_checkpoint` Model View | [`context-engineering.json`](../docs/traces/context-engineering.json) |
-| `memory-subagent` | uncertain resume、Session/Long-term 注入、child 隔离 | [`memory-subagent.json`](../docs/traces/memory-subagent.json) |
+| `agent-loop` | final candidate 被 Completion Gate 阻塞并有限终止 | [historical sample](../docs/archives/legacy-harness/traces/agent-loop.json) |
+| `tool-harness` | 只读并发批次、原顺序 observation、Edit 权限拒绝 | [historical sample](../docs/archives/legacy-harness/traces/tool-harness.json) |
+| `context-engineering` | compact checkpoint 与 `compact_checkpoint` Model View | [historical sample](../docs/archives/legacy-harness/traces/context-engineering.json) |
+| `recovery-subagent` | uncertain transcript resume、transcript-derived session state、child isolation | [historical sample](../docs/archives/legacy-harness/traces/memory-subagent.json) |
 
 回归测试：
 

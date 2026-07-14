@@ -1,139 +1,75 @@
-# Harness Architecture
+# Harness architecture
 
-本文档描述 MyCodeAgent 当前有效架构。面试入口见 [README](../README.md)，四个重点模块的问答材料见 [portfolio](portfolio/)。
-
-## 1. 正式调用链
-
-```text
-main.py
-  -> app.cli
-  -> runtime.host.CodeAgent
-  -> RuntimeRunner.run()
-  -> ContextEngine.build_model_view()
-  -> LLM
-  -> ToolOrchestrator.run()
-  -> HistoryManager + TranscriptRecorder
-  -> Completion Gate
-  -> terminal / next transition
-```
-
-不变量：
-
-- `runtime/loop.py` 是正式单 Agent 唯一循环。
-- `CodeAgent` 负责依赖装配，不维护第二套循环。
-- Explore / Verification 子 Agent 通过隔离 host 复用 `RuntimeRunner`。
-- 正式 `Task` 路径不依赖 `experimental/teams/`。
-
-## 2. Runtime Control
-
-`LoopState`、`TransitionReason` 和 `TerminalReason` 让继续、恢复和结束路径可观察。模型 final text 先变成 `CompletionCandidate`，再由 Completion Gate 检查 Todo 和真实工具验证证据。
-
-模型/API 错误按阶段分类。空响应和 prompt-too-long 等可恢复路径有独立次数上限；无法恢复时进入明确 terminal，不无限反思。
-
-详见：
-
-- [Agent Loop 与 Completion Gate](portfolio/AGENT_LOOP.md)
-- [Completion Gate 协议](HARNESS_COMPLETION_GATE.md)
-
-## 3. Tool Harness
+MyCodeAgent is one local coding-agent runtime, not a team framework. Its
+current execution flow is:
 
 ```text
-model tool calls
-  -> parse / plan
-  -> Permission Core
-  -> safe batch partition
-  -> serial or concurrent execution
-  -> ordered observations
-  -> single-tool / aggregate result budget
+CLI → selected project root + Config → CodeAgent composition
+    → RuntimeRunner → bounded ModelView → OpenAI-compatible model
+    → authorize/execute tools → runtime events → transcript + JSONL trace
+    → completion gate → terminal outcome or next turn
 ```
 
-当前规则：
+`RuntimeRunner` is the sole stable loop. `CodeAgent` wires its dependencies;
+it does not own a second control flow. The event boundary emits lifecycle,
+transition, tool, checkpoint, and terminal facts once, then the transcript and
+trace sinks project those facts for their respective uses.
 
-- `Read`、`Grep`、`Glob`、`ListFiles` 可组成连续并发批次。
-- 写入、Bash、Task、Skill、Todo 等保持串行。
-- 并发完成顺序不影响 observation 的模型调用顺序。
-- 未知工具、参数解析失败和无法判断的权限默认关闭。
-- Permission Core 是策略路由，不是 OS 级安全沙箱。
-- 超预算完整输出落盘，Model View 只接收稳定替换结果。
+## Project and tool boundary
 
-详见 [Tool Harness、权限与编排](portfolio/TOOL_HARNESS.md)。
+The CLI resolves the invocation directory as the project by default, or a
+valid `--cwd` target when supplied. Sessions, transcripts, traces, tool output
+artifacts, filesystem actions, and Bash all use that boundary.
 
-## 4. Context Engineering
+The stable model-visible tools are `Bash`, `Edit`, `Glob`, `Grep`, `Read`,
+`Task`, and `TodoWrite`. `FileWorkspace` protects `Read`, `Edit`, `Glob`, and
+`Grep` from absolute, traversal, and symlink escapes. `Edit` is the sole
+mutation surface: it requires a fresh Read snapshot and atomically replaces a
+file only if that snapshot still matches. `Glob` lists or finds paths; `Grep`
+searches content. Full oversized results are retained in an artifact and the
+model receives a bounded recoverable observation.
 
-```text
-Prompt Assembly stable layers
-HistoryManager full history
-Session / Long-term Memory dynamic layers
-  -> ContextBudgetPolicy
-  -> CompactCheckpoint
-  -> ProjectionBuilder
-  -> MessageNormalizer
-  -> ModelView
-```
+Permission policy is an execution gate, not an OS sandbox. Unknown,
+invalid, or unsafe requests fail closed. Read-only calls may be batched only
+where the orchestrator has explicitly classified them safe; side-effecting
+calls remain ordered.
 
-关键边界：
+## Context and recovery
 
-- Compact 创建 checkpoint，不修改或删除完整 history。
-- Summary 失败时保留原消息和上一份有效状态。
-- `ProjectionBuilder` 在读时生成 `summary + recent history`。
-- Session Memory 和 Long-term Memory 作为有预算的动态 system message 注入，不改变稳定 prompt fingerprint。
-- `RuntimeRunner` 只能通过 `ContextEngine.build_model_view()` 获取模型上下文。
+History is complete in-process state. `ContextEngine.build_model_view()` is
+the only model request boundary; checkpoints compact the view without deleting
+facts. An append-only transcript is the durable recovery source for all new
+sessions. Resume deterministically rebuilds derived context and session
+memory. Completed tool actions are not replayed; actions that started but lack
+a matching completion remain explicitly uncertain.
 
-详见：
+The completion gate evaluates the final model candidate against retained Todo
+and tool-evidence facts. Recovery and completion failures have bounded,
+observable terminal paths instead of unbounded reflection.
 
-- [Context Engineering、Compact 与 Model View](portfolio/CONTEXT_ENGINEERING.md)
-- [Prompt Assembly](HARNESS_PROMPT_ASSEMBLY.md)
+## Defaults and extensions
 
-## 5. Durable State
+Normal startup has one local agent, lightweight JSONL tracing, and no MCP
+client process or verification subagent. Each enabled trace ends with one
+`session_summary` JSONL event containing steps, `tools_used`, and accumulated
+token totals. HTML reports, the trace protocol module, and the generic
+`runtime.evals` API are removed; this retained summary is not an evaluator.
+Local Skills are read-only and loaded only for a project that provides
+`skills/**/SKILL.md`. MCP requires the separate `mycodeagent[mcp]` installation
+and explicit `--enable-mcp`. Verification is an explicit CLI opt-in and its
+enabled bootstrap constructs the completion verifier. Transcript facts and
+derived session memory are the complete recovery path; no separate project
+memory store is shipped.
 
-四种状态不能合并成一份 messages：
+Normal lint enforces undefined-name and basic dead-code rules. Release checks
+also run strict `E722,F401,F541,F821,F841` selection and `E402` against stable
+packages; neither is a type-checking guarantee. The release-metric command
+enforces the user-approved 15,000-line cap; the current 14,095-line tree passes
+while the seven-tool and dependency caps remain unchanged. See closeout
+[C-008](plans/2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 
-| 状态 | 职责 |
-|---|---|
-| History | 当前进程内的完整消息历史 |
-| Transcript | append-only 会话事实与恢复来源 |
-| Session Memory | 从 Transcript 派生的目标、进度、风险和验证状态 |
-| Long-term Memory | 跨会话稳定事实，使用 frozen snapshot 注入 |
-
-Resume 采用 at-least-once 事实语义。已完成工具不会自动重放；已 started 但未完成的副作用工具标记为 `uncertain`，由后续检查或用户确认解决。
-
-详见：
-
-- [Transcript、Memory 与 Subagent](portfolio/MEMORY_SUBAGENT.md)
-- [Long-term Memory](HARNESS_LONG_TERM_MEMORY.md)
-
-## 6. Restricted Subagents
-
-正式子 Agent 只有两个不可变 profile：
-
-- Explore：只读搜索，返回 `ExploreResult`。
-- Verification：独立检查完成候选，返回 `VerificationResult`。
-
-两者使用独立 History、ContextEngine、Transcript、Session Memory 和 Trace；registry allowlist 与 `readonly_subagent` Permission Core 双重限制写入、Bash、Memory 和递归 Task。父 Agent 只接收有界结构化结果。
-
-## 7. Trace 与 Eval
-
-核心事件协议见 [HARNESS_TRACE_PROTOCOL.md](HARNESS_TRACE_PROTOCOL.md)。`runtime/evals.py` 汇总 step、模型/工具调用、权限拒绝、恢复、compact、Completion Gate 和子 Agent 指标。
-
-确定性证据：
-
-- [Agent Loop Trace](traces/agent-loop.json)
-- [Tool Harness Trace](traces/tool-harness.json)
-- [Context Trace](traces/context-engineering.json)
-- [Memory / Subagent Trace](traces/memory-subagent.json)
-
-## 8. 正式与实验边界
-
-正式 Harness Core：
-
-```text
-app/ core/ runtime/ tools/ extensions/
-```
-
-实验区：
-
-```text
-experimental/teams/
-```
-
-Teams 中的 persistent workers、tmux orchestration、mailbox、task board 和 parallel coordination 不进入正式架构承诺。当前项目进入维护状态，后续只接受缺陷修复、评估改进和材料完善。
+Removed research systems are absent from the stable tree. Their recoverable
+history is named in [research-archive.md](research-archive.md).
+Superseded design documents, task breakdowns, portfolio material, and demo
+snapshots are labelled [historical](archives/README.md), not current API
+contracts.

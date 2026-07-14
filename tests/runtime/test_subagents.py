@@ -1,12 +1,21 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 
+from core.llm import (
+    extract_reasoning_content,
+    extract_response_content,
+    extract_response_meta,
+    extract_tool_calls,
+    extract_usage,
+    parse_tool_input,
+    serialize_response,
+)
 from runtime.completion import (
     CompletionCandidate,
-    CompletionGateResult,
     CompletionGateVerdict,
     CompletionRequirements,
 )
@@ -19,9 +28,11 @@ from runtime.subagents import (
     SubagentStatus,
     VerificationResult,
     VerificationVerdict,
+    _RecordingTrace,
     _SubagentRuntimeHost,
     _summarize_child_messages,
 )
+from runtime.loop import RuntimeRunner
 from extensions.tracing import NullTraceLogger
 from tools.permissions import PermissionAction, PermissionContext, RiskClassifier
 from tools.registry import ToolRegistry
@@ -38,20 +49,192 @@ def _tool(name):
 
 def _registry():
     registry = ToolRegistry()
-    for name in ["LS", "Glob", "Grep", "Read", "Write", "Edit", "MultiEdit", "Bash", "Task", "AskUser", "Memory"]:
+    for name in ["Glob", "Grep", "Read", "Edit", "Bash", "Task"]:
         registry.register_tool(_tool(name))
     return registry
 
 
+class _SDKResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        choice = payload["choices"][0]
+        message = choice["message"]
+        self.choices = [
+            SimpleNamespace(
+                finish_reason=choice.get("finish_reason"),
+                message=SimpleNamespace(
+                    role=message.get("role"),
+                    content=message.get("content"),
+                    reasoning_content=message.get("reasoning_content"),
+                    refusal=message.get("refusal"),
+                    function_call=message.get("function_call"),
+                    tool_calls=[
+                        SimpleNamespace(
+                            id=call.get("id"),
+                            function=SimpleNamespace(
+                                name=(call.get("function") or {}).get("name"),
+                                arguments=(call.get("function") or {}).get("arguments"),
+                            ),
+                        )
+                        for call in message.get("tool_calls") or []
+                    ],
+                ),
+            )
+        ]
+        self.usage = SimpleNamespace(**payload["usage"])
+
+    def model_dump(self):
+        return self._payload
+
+
+def test_subagent_response_normalization_uses_canonical_dict_and_sdk_contracts():
+    payload = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": "read README",
+                    "reasoning_content": "because",
+                    "refusal": None,
+                    "function_call": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {
+                                "name": "Read",
+                                "arguments": '{"path": "README.md"}',
+                            },
+                        }
+                    ],
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+    }
+    responses = (payload, _SDKResponse(payload))
+
+    assert parse_tool_input('{"path": "README.md"}') == ({"path": "README.md"}, None)
+    assert [extract_response_content(response) for response in responses] == ["read README"] * 2
+    assert [extract_reasoning_content(response) for response in responses] == ["because"] * 2
+    assert [extract_tool_calls(response) for response in responses] == [
+        [{"id": "call_1", "name": "Read", "arguments": '{"path": "README.md"}'}]
+    ] * 2
+    assert [extract_usage(response) for response in responses] == [
+        {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+    ] * 2
+    assert [extract_response_meta(response) for response in responses] == [
+        {
+            "finish_reason": "tool_calls",
+            "role": "assistant",
+            "content_len": 11,
+            "reasoning_len": 7,
+            "refusal_present": False,
+            "tool_calls_count": 1,
+            "function_call_present": False,
+        }
+    ] * 2
+    assert [serialize_response(response) for response in responses] == [payload] * 2
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "_ensure_json_input",
+        "_extract_content",
+        "_extract_reasoning_content",
+        "_extract_tool_calls",
+        "_extract_usage",
+        "_extract_response_meta",
+        "_extract_raw_response",
+    ],
+)
+def test_subagent_runtime_host_has_no_legacy_response_adapters(method_name):
+    assert not hasattr(_SubagentRuntimeHost, method_name)
+
+
+class _OneResponseLLM:
+    def __init__(self, response):
+        self.response = response
+
+    def invoke_raw(self, _messages, **_kwargs):
+        return self.response
+
+
+def _run_child_response(tmp_path, response):
+    trace = _RecordingTrace(NullTraceLogger(), session_id="child-response-normalization")
+    host = _SubagentRuntimeHost(
+        profile=EXPLORE_PROFILE,
+        llm=_OneResponseLLM(response),
+        registry=_registry(),
+        project_root=tmp_path,
+        trace_logger=trace,
+    )
+
+    result = RuntimeRunner(host).run("inspect the response contract")
+    model_outputs = [payload for name, _step, payload in trace.events if name == "model_output"]
+
+    assert len(model_outputs) == 1
+    return result, model_outputs[0]
+
+
+def test_child_host_runner_normalizes_dict_and_sdk_responses_equivalently(tmp_path):
+    content = json.dumps(
+        {
+            "status": "completed",
+            "summary": "response normalization is shared",
+            "findings": [],
+            "evidence": [],
+            "unresolved_questions": [],
+        }
+    )
+    payload = {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "reasoning_content": "canonical path",
+                    "refusal": None,
+                    "function_call": None,
+                    "tool_calls": [],
+                },
+            }
+        ],
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+    }
+
+    results = [_run_child_response(tmp_path, response) for response in (payload, _SDKResponse(payload))]
+
+    assert results[0] == results[1]
+    assert results[0][0] == content
+    assert results[0][1] == {
+        "raw": content,
+        "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        "meta": {
+            "finish_reason": "stop",
+            "role": "assistant",
+            "content_len": len(content),
+            "reasoning_len": len("canonical path"),
+            "refusal_present": False,
+            "tool_calls_count": 0,
+            "function_call_present": False,
+        },
+        "raw_response": payload,
+        "tool_calls": [],
+    }
+
+
 def test_runtime_profiles_enforce_readonly_non_recursive_contracts():
     assert EXPLORE_PROFILE.name == "explore"
-    assert EXPLORE_PROFILE.tool_allowlist == frozenset({"LS", "Glob", "Grep", "Read"})
+    assert EXPLORE_PROFILE.tool_allowlist == frozenset({"Glob", "Grep", "Read"})
     assert VERIFICATION_PROFILE.recursive_subagents is False
     for profile in (EXPLORE_PROFILE, VERIFICATION_PROFILE):
         assert profile.max_steps > 0
         assert profile.context_token_budget > 0
         assert "Task" not in profile.tool_allowlist
-        assert not ({"Write", "Edit", "MultiEdit", "Bash", "AskUser"} & profile.tool_allowlist)
+        assert not ({"Edit", "Bash"} & profile.tool_allowlist)
 
 
 def test_result_contracts_support_required_verdicts():
@@ -83,12 +266,11 @@ def test_filtered_registry_and_permission_core_both_block_mutation():
     launcher = SubagentLauncher(project_root=Path("."), main_llm=Mock(), tool_registry=_registry())
     filtered = launcher.build_registry(EXPLORE_PROFILE)
     assert filtered.get_tool("Read") is not None
-    assert filtered.get_tool("Write") is None
-    assert filtered.get_tool("Memory") is None
+    assert filtered.get_tool("Edit") is None
     assert filtered.get_tool("Task") is None
 
     decision = RiskClassifier().classify(
-        "Write",
+        "Edit",
         {"path": "x.py", "content": "x"},
         PermissionContext(runtime_mode="readonly_subagent"),
     )
@@ -99,14 +281,8 @@ def test_filtered_registry_and_permission_core_both_block_mutation():
         PermissionContext(runtime_mode="readonly_subagent"),
     )
     assert recursive.action is PermissionAction.DENY
-    memory = RiskClassifier().classify(
-        "Memory",
-        {"action": "add", "target": "memory", "content": "x"},
-        PermissionContext(runtime_mode="readonly_subagent"),
-    )
-    assert memory.action is PermissionAction.DENY
     readonly = RiskClassifier().classify(
-        "LS",
+        "Glob",
         {},
         PermissionContext(runtime_mode="readonly_subagent"),
     )
@@ -133,7 +309,7 @@ def test_subagent_prompt_only_describes_allowed_tools():
     assert "Tool name: Read" in tool_contracts
     assert "Tool name: Bash" not in tool_contracts
     assert "Tool name: Task" not in tool_contracts
-    assert "Write: Create or overwrite" not in tool_contracts
+    assert "Edit: atomically create" not in tool_contracts
 
 
 def test_child_compaction_summary_preserves_bounded_facts():
@@ -151,18 +327,6 @@ def test_child_compaction_summary_preserves_bounded_facts():
     assert "Find the runtime ownership boundary." in summary
     assert "RuntimeRunner is the canonical loop" in summary
     assert len(summary) <= 8000
-
-
-def test_formal_task_path_has_no_legacy_runner_or_turn_executor_reference():
-    task_source = Path("tools/builtin/task.py").read_text(encoding="utf-8")
-    task_prompt = Path("prompts/tools_prompts/task_prompt.py").read_text(encoding="utf-8")
-    host_source = Path("runtime/host.py").read_text(encoding="utf-8")
-    assert "SubagentRunner" not in task_source
-    assert "TurnExecutor" not in task_source
-    assert "enable_agent_teams" not in task_source
-    assert "TaskTool(" in host_source
-    assert "team_name" not in task_prompt
-    assert "Supports two modes" not in task_prompt
 
 
 def test_launcher_uses_runtime_runner_and_does_not_touch_parent_state(tmp_path):

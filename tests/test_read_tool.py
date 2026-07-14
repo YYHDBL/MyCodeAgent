@@ -8,9 +8,7 @@
 """
 
 import unittest
-from pathlib import Path
 from tools.builtin.read_file import ReadTool
-from tools.base import ErrorCode
 from tests.utils.protocol_validator import ProtocolValidator
 from tests.utils.test_helpers import create_temp_project, parse_response
 
@@ -468,7 +466,7 @@ class TestReadTool(unittest.TestCase):
 
             self.assertEqual(parsed["error"]["code"], "IS_DIRECTORY")
             self.assertIn("directory", parsed["error"]["message"].lower())
-            self.assertIn("Use LS", parsed["error"]["message"])
+            self.assertIn("Use Glob", parsed["error"]["message"])
 
     # ========================================================================
     # Error - BINARY_FILE 场景测试

@@ -11,11 +11,6 @@ from runtime.context.compact_store import CompactStore
 from runtime.context.model_view import ModelView
 from runtime.context.normalizer import MessageNormalizer
 from runtime.context.projection import ProjectionBuilder
-from runtime.memory import (
-    FrozenLongTermMemorySnapshot,
-    render_long_term_memory,
-    render_long_term_memory_state,
-)
 from runtime.session_memory import SessionMemory, render_session_memory
 
 
@@ -48,7 +43,6 @@ class ContextEngine:
         self.last_usage_tokens = 0
         self.total_usage_tokens = 0
         self.session_memory: SessionMemory | None = None
-        self.long_term_memory_snapshot: FrozenLongTermMemorySnapshot | None = None
 
     def record_usage(self, total_tokens: int | None) -> None:
         if total_tokens is None:
@@ -65,12 +59,6 @@ class ContextEngine:
 
     def set_session_memory(self, memory: SessionMemory | None) -> None:
         self.session_memory = memory
-
-    def set_long_term_memory_snapshot(
-        self,
-        snapshot: FrozenLongTermMemorySnapshot | None,
-    ) -> None:
-        self.long_term_memory_snapshot = snapshot
 
     def should_compact(self, *, history_manager: Any, pending_input: str) -> bool:
         source_messages = history_manager.get_messages()
@@ -152,8 +140,6 @@ class ContextEngine:
         dynamic_messages: list[dict[str, Any]] = []
         session_memory_chars = 0
         session_memory_message_count = 0
-        long_term_memory_chars = 0
-        long_term_memory_message_count = 0
         dynamic_sources: list[str] = []
         if self.session_memory is not None:
             budget = max(0, int(getattr(self.config, "session_memory_char_budget", 4000) or 4000))
@@ -162,28 +148,6 @@ class ContextEngine:
                 dynamic_messages.append({"role": "system", "content": rendered})
                 session_memory_message_count = 1
                 dynamic_sources.append("session_memory")
-        if self.long_term_memory_snapshot is not None:
-            rendered_snapshot = render_long_term_memory(self.long_term_memory_snapshot)
-            if rendered_snapshot.text:
-                for state in (self.long_term_memory_snapshot.user, self.long_term_memory_snapshot.memory):
-                    if state.entries:
-                        dynamic_messages.append(
-                            {"role": "system", "content": render_long_term_memory_state(state)}
-                        )
-                        long_term_memory_message_count += 1
-                long_term_memory_chars = rendered_snapshot.chars
-                dynamic_sources.append("long_term_memory")
-                if trace_logger:
-                    trace_logger.log_event(
-                        "long_term_memory_snapshot_injected",
-                        {
-                            "target_count": rendered_snapshot.target_count,
-                            "injected_chars": rendered_snapshot.chars,
-                            "memory_entry_count": self.long_term_memory_snapshot.memory.usage.entry_count,
-                            "user_entry_count": self.long_term_memory_snapshot.user.usage.entry_count,
-                        },
-                        step=step,
-                    )
         messages = list(system_messages) + dynamic_messages + list(history_messages)
 
         estimated_chars = len(pending_input or "")
@@ -202,8 +166,6 @@ class ContextEngine:
             dynamic_message_count=len(dynamic_messages),
             session_memory_message_count=session_memory_message_count,
             session_memory_chars=session_memory_chars,
-            long_term_memory_message_count=long_term_memory_message_count,
-            long_term_memory_chars=long_term_memory_chars,
             dynamic_context_sources=tuple(dynamic_sources),
         )
 
@@ -222,8 +184,6 @@ class ContextEngine:
                     "dynamic_message_count": view.dynamic_message_count,
                     "session_memory_message_count": view.session_memory_message_count,
                     "session_memory_chars": view.session_memory_chars,
-                    "long_term_memory_message_count": view.long_term_memory_message_count,
-                    "long_term_memory_chars": view.long_term_memory_chars,
                     "dynamic_context_sources": list(view.dynamic_context_sources),
                 },
                 step=step,

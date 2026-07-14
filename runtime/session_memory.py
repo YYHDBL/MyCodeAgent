@@ -189,8 +189,10 @@ class SessionMemoryDeriver:
                 tool_name = str(payload.get("tool_name") or "unknown")
                 status = str(payload.get("status") or "")
                 current = tool_states.setdefault(
-                    tool_call_id,
+                    self._tool_state_key(event.run_id, tool_call_id),
                     {
+                        "tool_call_id": tool_call_id,
+                        "run_id": event.run_id,
                         "tool_name": tool_name,
                         "requested": None,
                         "started": None,
@@ -346,8 +348,10 @@ class SessionMemoryDeriver:
                 tool_name = str(payload.get("tool_name") or "unknown")
                 status = str(payload.get("status") or "")
                 current = tool_states.setdefault(
-                    tool_call_id,
+                    self._tool_state_key(event.run_id, tool_call_id),
                     {
+                        "tool_call_id": tool_call_id,
+                        "run_id": event.run_id,
                         "tool_name": tool_name,
                         "requested": None,
                         "started": None,
@@ -386,13 +390,20 @@ class SessionMemoryDeriver:
             runtime_state={"tool_states": tool_states},
         )
 
+    @staticmethod
+    def _tool_state_key(run_id: str, tool_call_id: str) -> str:
+        """Keep lifecycle facts isolated when providers reuse call IDs across runs."""
+
+        return f"{run_id}\x1f{tool_call_id}"
+
     def _build_unresolved_items(
         self,
         tool_states: dict[str, dict[str, Any]],
     ) -> tuple[list[SessionMemoryItem], list[SessionMemoryItem]]:
         todo_items: list[SessionMemoryItem] = []
         verification_status: list[SessionMemoryItem] = []
-        for tool_call_id, tool_state in sorted(tool_states.items()):
+        for state_key, tool_state in sorted(tool_states.items()):
+            tool_call_id = str(tool_state.get("tool_call_id") or state_key)
             tool_name = str(tool_state.get("tool_name") or "unknown")
             started = tool_state.get("started")
             completed = tool_state.get("completed")

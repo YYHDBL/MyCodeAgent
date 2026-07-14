@@ -10,14 +10,13 @@
 - 展示分离：data 面向模型（结构化），text 面向用户（简洁 UI 展示）
 """
 
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 from prompts.tools_prompts.todo_write_prompt import TodoWrite_prompt
-from ..base import Tool, ToolParameter, ErrorCode
+from ..base import Tool, ToolParameter, ToolResult, ErrorCode
 
 
 # 有效的任务状态
@@ -63,7 +62,7 @@ class TodoWriteTool(Tool):
         # 会话内持久化文件名（首次持久化时确定）
         self._session_filename = None
 
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         """
         执行任务列表更新（声明式覆盖）
 
@@ -87,7 +86,7 @@ class TodoWriteTool(Tool):
         
         # summary 必填且非空
         if not summary or not isinstance(summary, str) or not summary.strip():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'summary' is required and must be a non-empty string.",
                 params_input=params_input,
@@ -96,7 +95,7 @@ class TodoWriteTool(Tool):
         
         # todos 必填且为数组
         if todos is None or not isinstance(todos, list):
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'todos' is required and must be an array.",
                 params_input=params_input,
@@ -104,7 +103,7 @@ class TodoWriteTool(Tool):
         
         # 任务数量上限：10
         if len(todos) > MAX_TODO_COUNT:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"Too many todos. Maximum allowed is {MAX_TODO_COUNT}, got {len(todos)}.",
                 params_input=params_input,
@@ -116,7 +115,7 @@ class TodoWriteTool(Tool):
         
         for idx, item in enumerate(todos):
             if not isinstance(item, dict):
-                return self.create_error_response(
+                return self.error_result(
                     error_code=ErrorCode.INVALID_PARAM,
                     message=f"Todo item at index {idx} must be an object.",
                     params_input=params_input,
@@ -124,11 +123,9 @@ class TodoWriteTool(Tool):
             
             content = item.get("content")
             status = item.get("status")
-            todo_id = item.get("id")
-            
             # content 必填
             if not content or not isinstance(content, str) or not content.strip():
-                return self.create_error_response(
+                return self.error_result(
                     error_code=ErrorCode.INVALID_PARAM,
                     message=f"Todo item at index {idx}: 'content' is required and must be a non-empty string.",
                     params_input=params_input,
@@ -137,7 +134,7 @@ class TodoWriteTool(Tool):
             
             # content 长度上限：60（按字符长度计算）
             if len(content) > MAX_CONTENT_LENGTH:
-                return self.create_error_response(
+                return self.error_result(
                     error_code=ErrorCode.INVALID_PARAM,
                     message=f"Todo item at index {idx}: 'content' exceeds {MAX_CONTENT_LENGTH} characters (got {len(content)}).",
                     params_input=params_input,
@@ -145,7 +142,7 @@ class TodoWriteTool(Tool):
             
             # status 必填且有效
             if not status or status not in VALID_STATUSES:
-                return self.create_error_response(
+                return self.error_result(
                     error_code=ErrorCode.INVALID_PARAM,
                     message=f"Todo item at index {idx}: 'status' must be one of {sorted(VALID_STATUSES)}.",
                     params_input=params_input,
@@ -166,7 +163,7 @@ class TodoWriteTool(Tool):
         
         # 约束：最多一个 in_progress
         if in_progress_count > 1:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"Only one todo can be 'in_progress' at a time. Found {in_progress_count}.",
                 params_input=params_input,
@@ -264,7 +261,7 @@ class TodoWriteTool(Tool):
         todos: List[Dict[str, Any]],
         summary: str,
         stats_count: Dict[str, int],
-    ) -> str:
+    ) -> ToolResult:
         """
         持久化已完成的任务列表到 Markdown 文件
         
@@ -350,7 +347,7 @@ class TodoWriteTool(Tool):
         params_input: Dict[str, Any],
         time_ms: int,
         persisted_path: str = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         构建标准化响应（遵循《通用工具响应协议》）
 
@@ -395,7 +392,7 @@ class TodoWriteTool(Tool):
         # =========================================
         extra_stats = stats_count.copy()
         
-        return self.create_success_response(
+        return self.success_result(
             data=data,
             text=text,
             params_input=params_input,

@@ -17,7 +17,7 @@ from runtime.state import LoopState, Transition, TransitionReason
 
 
 SCHEMA_VERSION = 1
-UNSAFE_UNCERTAIN_REPLAY_TOOLS = {"Write", "Edit", "MultiEdit", "Bash", "Task"}
+UNSAFE_UNCERTAIN_REPLAY_TOOLS = {"Edit", "Bash", "Task"}
 
 
 def _utc_now_iso() -> str:
@@ -141,6 +141,16 @@ class ResumeState:
             tool_registry.import_read_cache(read_cache)
 
 
+@dataclass(frozen=True)
+class TranscriptSession:
+    """A discoverable transcript session stored under one project root."""
+
+    session_id: str
+    path: Path
+    latest_run_id: str | None
+    updated_at: str | None
+
+
 class TranscriptStore:
     """Append-only JSONL transcript store."""
 
@@ -169,6 +179,55 @@ class TranscriptStore:
                     return str(session_id)
         return None
 
+    @classmethod
+    def list_sessions(cls, directory: str | Path) -> list[TranscriptSession]:
+        """Return transcript sessions ordered by their most recent recorded fact."""
+
+        transcript_dir = Path(directory)
+        if not transcript_dir.is_dir():
+            return []
+        sessions: list[TranscriptSession] = []
+        for path in transcript_dir.glob("transcript-*.jsonl"):
+            session_id = cls.infer_session_id(path)
+            if session_id is None:
+                continue
+            events = cls(path, session_id=session_id).read_events()
+            if not events:
+                continue
+            latest = events[-1]
+            sessions.append(
+                TranscriptSession(
+                    session_id=session_id,
+                    path=path,
+                    latest_run_id=latest.run_id,
+                    updated_at=latest.timestamp,
+                )
+            )
+        return sorted(
+            sessions,
+            key=lambda session: (session.updated_at or "", session.path.name),
+            reverse=True,
+        )
+
+    @classmethod
+    def resolve_session(
+        cls,
+        directory: str | Path,
+        session_id: str | None = None,
+    ) -> TranscriptSession:
+        """Resolve an explicit session, or the most recent session when omitted."""
+
+        sessions = cls.list_sessions(directory)
+        if not sessions:
+            raise ValueError("No transcript sessions found for this project")
+        if session_id is None:
+            return sessions[0]
+        normalized = str(session_id).strip()
+        for session in sessions:
+            if session.session_id == normalized:
+                return session
+        raise ValueError(f"Transcript session not found: {normalized}")
+
     def append_event(self, event: TranscriptEvent) -> TranscriptEvent:
         line = json.dumps(event.to_dict(), ensure_ascii=False)
         with self._lock:
@@ -178,6 +237,47 @@ class TranscriptStore:
                 handle.write("\n")
                 handle.flush()
         return event
+
+    def import_legacy_snapshot(self, path: str | Path) -> bool:
+        """Convert one former snapshot into append-only facts exactly once.
+
+        A populated transcript always wins.  This deliberately does not retain
+        snapshot writes or permit a snapshot to overwrite later transcript work.
+        """
+
+        if self.read_events():
+            return False
+        from runtime.session import load_legacy_session_snapshot
+
+        snapshot = load_legacy_session_snapshot(path)
+        messages = snapshot.get("history_messages") or []
+        run_id = "legacy-1"
+        for step, item in enumerate(messages):
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "")
+            if role not in {"user", "assistant", "tool", "summary"}:
+                continue
+            metadata = dict(item.get("metadata") or {})
+            metadata["legacy_snapshot_import"] = True
+            self.append_message(
+                run_id=run_id,
+                step=step,
+                role=role,
+                content=str(item.get("content") or ""),
+                metadata=metadata,
+            )
+        read_cache = snapshot.get("read_cache")
+        self.append_checkpoint(
+            run_id=run_id,
+            step=len(messages),
+            checkpoint_id="legacy-snapshot-import",
+            payload={
+                "runtime_state": {"read_cache": read_cache if isinstance(read_cache, dict) else {}},
+                "legacy_snapshot_import": True,
+            },
+        )
+        return True
 
     def _repair_trailing_record(self) -> None:
         if not self.path.exists() or self.path.stat().st_size == 0:
@@ -471,25 +571,39 @@ class ResumeLoader:
         self.store = store
 
     def load(self, *, run_id: str) -> ResumeState:
-        events = self.store.read_events(run_id=run_id)
+        """Restore one requested run, retained for targeted transcript inspection."""
+
+        return self._load_events(self.store.read_events(run_id=run_id), run_id=str(run_id))
+
+    def load_session(self) -> ResumeState:
+        """Restore all facts for the session in append order for continued work."""
+
+        events = self.store.read_events()
+        if not events:
+            raise ValueError(f"Transcript session has no events: {self.store.session_id}")
+        return self._load_events(events, run_id=events[-1].run_id)
+
+    def _load_events(self, events: list[TranscriptEvent], *, run_id: str) -> ResumeState:
         history_messages: list[dict[str, Any]] = []
         checkpoint: dict[str, Any] | None = None
         terminal: dict[str, Any] | None = None
         latest_transition: Transition | None = None
         latest_step = 0
-        tool_events: dict[str, dict[str, Any]] = {}
+        tool_events: dict[tuple[str, str], dict[str, Any]] = {}
+        runtime_state: dict[str, Any] = {}
 
         for event in events:
             latest_step = max(latest_step, event.step)
             payload = event.payload
             if event.event_type is TranscriptEventType.MESSAGE:
-                history_messages.append(
-                    {
-                        "role": payload.get("role", "assistant"),
-                        "content": payload.get("content", ""),
-                        "metadata": dict(payload.get("metadata") or {}),
-                    }
-                )
+                metadata = dict(payload.get("metadata") or {})
+                metadata["_transcript_run_id"] = event.run_id
+                message = {
+                    "role": payload.get("role", "assistant"),
+                    "content": payload.get("content", ""),
+                    "metadata": metadata,
+                }
+                history_messages.append(message)
             elif event.event_type is TranscriptEventType.STATE_TRANSITION:
                 reason_value = str(payload.get("reason") or TransitionReason.USER_INPUT.value)
                 try:
@@ -501,14 +615,18 @@ class ResumeLoader:
                     details=dict(payload.get("details") or {}),
                 )
             elif event.event_type is TranscriptEventType.CHECKPOINT:
-                checkpoint = dict(payload)
+                checkpoint_state = payload.get("runtime_state")
+                if isinstance(checkpoint_state, dict):
+                    runtime_state.update(checkpoint_state)
+                if not payload.get("legacy_snapshot_import"):
+                    checkpoint = dict(payload)
             elif event.event_type is TranscriptEventType.TERMINAL:
                 terminal = dict(payload)
             elif event.event_type is TranscriptEventType.TOOL_LIFECYCLE:
                 tool_call_id = str(payload.get("tool_call_id") or "")
                 if not tool_call_id:
                     continue
-                current = tool_events.setdefault(tool_call_id, {})
+                current = tool_events.setdefault((event.run_id, tool_call_id), {"run_id": event.run_id})
                 current.update(
                     {
                         "tool_call_id": tool_call_id,
@@ -525,15 +643,15 @@ class ResumeLoader:
         pending_tool_calls: list[dict[str, Any]] = []
         uncertain_actions: list[UncertainAction] = []
 
-        for tool_call_id, tool_state in tool_events.items():
+        for (_, tool_call_id), tool_state in tool_events.items():
             statuses = tool_state.get("statuses", [])
             payload = dict(tool_state.get("payload") or {})
             tool_name = str(tool_state.get("tool_name") or "")
             if ToolLifecycleStatus.COMPLETED.value in statuses:
-                completed_tool_results[tool_call_id] = payload
+                completed_tool_results[tool_call_id] = {"tool_name": tool_name, **payload}
                 continue
             if ToolLifecycleStatus.FAILED.value in statuses:
-                failed_tool_results[tool_call_id] = payload
+                failed_tool_results[tool_call_id] = {"tool_name": tool_name, **payload}
                 continue
             if (
                 ToolLifecycleStatus.REQUESTED.value in statuses
@@ -559,6 +677,11 @@ class ResumeLoader:
                     )
                 )
 
+        history_messages = self._pair_interrupted_tool_calls(
+            history_messages,
+            tool_events=tool_events,
+        )
+
         loop_state = LoopState(
             messages=[
                 {"role": message["role"], "content": message["content"]}
@@ -572,7 +695,7 @@ class ResumeLoader:
 
         return ResumeState(
             session_id=self.store.session_id,
-            run_id=str(run_id),
+            run_id=run_id,
             history_messages=history_messages,
             loop_state=loop_state,
             checkpoint=checkpoint,
@@ -582,7 +705,117 @@ class ResumeLoader:
             completed_tool_results=completed_tool_results,
             failed_tool_results=failed_tool_results,
             session_memory=SessionMemoryDeriver().rebuild(events),
-            runtime_state={},
+            runtime_state=runtime_state,
+        )
+
+    @staticmethod
+    def _pair_interrupted_tool_calls(
+        history_messages: list[dict[str, Any]],
+        *,
+        tool_events: dict[tuple[str, str], dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Ensure every recovered assistant tool call has a model-valid observation."""
+
+        paired: list[dict[str, Any]] = []
+        index = 0
+        while index < len(history_messages):
+            message = history_messages[index]
+            paired.append(message)
+            if message.get("role") != "assistant":
+                index += 1
+                continue
+            metadata = message.get("metadata") or {}
+            calls = metadata.get("tool_calls") or []
+            if not calls:
+                index += 1
+                continue
+
+            next_index = index + 1
+            persisted: list[dict[str, Any]] = []
+            while next_index < len(history_messages) and history_messages[next_index].get("role") == "tool":
+                persisted_message = history_messages[next_index]
+                persisted.append(persisted_message)
+                paired.append(persisted_message)
+                next_index += 1
+            persisted_ids = {
+                str((item.get("metadata") or {}).get("tool_call_id") or "")
+                for item in persisted
+            }
+            transcript_run_id = str(metadata.get("_transcript_run_id") or "")
+            for call in calls:
+                call_id = str((call or {}).get("id") or "")
+                if not call_id or call_id in persisted_ids:
+                    continue
+                tool_name, content = ResumeLoader._recovered_tool_observation(
+                    tool_events.get((transcript_run_id, call_id)),
+                    fallback_tool_name=str((call or {}).get("name") or "unknown_tool"),
+                )
+                paired.append(
+                    {
+                        "role": "tool",
+                        "content": content,
+                        "metadata": {
+                            "tool_name": tool_name,
+                            "tool_call_id": call_id,
+                            "recovered": True,
+                        },
+                    }
+                )
+            index = next_index
+        return paired
+
+    @staticmethod
+    def _recovered_tool_observation(
+        tool_state: dict[str, Any] | None,
+        *,
+        fallback_tool_name: str,
+    ) -> tuple[str, str]:
+        if tool_state is None:
+            return (
+                fallback_tool_name,
+                ResumeLoader._recovery_error(
+                    "RECOVERY_STATE_UNKNOWN",
+                    "No tool lifecycle fact was recorded; inspect before retrying.",
+                ),
+            )
+        tool_name = str(tool_state.get("tool_name") or fallback_tool_name)
+        statuses = tool_state.get("statuses", [])
+        payload = dict(tool_state.get("payload") or {})
+        if ToolLifecycleStatus.COMPLETED.value in statuses:
+            observation = payload.get("result", payload.get("result_text"))
+            if observation is None:
+                observation = {"status": "success", "data": {"recovered": True}}
+            content = observation if isinstance(observation, str) else json.dumps(observation, ensure_ascii=False)
+            return tool_name, content
+        if ToolLifecycleStatus.FAILED.value in statuses:
+            return tool_name, ResumeLoader._recovery_error(
+                "EXECUTION_FAILED",
+                payload.get("error") or "Tool execution failed before its observation was recorded.",
+            )
+        if ToolLifecycleStatus.STARTED.value in statuses:
+            return tool_name, ResumeLoader._recovery_error(
+                "INTERRUPTED_UNCERTAIN",
+                "Tool execution was interrupted; inspect before retrying.",
+            )
+        if ToolLifecycleStatus.REQUESTED.value in statuses:
+            return tool_name, ResumeLoader._recovery_error(
+                "NOT_EXECUTED_REPLAN",
+                "Tool execution did not start; it may be planned again.",
+            )
+        return tool_name, ResumeLoader._recovery_error(
+            "RECOVERY_STATE_UNKNOWN",
+            "No recognized tool lifecycle fact was recorded; inspect before retrying.",
+        )
+
+    @staticmethod
+    def _recovery_error(code: str, message: Any) -> str:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": {"code": code, "message": str(message)},
+                "data": {"recovered": True},
+            },
+            ensure_ascii=False,
         )
 
 
@@ -590,6 +823,7 @@ __all__ = [
     "ResumeLoader",
     "ResumeState",
     "SCHEMA_VERSION",
+    "TranscriptSession",
     "ToolLifecycleStatus",
     "TranscriptEvent",
     "TranscriptEventType",

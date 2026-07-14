@@ -94,13 +94,13 @@ class TestSummaryCompressor(unittest.TestCase):
         messages = [
             Message(content="hello", role="user"),
             Message(content="hi", role="assistant"),
-            Message(content=long_text, role="tool", metadata={"tool_name": "LS"}),
+            Message(content=long_text, role="tool", metadata={"tool_name": "Glob"}),
             Message(content="prev", role="summary"),
         ]
         text = _serialize_messages_for_summary(messages)
         self.assertIn("[User]: hello", text)
         self.assertIn("[Assistant]: hi", text)
-        self.assertIn("[Tool:LS]:", text)
+        self.assertIn("[Tool:Glob]:", text)
         self.assertIn("[Previous Summary]: prev", text)
         self.assertIn("...", text)
 

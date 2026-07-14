@@ -2,23 +2,41 @@
 
 from __future__ import annotations
 
-import json
 import os
 import traceback as tb
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
-from tools.observation_budget import force_truncate_observation
+from core.llm import parse_tool_input
+from tools.base import ErrorCode, ToolResult, ToolStatus, serialize_tool_result, tool_result_payload
+from tools.observation_store import force_truncate_result, truncate_result
+
+
+class RuntimeEventEmitter(Protocol):
+    """Neutral callback implemented by the runtime host, not by tools."""
+
+    def emit_runtime_event(
+        self,
+        *,
+        run_id: str,
+        step: int,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None: ...
 
 @dataclass(frozen=True)
 class ToolObservation:
     tool_name: str
     tool_call_id: str
-    observation: str
-    raw_observation: str | None = None
+    result: ToolResult
+    raw_result: ToolResult | None = None
     metadata: dict[str, Any] | None = None
+    observation: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "observation", serialize_tool_result(self.result))
 
 
 @dataclass(frozen=True)
@@ -46,14 +64,11 @@ class ToolBatch:
 class ToolOrchestrator:
     """Execute model tool calls while preserving model order."""
 
-    SAFE_TOOL_NAMES = {"Read", "Grep", "Glob", "ListFiles"}
-    UNSAFE_TOOL_NAMES = {"Write", "Edit", "MultiEdit", "Bash", "Task", "Skill", "TodoWrite"}
+    SAFE_TOOL_NAMES = {"Read", "Grep", "Glob"}
+    UNSAFE_TOOL_NAMES = {"Edit", "Bash", "Task", "Skill", "TodoWrite"}
 
     def __init__(self, host: Any):
         self.host = host
-
-    def _get_transcript_recorder(self):
-        return getattr(self.host, "transcript_recorder", None)
 
     def _get_transcript_run_id(self) -> str:
         run_id = getattr(self.host, "_active_transcript_run_id", None)
@@ -61,7 +76,7 @@ class ToolOrchestrator:
             return str(run_id)
         return f"run-{getattr(self.host, '_run_id', 0)}"
 
-    def _record_tool_lifecycle(
+    def _emit_tool_lifecycle(
         self,
         *,
         step: int,
@@ -69,18 +84,52 @@ class ToolOrchestrator:
         tool_call_id: str,
         status: str,
         payload: dict[str, Any] | None = None,
+        trace_logger=None,
     ) -> None:
-        recorder = self._get_transcript_recorder()
-        if recorder is None:
+        event_payload = {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "status": status,
+            "payload": payload or {},
+        }
+        emit_runtime_event = getattr(self.host, "emit_runtime_event", None)
+        if callable(emit_runtime_event):
+            emit_runtime_event(
+                run_id=self._get_transcript_run_id(),
+                step=step,
+                event_type="tool_lifecycle",
+                payload=event_payload,
+            )
             return
-        recorder.record_tool_lifecycle(
-            run_id=self._get_transcript_run_id(),
-            step=step,
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            status=status,
-            payload=payload or {},
-        )
+        self._log_tool_lifecycle(trace_logger, step=step, payload=event_payload)
+
+    @staticmethod
+    def _log_tool_lifecycle(trace_logger, *, step: int, payload: dict[str, Any]) -> None:
+        """Keep direct tool-unit callers traceable without a runtime host."""
+
+        if trace_logger is None:
+            return
+        lifecycle_payload = payload["payload"]
+        if payload["status"] == "requested":
+            trace_logger.log_event(
+                "tool_call",
+                {
+                    "tool": payload["tool_name"],
+                    "args": lifecycle_payload.get("args") or {},
+                    "tool_call_id": payload["tool_call_id"],
+                },
+                step=step,
+            )
+        elif payload["status"] in {"completed", "failed"} and "result" in lifecycle_payload:
+            trace_logger.log_event(
+                "tool_result",
+                {
+                    "tool": payload["tool_name"],
+                    "result": lifecycle_payload["result"],
+                },
+                step=step,
+            )
+        trace_logger.log_event("tool_lifecycle", payload, step=step)
 
     def run(
         self,
@@ -105,6 +154,7 @@ class ToolOrchestrator:
             observations.extend(batch_observations)
 
         observations = [self._normalize_empty_result(obs) for obs in observations]
+        observations = [self._apply_observation_limit(obs) for obs in observations]
         return self._apply_result_budget(observations, step=step, trace_logger=trace_logger)
 
     def run_serial(
@@ -128,7 +178,7 @@ class ToolOrchestrator:
             tool_name = call.get("name") or "unknown_tool"
             tool_call_id = call.get("id") or f"call_{uuid.uuid4().hex}"
             raw_args = call.get("arguments") or {}
-            parsed_input, parse_error = self.host._ensure_json_input(raw_args)
+            parsed_input, parse_error = parse_tool_input(raw_args)
             plans.append(
                 ToolCallPlan(
                     call=call,
@@ -194,30 +244,27 @@ class ToolOrchestrator:
         return [observations[idx] for idx in range(len(batch.calls))]
 
     def _execute_plan(self, plan: ToolCallPlan, *, step: int, trace_logger) -> ToolObservation:
-        self._record_tool_lifecycle(
+        self._emit_tool_lifecycle(
             step=step,
             tool_name=plan.tool_name,
             tool_call_id=plan.tool_call_id,
             status="requested",
             payload={"args": plan.parsed_input},
+            trace_logger=trace_logger,
         )
         if plan.parse_error is not None:
-            observation = self._parse_error_observation(plan.parse_error)
+            result = self._parse_error_result(plan.parse_error)
             self._log_parse_error(trace_logger, step, plan.tool_name, plan.tool_call_id, plan.parse_error)
-            self._record_tool_lifecycle(
+            self._emit_tool_lifecycle(
                 step=step,
                 tool_name=plan.tool_name,
                 tool_call_id=plan.tool_call_id,
                 status="failed",
                 payload={"error": str(plan.parse_error), "args": plan.parsed_input},
+                trace_logger=trace_logger,
             )
         else:
-            trace_logger.log_event(
-                "tool_call",
-                {"tool": plan.tool_name, "args": plan.parsed_input, "tool_call_id": plan.tool_call_id},
-                step=step,
-            )
-            observation = self._execute_one(
+            result = self._execute_one(
                 plan.tool_name,
                 plan.parsed_input,
                 plan.tool_call_id,
@@ -228,7 +275,7 @@ class ToolOrchestrator:
         return ToolObservation(
             tool_name=plan.tool_name,
             tool_call_id=plan.tool_call_id,
-            observation=observation,
+            result=result,
         )
 
     def _execute_one(
@@ -238,41 +285,48 @@ class ToolOrchestrator:
         tool_call_id: str,
         trace_logger,
         step: int,
-    ) -> str:
+    ) -> ToolResult:
         host = self.host
-        self._record_tool_lifecycle(
+        self._emit_tool_lifecycle(
             step=step,
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             status="started",
             payload={"args": tool_input},
+            trace_logger=trace_logger,
         )
         try:
             if hasattr(host, "tool_executor") and host.tool_executor is not None:
-                observation = host.tool_executor.execute(
+                result = host.tool_executor.execute(
                     tool_name,
                     tool_input,
                     trace_logger=trace_logger,
                     step=step,
                 )
             else:
-                observation = host._execute_tool(tool_name, tool_input)
-            self._log_tool_result(trace_logger, step, tool_name, observation)
-            lifecycle_status, lifecycle_payload = self._tool_lifecycle_result_payload(observation)
-            self._record_tool_lifecycle(
+                result = host._execute_tool(tool_name, tool_input)
+            if not isinstance(result, ToolResult):
+                raise TypeError(f"Tool '{tool_name}' returned unsupported result type.")
+            lifecycle_status, lifecycle_payload = self._tool_lifecycle_result_payload(result)
+            self._emit_tool_lifecycle(
                 step=step,
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 status=lifecycle_status,
                 payload=lifecycle_payload,
+                trace_logger=trace_logger,
             )
-            return observation
+            return result
         except Exception as exc:
-            error_result = {
-                "status": "error",
-                "error": {"code": "EXECUTION_ERROR", "message": str(exc)},
-                "data": {},
-            }
+            error_result = ToolResult(
+                status=ToolStatus.ERROR,
+                data={},
+                text=str(exc),
+                error_code=ErrorCode.EXECUTION_ERROR,
+                error_message=str(exc),
+                stats={"time_ms": 0},
+                context={"cwd": ".", "params_input": tool_input},
+            )
             trace_logger.log_event(
                 "error",
                 {
@@ -284,45 +338,31 @@ class ToolOrchestrator:
                 },
                 step=step,
             )
-            self._record_tool_lifecycle(
+            self._emit_tool_lifecycle(
                 step=step,
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 status="failed",
                 payload={"error": str(exc), "args": tool_input},
+                trace_logger=trace_logger,
             )
-            return json.dumps(error_result, ensure_ascii=False)
+            return error_result
 
-    def _tool_lifecycle_result_payload(self, observation: str) -> tuple[str, dict[str, Any]]:
-        try:
-            result_obj = json.loads(observation)
-        except json.JSONDecodeError:
-            return "completed", {"result_text": observation}
-        status = str(result_obj.get("status") or "")
-        lifecycle_status = "failed" if status == "error" else "completed"
-        return lifecycle_status, {"result": result_obj}
+    def _tool_lifecycle_result_payload(self, result: ToolResult) -> tuple[str, dict[str, Any]]:
+        lifecycle_status = "failed" if result.status is ToolStatus.ERROR else "completed"
+        return lifecycle_status, {"result": tool_result_payload(result)}
 
-    def _log_tool_result(self, trace_logger, step: int, tool_name: str, observation: str) -> None:
-        try:
-            result_obj = json.loads(observation)
-            trace_logger.log_event("tool_result", {"tool": tool_name, "result": result_obj}, step=step)
-        except json.JSONDecodeError:
-            trace_logger.log_event(
-                "tool_result",
-                {"tool": tool_name, "result": {"text": observation}},
-                step=step,
-            )
-
-    def _parse_error_observation(self, parse_err: Exception) -> str:
-        error_result = {
-            "status": "error",
-            "error": {
-                "code": "INVALID_PARAM",
-                "message": f"Tool arguments parse error: {parse_err}",
-            },
-            "data": {},
-        }
-        return json.dumps(error_result, ensure_ascii=False)
+    def _parse_error_result(self, parse_err: Exception) -> ToolResult:
+        message = f"Tool arguments parse error: {parse_err}"
+        return ToolResult(
+            status=ToolStatus.ERROR,
+            data={},
+            text=message,
+            error_code=ErrorCode.INVALID_PARAM,
+            error_message=message,
+            stats={"time_ms": 0},
+            context={"cwd": ".", "params_input": {}},
+        )
 
     def _log_parse_error(
         self,
@@ -363,8 +403,9 @@ class ToolOrchestrator:
             max_message_bytes=_read_env("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", 200000),
         )
 
-    def _byte_len(self, text: str) -> int:
-        return len((text or "").encode("utf-8"))
+    @staticmethod
+    def _result_bytes(result: ToolResult) -> int:
+        return len(serialize_tool_result(result).encode("utf-8"))
 
     def _apply_result_budget(
         self,
@@ -389,17 +430,17 @@ class ToolOrchestrator:
         visible_total_bytes = 0
 
         for obs in observations:
-            raw_text = obs.raw_observation if obs.raw_observation is not None else obs.observation
-            raw_bytes = self._byte_len(raw_text)
+            raw_result = obs.raw_result if obs.raw_result is not None else obs.result
+            raw_bytes = self._result_bytes(raw_result)
             raw_total_bytes += raw_bytes
             next_obs = obs
             if raw_bytes > budget.max_tool_bytes:
-                compressed = force_truncate_observation(
+                compressed = force_truncate_result(
                     obs.tool_name,
-                    raw_text,
+                    raw_result,
                     self.host.project_root,
                 )
-                visible_bytes = self._byte_len(compressed)
+                visible_bytes = self._result_bytes(compressed)
                 metadata = {
                     **(obs.metadata or {}),
                     "budgeted": True,
@@ -408,22 +449,14 @@ class ToolOrchestrator:
                     "raw_bytes": raw_bytes,
                     "visible_bytes": visible_bytes,
                 }
-                try:
-                    parsed = json.loads(compressed)
-                    full_output_path = (
-                        parsed.get("data", {})
-                        .get("truncation", {})
-                        .get("full_output_path")
-                    )
-                    if full_output_path:
-                        metadata["full_output_path"] = full_output_path
-                except json.JSONDecodeError:
-                    pass
+                full_output_path = compressed.data.get("truncation", {}).get("full_output_path")
+                if full_output_path:
+                    metadata["full_output_path"] = full_output_path
                 next_obs = ToolObservation(
                     tool_name=obs.tool_name,
                     tool_call_id=obs.tool_call_id,
-                    observation=compressed,
-                    raw_observation=raw_text,
+                    result=compressed,
+                    raw_result=raw_result,
                     metadata=metadata,
                 )
                 replaced_count += 1
@@ -439,48 +472,40 @@ class ToolOrchestrator:
                     step=step,
                 )
             budgeted.append(next_obs)
-            visible_total_bytes += self._byte_len(next_obs.observation)
+            visible_total_bytes += self._result_bytes(next_obs.result)
 
         if visible_total_bytes > budget.max_message_bytes:
             indexed = list(enumerate(budgeted))
-            indexed.sort(key=lambda item: self._byte_len(item[1].observation), reverse=True)
+            indexed.sort(key=lambda item: self._result_bytes(item[1].result), reverse=True)
             for idx, obs in indexed:
                 if visible_total_bytes <= budget.max_message_bytes:
                     break
                 if (obs.metadata or {}).get("replaced") is True:
                     continue
-                source_text = obs.raw_observation if obs.raw_observation is not None else obs.observation
-                previous_visible = self._byte_len(obs.observation)
-                compressed = force_truncate_observation(
+                source_result = obs.raw_result if obs.raw_result is not None else obs.result
+                previous_visible = self._result_bytes(obs.result)
+                compressed = force_truncate_result(
                     obs.tool_name,
-                    source_text,
+                    source_result,
                     self.host.project_root,
                 )
-                visible_bytes = self._byte_len(compressed)
+                visible_bytes = self._result_bytes(compressed)
                 metadata = {
                     **(obs.metadata or {}),
                     "budgeted": True,
                     "replaced": True,
                     "reason": "aggregate_message_budget",
-                    "raw_bytes": self._byte_len(source_text),
+                    "raw_bytes": self._result_bytes(source_result),
                     "visible_bytes": visible_bytes,
                 }
-                try:
-                    parsed = json.loads(compressed)
-                    full_output_path = (
-                        parsed.get("data", {})
-                        .get("truncation", {})
-                        .get("full_output_path")
-                    )
-                    if full_output_path:
-                        metadata["full_output_path"] = full_output_path
-                except json.JSONDecodeError:
-                    pass
+                full_output_path = compressed.data.get("truncation", {}).get("full_output_path")
+                if full_output_path:
+                    metadata["full_output_path"] = full_output_path
                 budgeted[idx] = ToolObservation(
                     tool_name=obs.tool_name,
                     tool_call_id=obs.tool_call_id,
-                    observation=compressed,
-                    raw_observation=source_text,
+                    result=compressed,
+                    raw_result=source_result,
                     metadata=metadata,
                 )
                 visible_total_bytes = visible_total_bytes - previous_visible + visible_bytes
@@ -491,7 +516,7 @@ class ToolOrchestrator:
                         "tool_call_id": obs.tool_call_id,
                         "reason": "aggregate_message_budget",
                         "replaced": True,
-                        "raw_bytes": self._byte_len(source_text),
+                        "raw_bytes": self._result_bytes(source_result),
                         "visible_bytes": visible_bytes,
                     },
                     step=step,
@@ -512,41 +537,54 @@ class ToolOrchestrator:
         return budgeted
 
     def _normalize_empty_result(self, obs: ToolObservation) -> ToolObservation:
-        if not self._is_empty_observation(obs.observation):
+        if not self._is_empty_result(obs.result):
             return obs
 
-        payload = {
-            "status": "success",
-            "data": {},
-            "text": f"{obs.tool_name} completed with no output.",
-        }
         metadata = {**(obs.metadata or {}), "budgeted": True, "reason": "empty_result", "replaced": False}
         return ToolObservation(
             tool_name=obs.tool_name,
             tool_call_id=obs.tool_call_id,
-            observation=json.dumps(payload, ensure_ascii=False),
-            raw_observation=obs.observation,
+            result=ToolResult(
+                status=ToolStatus.SUCCESS,
+                data={},
+                text=f"{obs.tool_name} completed with no output.",
+                stats={"time_ms": 0},
+                context={"cwd": ".", "params_input": {}},
+            ),
+            raw_result=obs.result,
             metadata=metadata,
         )
 
-    def _is_empty_observation(self, text: str) -> bool:
-        if not text or not str(text).strip():
-            return True
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return False
-        if not isinstance(parsed, dict):
-            return False
-        if parsed.get("error"):
-            return False
-        payload_text = parsed.get("text")
-        payload_data = parsed.get("data")
-        if isinstance(payload_text, str) and payload_text.strip():
-            return False
-        if payload_data:
-            return False
-        return True
+    def _apply_observation_limit(self, obs: ToolObservation) -> ToolObservation:
+        truncated = truncate_result(
+            obs.tool_name,
+            obs.result,
+            getattr(self.host, "project_root", None),
+        )
+        if truncated is obs.result:
+            return obs
+
+        raw_result = obs.raw_result if obs.raw_result is not None else obs.result
+        return ToolObservation(
+            tool_name=obs.tool_name,
+            tool_call_id=obs.tool_call_id,
+            result=truncated,
+            raw_result=raw_result,
+            metadata={
+                **(obs.metadata or {}),
+                "reason": "observation_limit",
+                "raw_bytes": self._result_bytes(raw_result),
+                "visible_bytes": self._result_bytes(truncated),
+            },
+        )
+
+    @staticmethod
+    def _is_empty_result(result: ToolResult) -> bool:
+        return (
+            result.status is not ToolStatus.ERROR
+            and not result.text.strip()
+            and not result.data
+        )
 
     def _log_plan(self, trace_logger, step: int, batches: list[ToolBatch]) -> None:
         trace_logger.log_event(

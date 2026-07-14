@@ -26,7 +26,6 @@ def test_bootstrap_can_disable_optional_extensions(tmp_path):
         api_key="test-key",
         base_url="https://example.com/v1",
         temperature=0.2,
-        teammate_mode=None,
         show_raw=False,
     )
 
@@ -72,3 +71,50 @@ def test_mcp_extension_exports_split_bootstrap_and_prompt_surfaces():
 
     assert register_mcp_servers is bootstrap_register
     assert format_mcp_tools_prompt is prompt_format
+
+
+def test_explicit_mcp_registration_loads_the_sdk_boundary_with_fakes(tmp_path, monkeypatch):
+    from extensions.mcp import bootstrap
+
+    captured = {}
+
+    class FakeClientConfig:
+        def __init__(self, **kwargs):
+            captured["config"] = kwargs
+
+    class FakeClient:
+        def __init__(self, config):
+            captured["client_config"] = config
+
+    def fake_register(tool_registry, client, namespace):
+        captured["registry"] = tool_registry
+        captured["client"] = client
+        captured["namespace"] = namespace
+        return [{"name": "docs_search", "description": "Search docs", "schema": {}}]
+
+    registry = object()
+    monkeypatch.setattr(
+        bootstrap,
+        "_load_mcp_runtime",
+        lambda: (FakeClient, FakeClientConfig, fake_register),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "load_mcp_servers",
+        lambda _project_root: {"docs": {"command": "fake-server", "args": ["--quiet"]}},
+    )
+    monkeypatch.setattr(bootstrap, "connect_mode", lambda: "startup")
+
+    clients, tools = bootstrap.register_mcp_servers(registry, str(tmp_path))
+
+    assert len(clients) == 1
+    assert tools == [{"name": "docs_search", "description": "Search docs", "schema": {}}]
+    assert captured["config"] == {
+        "transport": "stdio",
+        "command": "fake-server",
+        "args": ["--quiet"],
+        "env": {},
+    }
+    assert captured["registry"] is registry
+    assert captured["client"] is clients[0]
+    assert captured["namespace"] == "docs"

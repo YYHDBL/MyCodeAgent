@@ -1,7 +1,6 @@
 """HistoryManager tests."""
 
 import unittest
-from unittest.mock import patch
 
 from runtime.history import HistoryManager, Message
 
@@ -14,28 +13,24 @@ class TestHistoryManager(unittest.TestCase):
         self.assertEqual(hm.get_message_count(), 2)
         self.assertEqual(hm.get_rounds_count(), 1)
 
-    def test_append_tool_calls_truncator(self):
+    def test_append_tool_keeps_the_orchestrator_observation(self):
         hm = HistoryManager()
-        with patch("runtime.observation_store.truncate_observation", return_value="TRUNCATED") as mock_truncate:
-            msg = hm.append_tool("LS", "{\"status\":\"success\"}")
-        mock_truncate.assert_called_once()
+        msg = hm.append_tool("Glob", "{\"status\":\"success\"}")
         self.assertEqual(msg.role, "tool")
-        self.assertEqual(msg.content, "TRUNCATED")
-        self.assertEqual(msg.metadata.get("tool_name"), "LS")
+        self.assertEqual(msg.content, '{"status":"success"}')
+        self.assertEqual(msg.metadata.get("tool_name"), "Glob")
 
-    def test_append_tool_skips_truncation_when_observation_already_budgeted(self):
+    def test_append_tool_keeps_budget_metadata(self):
         hm = HistoryManager()
 
-        with patch("runtime.observation_store.truncate_observation", return_value="TRUNCATED") as mock_truncate:
-            msg = hm.append_tool(
-                "Read",
-                '{"status":"partial"}',
-                metadata={"tool_call_id": "call_1", "budgeted": True},
-                project_root=".",
-            )
+        msg = hm.append_tool(
+            "Read",
+            '{"status":"partial"}',
+            metadata={"tool_call_id": "call_1", "budgeted": True},
+        )
 
         self.assertEqual(msg.content, '{"status":"partial"}')
-        mock_truncate.assert_not_called()
+        self.assertTrue(msg.metadata["budgeted"])
 
     def test_append_summary(self):
         hm = HistoryManager()

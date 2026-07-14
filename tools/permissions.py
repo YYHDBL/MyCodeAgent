@@ -59,28 +59,10 @@ class PermissionDecision:
 class RiskClassifier:
     """Classify tool calls into permission decisions."""
 
-    READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "LS", "ListFiles"}
-    WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+    READ_ONLY_TOOLS = {"Read", "Grep", "Glob"}
+    WRITE_TOOLS = {"Edit"}
     INTERNAL_STATE_TOOLS = {"TodoWrite"}
-    PERSISTENT_MEMORY_TOOLS = {"Memory"}
     RECURSIVE_OR_MUTATING_TOOLS = {"Bash", "Task"}
-    COORDINATION_TOOLS = {
-        "AskUser",
-        "Skill",
-        "TeamCreate",
-        "SendMessage",
-        "TeamStatus",
-        "TeamDelete",
-        "TeamCleanup",
-        "TeamApprovals",
-        "TeamApprovePlan",
-        "TeamFanout",
-        "TeamCollect",
-        "TeamTaskCreate",
-        "TeamTaskGet",
-        "TeamTaskUpdate",
-        "TeamTaskList",
-    }
     _WRITE_PATH_KEYS = ("path", "file_path")
     _BASH_ALLOW_EXACT = {
         "pwd",
@@ -166,23 +148,6 @@ class RiskClassifier:
                 input_summary=summary,
             )
 
-        if tool_name in self.PERSISTENT_MEMORY_TOOLS:
-            if context.runtime_mode == "readonly_subagent":
-                return PermissionDecision(
-                    action=PermissionAction.DENY,
-                    risk=RiskLevel.HIGH,
-                    reason="readonly_subagent blocks Memory",
-                    policy_source="permission_core",
-                    input_summary=summary,
-                )
-            return PermissionDecision(
-                action=PermissionAction.ALLOW,
-                risk=RiskLevel.MEDIUM,
-                reason="persistent memory tool",
-                policy_source="permission_core",
-                input_summary=summary,
-            )
-
         if tool_name == "Bash":
             return self._classify_bash(payload, context, summary)
 
@@ -203,11 +168,11 @@ class RiskClassifier:
                 input_summary=summary,
             )
 
-        if tool_name in self.COORDINATION_TOOLS:
+        if tool_name == "Skill":
             return PermissionDecision(
                 action=PermissionAction.ALLOW,
-                risk=RiskLevel.MEDIUM if tool_name == "AskUser" else RiskLevel.LOW,
-                reason="coordination tool",
+                risk=RiskLevel.LOW,
+                reason="local skill tool",
                 policy_source="permission_core",
                 input_summary=summary,
             )

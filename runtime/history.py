@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel
 
 from core.config import Config
-import runtime.observation_store as observation_store
 
 MessageRole = Literal["user", "assistant", "summary", "tool"]
 
@@ -116,31 +115,24 @@ class HistoryManager:
     def append_tool(
         self,
         tool_name: str,
-        raw_result: str,
+        observation: str,
         metadata: Optional[dict] = None,
-        project_root: Optional[str] = None,
     ) -> Message:
         """
-        添加工具消息（截断后写入）
+        Add a model-ready tool observation.
         
         Args:
-            tool_name: 工具名称（如 "LS", "Grep", "Read" 等）
-            raw_result: 工具返回的原始 JSON 字符串
+            tool_name: 工具名称（如 "Glob", "Grep", "Read" 等）
+            observation: JSON generated once by ``ToolOrchestrator``.
             metadata: 可选的元数据（如 step、tool_name 等）
-            project_root: 项目根目录（用于落盘路径）
         
         Returns:
-            创建的 Message 对象（content 为截断后的 JSON）
+            created message
         """
         metadata = metadata or {}
-        if metadata.get("budgeted") is True:
-            truncated_result = raw_result
-        else:
-            truncated_result = observation_store.truncate_observation(tool_name, raw_result, project_root)
-        
         # 注意：先展开 metadata，再写 tool_name，确保 tool_name 不被覆盖
         msg = Message(
-            content=truncated_result,
+            content=observation,
             role="tool",
             metadata={
                 **metadata,

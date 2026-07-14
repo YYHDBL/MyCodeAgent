@@ -1,7 +1,5 @@
-import os
 import shlex
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -14,20 +12,16 @@ def bash_tool(tmp_path):
     return BashTool(project_root=tmp_path, working_dir=tmp_path)
 
 
-def _extract_status(result: str) -> str:
-    # result is JSON string per tool protocol
-    import json
-    return json.loads(result)["status"]
+def _extract_status(result) -> ToolStatus:
+    return result.status
 
 
-def _extract_data(result: str) -> dict:
-    import json
-    return json.loads(result)["data"]
+def _extract_data(result) -> dict:
+    return result.data
 
 
-def _extract_error(result: str) -> dict:
-    import json
-    return json.loads(result).get("error") or {}
+def _extract_error(result) -> dict:
+    return {"code": result.error_code, "message": result.error_message}
 
 
 PYTHON = shlex.quote(sys.executable)
@@ -75,7 +69,7 @@ def test_read_search_command_blocked(bash_tool):
     result = bash_tool.run({"command": "ls"})
     assert _extract_status(result) == ToolStatus.ERROR
     err = _extract_error(result)
-    assert "Use LS" in err.get("message", "")
+    assert "Use Glob" in err.get("message", "")
 
 
 def test_remote_script_exec_blocked(bash_tool):

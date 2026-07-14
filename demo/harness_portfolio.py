@@ -18,10 +18,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from core.config import Config
 from runtime.context import ContextEngine
-from runtime.evals import summarize_trace
 from runtime.history import HistoryManager
 from runtime.loop import RuntimeRunner
-from runtime.memory import LongTermMemoryStore
 from runtime.subagents import SubagentLauncher, SubagentRequest
 from runtime.transcript import ResumeLoader, TranscriptStore
 from tests.scenarios.phase0_baselines import CompletionGateBlockedScenarioHost
@@ -30,13 +28,14 @@ from tools.executor import ToolExecutor
 from tools.orchestrator import ToolOrchestrator
 from tools.permissions import PermissionContext, RiskClassifier
 from tools.registry import ToolRegistry
+from tools.base import ToolResult, ToolStatus
 
 
 DEMO_NAMES = (
     "agent-loop",
     "tool-harness",
     "context-engineering",
-    "memory-subagent",
+    "recovery-subagent",
 )
 
 
@@ -68,7 +67,7 @@ class ToolDemoHost:
         self.tool_registry = ToolRegistry()
         self.tool_registry.register_function("Read", "deterministic read", self._read)
         self.tool_registry.register_function("Grep", "deterministic grep", self._grep)
-        self.tool_registry.register_function("Write", "must be denied", self._write)
+        self.tool_registry.register_function("Edit", "must be denied", self._edit)
         self.tool_executor = ToolExecutor(
             self.tool_registry,
             context=ToolExecutionContext(
@@ -79,18 +78,30 @@ class ToolDemoHost:
         )
 
     @staticmethod
-    def _read(_input: Any) -> str:
+    def _read(_input: Any) -> ToolResult:
         time.sleep(0.02)
-        return "read result"
+        return ToolResult(
+            status=ToolStatus.SUCCESS,
+            data={"content": "read result"},
+            text="read result",
+            stats={"time_ms": 20},
+            context={"cwd": ".", "params_input": {"input": _input}},
+        )
 
     @staticmethod
-    def _grep(_input: Any) -> str:
+    def _grep(_input: Any) -> ToolResult:
         time.sleep(0.001)
-        return "grep result"
+        return ToolResult(
+            status=ToolStatus.SUCCESS,
+            data={"content": "grep result"},
+            text="grep result",
+            stats={"time_ms": 1},
+            context={"cwd": ".", "params_input": {"input": _input}},
+        )
 
     @staticmethod
-    def _write(_input: Any) -> str:
-        raise AssertionError("permission core must block this write")
+    def _edit(_input: Any) -> ToolResult:
+        raise AssertionError("permission core must block this edit")
 
     @staticmethod
     def _ensure_json_input(raw_args: Any) -> tuple[dict[str, Any], Exception | None]:
@@ -132,12 +143,21 @@ def _run_agent_loop_demo() -> dict[str, Any]:
         "Run pytest, but the scripted model immediately claims completion.",
         show_raw=False,
     )
+    events = host.trace_logger.events
+    terminal = next(payload for event, _step, payload in reversed(events) if event == "terminal")
     return {
         "demo": "agent-loop",
         "purpose": "Completion is a runtime decision, not a model-side phrase.",
         "result": result,
-        "summary": summarize_trace(host.trace_logger.events),
-        "trace": _trace_rows(host.trace_logger.events),
+        "summary": {
+            "terminal_reason": terminal["reason"],
+            "completion_gate_block_count": sum(
+                1
+                for event, _step, payload in events
+                if event == "completion_gate_verdict" and payload.get("verdict") == "fail"
+            ),
+        },
+        "trace": _trace_rows(events),
     }
 
 
@@ -157,9 +177,9 @@ def _run_tool_harness_demo() -> dict[str, Any]:
                     "arguments": {"input": "RuntimeRunner"},
                 },
                 {
-                    "id": "write-denied",
-                    "name": "Write",
-                    "arguments": {"path": "blocked.txt", "content": "no"},
+                    "id": "edit-denied",
+                    "name": "Edit",
+                    "arguments": {"path": "blocked.txt", "create_content": "no"},
                 },
             ],
             step=1,
@@ -244,8 +264,8 @@ def _run_context_demo() -> dict[str, Any]:
     }
 
 
-def _run_memory_subagent_demo() -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="mycodeagent-memory-demo-") as temp_dir:
+def _run_recovery_subagent_demo() -> dict[str, Any]:
+    with tempfile.TemporaryDirectory(prefix="mycodeagent-recovery-demo-") as temp_dir:
         root = Path(temp_dir)
         transcript = TranscriptStore(root / "transcript.jsonl", session_id="portfolio-session")
         transcript.append_message(
@@ -265,32 +285,26 @@ def _run_memory_subagent_demo() -> dict[str, Any]:
         transcript.append_tool_lifecycle(
             run_id="run-1",
             step=2,
-            tool_name="Write",
-            tool_call_id="write-uncertain",
+            tool_name="Edit",
+            tool_call_id="edit-uncertain",
             status="requested",
             payload={"args": {"path": "notes.txt"}},
         )
         transcript.append_tool_lifecycle(
             run_id="run-1",
             step=2,
-            tool_name="Write",
-            tool_call_id="write-uncertain",
+            tool_name="Edit",
+            tool_call_id="edit-uncertain",
             status="started",
             payload={"args": {"path": "notes.txt"}},
         )
         resume = ResumeLoader(transcript).load(run_id="run-1")
 
-        memory_store = LongTermMemoryStore(project_root=root)
-        memory_store.add("memory", "RuntimeRunner is the canonical loop.")
-        memory_store.add("user", "Prefer deterministic demos without API keys.")
-        frozen_snapshot = memory_store.load()
-
         history = HistoryManager()
         history.load_messages(resume.history_messages)
-        context_trace = RecordingTrace(session_id="memory-context")
+        context_trace = RecordingTrace(session_id="recovery-context")
         context_engine = ContextEngine(DemoContextBuilder())
         context_engine.set_session_memory(resume.session_memory)
-        context_engine.set_long_term_memory_snapshot(frozen_snapshot)
         view = context_engine.build_model_view(
             history_manager=history,
             pending_input="Continue safely.",
@@ -327,19 +341,18 @@ def _run_memory_subagent_demo() -> dict[str, Any]:
         ]
         uncertain = resume.uncertain_actions[0]
         return {
-            "demo": "memory-subagent",
+            "demo": "recovery-subagent",
             "purpose": (
-                "Transcript facts rebuild Session Memory; frozen long-term memory and "
-                "a bounded child result enter the Model View without merging parent history."
+                "Transcript facts rebuild Session Memory and a bounded child result "
+                "enters the Model View without merging parent history."
             ),
             "summary": {
                 "transcript_event_count": len(transcript_trace),
                 "uncertain_action_count": len(resume.uncertain_actions),
                 "uncertain_replay_allowed": uncertain.replay_allowed,
                 "session_memory_injected": "session_memory" in view.dynamic_context_sources,
-                "long_term_memory_injected": "long_term_memory" in view.dynamic_context_sources,
                 "subagent_status": launched.status.value,
-                "subagent_tool_allowlist": ["Glob", "Grep", "LS", "Read"],
+                "subagent_tool_allowlist": ["Glob", "Grep", "Read"],
             },
             "session_memory": resume.session_memory.to_dict(),
             "subagent_result": (
@@ -357,7 +370,7 @@ DEMO_RUNNERS: dict[str, Callable[[], dict[str, Any]]] = {
     "agent-loop": _run_agent_loop_demo,
     "tool-harness": _run_tool_harness_demo,
     "context-engineering": _run_context_demo,
-    "memory-subagent": _run_memory_subagent_demo,
+    "recovery-subagent": _run_recovery_subagent_demo,
 }
 
 
@@ -376,7 +389,7 @@ def run_all_demos() -> list[dict[str, Any]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("demo", choices=(*DEMO_NAMES, "all"))
-    parser.add_argument("--output", type=Path, help="Write the JSON report to this path.")
+    parser.add_argument("--output", type=Path, help="Save the JSON report to this path.")
     args = parser.parse_args(argv)
 
     logging.disable(logging.CRITICAL)

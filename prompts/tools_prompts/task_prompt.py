@@ -11,8 +11,8 @@ When to use Task
 
 Capability boundary
 - The only supported subagent_type is "explore".
-- Explore can use only LS, Glob, Grep, and Read.
-- Explore cannot use Bash, Write, Edit, MultiEdit, AskUser, or Task.
+- Explore can use only Glob, Grep, and Read.
+- Explore cannot use Bash, Edit, or Task.
 - Task does not provide persistent, parallel, background, plan, summary, or general agents.
 
 Model guidance

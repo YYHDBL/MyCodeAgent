@@ -19,7 +19,7 @@ class TestContextBuilder(unittest.TestCase):
     def test_build_messages_with_history(self):
         structure = {
             "prompts/agents_prompts/L1_system_prompt.py": "system_prompt = 'L1 {tools}'",
-            "prompts/tools_prompts/ls_prompt.py": "ls_prompt = 'LS tool'",
+            "prompts/tools_prompts/glob_prompt.py": "glob_prompt = 'Glob tool'",
             "CODE_LAW.md": "Rule A",
         }
         with self._make_project(structure) as project:
@@ -32,7 +32,7 @@ class TestContextBuilder(unittest.TestCase):
 
     def test_system_prompt_override(self):
         structure = {
-            "prompts/tools_prompts/ls_prompt.py": "ls_prompt = 'LS tool'",
+            "prompts/tools_prompts/glob_prompt.py": "glob_prompt = 'Glob tool'",
         }
         with self._make_project(structure) as project:
             builder = ContextBuilder(
@@ -42,7 +42,7 @@ class TestContextBuilder(unittest.TestCase):
             )
             messages = builder.get_system_messages()
             self.assertIn("OVERRIDE", messages[0]["content"])
-            self.assertIn("LS tool", "\n".join(message["content"] for message in messages))
+            self.assertIn("Glob tool", "\n".join(message["content"] for message in messages))
 
     def test_code_law_lowercase_name(self):
         structure = {

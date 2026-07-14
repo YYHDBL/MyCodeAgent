@@ -1,18 +1,29 @@
-from runtime.session import SessionStore
+import json
 
 
-def test_session_store_roundtrip(tmp_path):
-    store = SessionStore()
-    snapshot = store.build_snapshot(
-        system_messages=[{"role": "system", "content": "sys"}],
-        history_messages=[{"role": "user", "content": "hi"}],
-        tool_schema=[],
-        project_root=str(tmp_path),
+def test_legacy_snapshot_import_is_transcript_only_and_idempotent(tmp_path):
+    from runtime.transcript import ResumeLoader, TranscriptStore
+
+    snapshot = tmp_path / "session-latest.json"
+    snapshot.write_text(
+        json.dumps(
+            {
+                "history_messages": [
+                    {"role": "user", "content": "restore this", "metadata": {}},
+                    {"role": "assistant", "content": "restored", "metadata": {}},
+                ],
+                "read_cache": {"README.md": "cached"},
+            }
+        ),
+        encoding="utf-8",
     )
+    store = TranscriptStore(tmp_path / "transcript.jsonl", session_id="session-1")
 
-    path = tmp_path / "session.json"
-    store.save(path, snapshot)
-    loaded = store.load(path)
+    assert store.import_legacy_snapshot(snapshot) is True
+    assert store.import_legacy_snapshot(snapshot) is False
 
-    assert loaded["system_messages"][0]["content"] == "sys"
-    assert loaded["history_messages"][0]["content"] == "hi"
+    resume = ResumeLoader(store).load_session()
+
+    assert [message["content"] for message in resume.history_messages] == ["restore this", "restored"]
+    assert resume.runtime_state["read_cache"] == {"README.md": "cached"}
+    assert len(store.read_events()) == 3

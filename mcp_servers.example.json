@@ -1,0 +1,9 @@
+{
+  "_comment": "Example only. Copy this file to mcp.json in the target project, configure servers, then start MyCodeAgent with --enable-mcp.",
+  "mcpServers": {
+    "example": {
+      "command": "your-mcp-server-command",
+      "args": []
+    }
+  }
+}

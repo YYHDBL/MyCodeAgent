@@ -11,7 +11,7 @@ from core.llm import HelloAgentsLLM
 from runtime.host import CodeAgent
 from tools.registry import ToolRegistry
 
-PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+PACKAGE_RESOURCE_ROOT = str(Path(__file__).resolve().parent.parent)
 
 
 @dataclass
@@ -23,6 +23,16 @@ class RuntimeBootstrap:
     tool_registry: Any
     agent: Any
     project_root: str
+
+
+def resolve_project_root(project_root: Optional[str] = None) -> str:
+    """Resolve an existing target project directory from the invocation context."""
+
+    target = Path(project_root).expanduser() if project_root is not None else Path.cwd()
+    resolved_target = target.resolve()
+    if not resolved_target.is_dir():
+        raise ValueError(f"Project root must be an existing directory: {target}")
+    return str(resolved_target)
 
 
 def build_runtime(
@@ -38,12 +48,16 @@ def build_runtime(
 ) -> RuntimeBootstrap:
     """Assemble config, llm, registry, and agent without starting the UI loop."""
 
-    resolved_project_root = project_root or PROJECT_ROOT
+    selected_project_root = project_root if project_root is not None else getattr(args, "cwd", None)
+    resolved_project_root = resolve_project_root(selected_project_root)
 
     config = config_class.from_env()
-    teammate_mode = getattr(args, "teammate_mode", None)
-    if teammate_mode is not None:
-        config.teammate_mode = teammate_mode
+    for argument, attribute in (
+        ("enable_mcp", "enable_mcp"),
+        ("enable_verification_agent", "enable_verification_agent"),
+    ):
+        if getattr(args, argument, False):
+            setattr(config, attribute, True)
 
     llm = llm_class(
         model=getattr(args, "model", None),
@@ -59,16 +73,17 @@ def build_runtime(
 
     tool_registry = tool_registry_factory()
 
-    # Keep CLI behavior unchanged: RichConsoleCodeAgent expects these callbacks.
-    config.show_react_steps = True
-
     agent_kwargs = {
         "name": getattr(args, "name", "code"),
         "llm": llm,
         "tool_registry": tool_registry,
         "project_root": resolved_project_root,
+        "package_resource_root": PACKAGE_RESOURCE_ROOT,
         "system_prompt": getattr(args, "system", None),
         "config": config,
+        "enable_mcp": config.enable_mcp,
+        "enable_skills": config.enable_skills,
+        "enable_tracing": config.enable_tracing,
     }
     if extension_flags:
         if "mcp" in extension_flags:
@@ -79,12 +94,6 @@ def build_runtime(
             agent_kwargs["enable_tracing"] = bool(extension_flags["tracing"])
     if agent_kwargs_factory is not None:
         agent_kwargs.update(agent_kwargs_factory(config, llm, resolved_project_root))
-
-    skill_evolution_enabled = (
-        getattr(args, "skill_evolution", False)
-        or config.enable_skill_evolution
-    )
-    agent_kwargs["enable_skill_evolution"] = skill_evolution_enabled
 
     agent = agent_class(**agent_kwargs)
 

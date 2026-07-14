@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Protocol
 
@@ -41,7 +41,7 @@ VERIFY_COMMAND_PATTERNS: tuple[tuple[str, str], ...] = (
     (r"\bbuild\b", "build"),
 )
 
-MUTATING_TOOL_NAMES = {"Write", "Edit", "MultiEdit"}
+MUTATING_TOOL_NAMES = {"Edit"}
 
 
 class CompletionGateVerdict(str, Enum):

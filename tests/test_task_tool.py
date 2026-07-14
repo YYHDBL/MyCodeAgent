@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from runtime.subagents import ExploreResult, SubagentLaunchResult, SubagentStatus
-from tools.base import ErrorCode
+from tools.base import ErrorCode, serialize_tool_result
 from tools.builtin.task import TaskTool
 
 
@@ -25,9 +25,9 @@ def test_task_parameters_only_expose_formal_explore_mode(task_tool):
 
 @pytest.mark.parametrize("subagent_type", ["general", "plan", "summary", "persistent", "parallel"])
 def test_task_rejects_legacy_modes(task_tool, subagent_type):
-    payload = json.loads(
+    payload = json.loads(serialize_tool_result(
         task_tool.run({"description": "d", "prompt": "p", "subagent_type": subagent_type})
-    )
+    ))
     assert payload["status"] == "error"
     assert payload["error"]["code"] == ErrorCode.INVALID_PARAM.value
 
@@ -49,9 +49,9 @@ def test_task_returns_only_structured_explore_result(task_tool, launcher):
         ),
         elapsed_ms=12,
     )
-    payload = json.loads(
+    payload = json.loads(serialize_tool_result(
         task_tool.run({"description": "d", "prompt": "p", "subagent_type": "explore"})
-    )
+    ))
     assert payload["status"] == "success"
     assert payload["data"]["result"]["summary"] == "summary"
     assert "history" not in payload["data"]
@@ -69,8 +69,8 @@ def test_task_contains_child_failure(task_tool, launcher):
         error="boom",
         elapsed_ms=3,
     )
-    payload = json.loads(
+    payload = json.loads(serialize_tool_result(
         task_tool.run({"description": "d", "prompt": "p", "subagent_type": "explore"})
-    )
+    ))
     assert payload["status"] == "error"
     assert payload["error"]["code"] == ErrorCode.INTERNAL_ERROR.value

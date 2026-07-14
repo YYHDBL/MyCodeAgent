@@ -1,7 +1,5 @@
 """Environment loader helper to ensure .env is applied early."""
 
-import os
-
 _ENV_LOADED = False
 
 

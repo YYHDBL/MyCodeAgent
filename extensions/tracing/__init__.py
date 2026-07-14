@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from extensions.tracing.logger import TraceLogger, create_trace_logger
-from extensions.tracing.protocol import CORE_TRACE_EVENTS, SUBAGENT_TRACE_EVENTS, TraceEventSpec
-from extensions.tracing.sanitizer import TraceSanitizer
 
 
 class NullTraceLogger:
@@ -37,10 +35,6 @@ class NullTraceLogger:
 
 __all__ = [
     "NullTraceLogger",
-    "CORE_TRACE_EVENTS",
-    "SUBAGENT_TRACE_EVENTS",
     "TraceLogger",
-    "TraceEventSpec",
-    "TraceSanitizer",
     "create_trace_logger",
 ]

@@ -55,7 +55,7 @@ Examples
 Error Handling
 - NOT_FOUND: File does not exist.
 - ACCESS_DENIED: Path is outside project root.
-- IS_DIRECTORY: Path is a directory (use LS instead).
+- IS_DIRECTORY: Path is a directory (use Glob instead).
 - BINARY_FILE: File appears to be binary.
 - INVALID_PARAM: start_line exceeds file length, or limit out of range.
   (Note: empty file only allows start_line=1.)

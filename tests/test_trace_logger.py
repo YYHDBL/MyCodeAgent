@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 from extensions.tracing.logger import TraceLogger
 from extensions.tracing import NullTraceLogger
 
@@ -95,8 +93,8 @@ class TestTraceLoggerEnabled:
             trace_dir=tmp_path / "traces",
             enabled=True,
         )
-        logger.log_event("tool_call", {"tool": "LS", "args": {}}, step=1)
-        logger.log_event("tool_result", {"tool": "LS", "result": {"status": "ok"}}, step=1)
+        logger.log_event("tool_call", {"tool": "Glob", "args": {}}, step=1)
+        logger.log_event("tool_result", {"tool": "Glob", "result": {"status": "ok"}}, step=1)
         logger.log_event("error", {"message": "something went wrong"}, step=2)
         logger.finalize()
 

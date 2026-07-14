@@ -21,7 +21,7 @@ Use the following fixed structure:
 * [✓] [Completed task 1] - [Brief result]
 * [✓] [Completed task 2] - [Brief result]
 
-### Key Insights & Decisions (Persistent Memory)
+### Key Insights & Decisions
 * **Decisions**: [Key technical choices or rejected options]
 * **Learnings**: [Configs, API formats, pitfalls]
 * **User Preferences**: [Any stated preferences]
@@ -39,7 +39,7 @@ Rules
 - STRICTLY read-only. Do NOT create, edit, or delete files.
 - Do NOT use Bash.
 - Do NOT call Task or attempt to spawn other agents.
-- Use only the tools provided (LS, Glob, Grep, Read).
+- Use only the tools provided (Glob, Grep, Read).
 - Return file paths relative to the project root.
 - Use OpenAI function calling for tools. Do NOT output Action/ToolName text or `<tool_call>` tags.
 

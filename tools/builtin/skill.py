@@ -1,13 +1,12 @@
 """Skill tool - loads skill instructions from project-local skills."""
 
-import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from extensions.skills.loader import SkillLoader
 from prompts.tools_prompts.skill_prompt import skill_prompt
-from ..base import Tool, ToolParameter, ErrorCode
+from ..base import Tool, ToolParameter, ToolResult, ErrorCode
 from core.env import load_env
 
 load_env()
@@ -22,6 +21,7 @@ class SkillTool(Tool):
         project_root: Optional[Path] = None,
         working_dir: Optional[Path] = None,
         skill_loader: Optional[SkillLoader] = None,
+        refresh_on_call: bool = False,
     ):
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -34,6 +34,7 @@ class SkillTool(Tool):
         )
 
         self._skill_loader = skill_loader or SkillLoader(str(self._project_root))
+        self._refresh_on_call = bool(refresh_on_call)
 
     def get_parameters(self) -> List[ToolParameter]:
         return [
@@ -52,7 +53,7 @@ class SkillTool(Tool):
             ),
         ]
 
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         start_time = time.monotonic()
         params_input = dict(parameters)
 
@@ -60,18 +61,18 @@ class SkillTool(Tool):
         args = parameters.get("args") or ""
 
         if not isinstance(name, str) or not name.strip():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'name' is required and must be a non-empty string.",
                 params_input=params_input,
             )
 
-        refresh = _env_flag("SKILLS_REFRESH_ON_CALL", default=True)
+        refresh = self._refresh_on_call
         skill_meta = self._skill_loader.get_skill(name.strip(), refresh=refresh)
         if not skill_meta and not refresh:
             skill_meta = self._skill_loader.get_skill(name.strip(), refresh=True)
         if not skill_meta:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.NOT_FOUND,
                 message=f"Skill '{name}' not found.",
                 params_input=params_input,
@@ -85,14 +86,14 @@ class SkillTool(Tool):
         try:
             raw_content = skill_path.read_text(encoding="utf-8")
         except PermissionError:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.PERMISSION_DENIED,
                 message=f"Permission denied reading skill '{name}'.",
                 params_input=params_input,
                 path_resolved=rel_path,
             )
         except OSError as exc:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 message=f"Failed to read skill '{name}': {exc}",
                 params_input=params_input,
@@ -101,7 +102,7 @@ class SkillTool(Tool):
 
         parsed = _parse_frontmatter(raw_content)
         if not parsed:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 message=f"Skill '{name}' has invalid frontmatter.",
                 params_input=params_input,
@@ -115,7 +116,7 @@ class SkillTool(Tool):
         content = f"Base directory for this skill: {base_dir}\n\n{expanded}".strip()
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
-        return self.create_success_response(
+        return self.success_result(
             data={
                 "name": skill_meta.name,
                 "base_dir": base_dir,
@@ -165,13 +166,5 @@ def _parse_frontmatter(content: str) -> Optional[tuple[dict[str, str], str]]:
         frontmatter[key.strip()] = value.strip().strip("\"'")
 
     return frontmatter, body
-
-
-def _env_flag(name: str, default: bool = True) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
-
 
 __all__ = ["SkillTool"]

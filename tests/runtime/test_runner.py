@@ -1,7 +1,23 @@
-import logging
 import json
+import logging
 
+from core.config import Config
 from runtime.host import CodeAgent
+from tools.registry import ToolRegistry
+from tools.base import ToolResult, ToolStatus
+
+
+def _tool_result(data, text="", *, params=None, status=ToolStatus.SUCCESS, error_code=None, error_details=None):
+    return ToolResult(
+        status=status,
+        data=data,
+        text=text,
+        error_code=error_code,
+        error_message=text if status is ToolStatus.ERROR else None,
+        error_details=error_details or {},
+        stats={"time_ms": 1},
+        context={"cwd": ".", "params_input": params or {}},
+    )
 
 
 def test_runtime_loop_module_exposes_runner():
@@ -10,18 +26,21 @@ def test_runtime_loop_module_exposes_runner():
     assert RuntimeRunner.__name__ == "RuntimeRunner"
 
 
-def test_runtime_host_imports_canonical_loop():
-    source = open("runtime/host.py", encoding="utf-8").read()
+def test_codeagent_composes_one_runner_and_one_tool_orchestrator(tmp_path):
+    class _LLM:
+        provider = "openai"
+        model = "test-model"
 
-    assert "from runtime.loop import RuntimeRunner" in source
-    assert "runtime." + "runner" not in source
+    agent = CodeAgent(
+        name="code",
+        llm=_LLM(),
+        tool_registry=ToolRegistry(),
+        project_root=str(tmp_path),
+        config=Config(enable_tracing=False),
+    )
 
-
-def test_runtime_host_initializes_tool_orchestrator():
-    source = open("runtime/host.py", encoding="utf-8").read()
-
-    assert "from tools.orchestrator import ToolOrchestrator" in source
-    assert "self.tool_orchestrator = ToolOrchestrator(self)" in source
+    assert agent.runner.host is agent
+    assert agent.tool_orchestrator.host is agent
 
 
 def test_runtime_runner_enforces_total_token_budget():
@@ -35,6 +54,38 @@ def test_runtime_runner_enforces_total_token_budget():
     assert "限定预算" in result
     terminal = [payload for name, _step, payload in host.trace_logger.events if name == "terminal"]
     assert terminal[-1]["reason"] == "token_budget"
+
+
+def test_runtime_runner_serializes_object_model_output_for_jsonl_trace(tmp_path):
+    from extensions.tracing.logger import TraceLogger
+    from runtime.loop import RuntimeRunner
+
+    class _Message:
+        content = "object result"
+
+    class _Choice:
+        message = _Message()
+
+    class _Response:
+        choices = [_Choice()]
+
+        def model_dump(self):
+            raise RuntimeError("provider serialization failed")
+
+        def __str__(self):
+            return "opaque-object-response"
+
+    host = _FakeHost()
+    trace = TraceLogger(session_id="object-response", trace_dir=tmp_path)
+    host.trace_logger = trace
+    host.responses = [_Response()]
+
+    assert RuntimeRunner(host).run("trace object") == "object result"
+    trace.finalize()
+
+    events = [json.loads(line) for line in trace._filepath.read_text(encoding="utf-8").splitlines()]
+    model_output = next(event for event in events if event["event"] == "model_output")
+    assert model_output["payload"]["raw_response"] == {"raw": "opaque-object-response"}
 
 
 class _FakeTraceLogger:
@@ -82,11 +133,11 @@ class _FakeHistoryManager:
     def append_assistant(self, content, metadata=None, reasoning_content=None):
         self.messages.append({"role": "assistant", "content": content, "metadata": metadata or {}})
 
-    def append_tool(self, tool_name, raw_result, metadata=None, project_root=None):
+    def append_tool(self, tool_name, observation, metadata=None):
         self.messages.append(
             {
                 "role": "tool",
-                "content": raw_result,
+                "content": observation,
                 "metadata": {"tool_name": tool_name, **(metadata or {})},
             }
         )
@@ -180,8 +231,6 @@ class _FakeHost:
         self.history_manager = _FakeHistoryManager()
         self._run_id = 0
         self.max_steps = 3
-        self.enable_agent_teams = False
-        self.team_manager = None
         self.project_root = "."
         self.last_response_raw = None
         self.logged_messages = []
@@ -206,7 +255,8 @@ class _FakeHost:
                                 "content": "runner final answer",
                             }
                         }
-                    ]
+                    ],
+                    "usage": {"total_tokens": 12},
                 }
 
         self.llm = _FakeLLM(self)
@@ -340,30 +390,29 @@ class _ToolThenFinalHost(_FakeHost):
         return normalized
 
     def _execute_tool(self, tool_name, tool_input):
-        return "{\"status\": \"success\", \"data\": {\"echo\": \"hi\"}}"
+        return _tool_result({"echo": "hi"}, params=tool_input)
 
 
 class _DeniedToolThenFinalHost(_ToolThenFinalHost):
     def _execute_tool(self, tool_name, tool_input):
-        return json.dumps(
-            {
-                "status": "error",
-                "error": {
-                    "code": "PERMISSION_DENIED",
-                    "message": "blocked by permission core",
-                    "details": {
-                        "permission": {
-                            "tool_name": tool_name,
-                            "risk": "high",
-                            "action": "deny",
-                            "reason": "readonly_subagent blocks writes",
-                            "policy_source": "permission_core",
-                            "input_summary": json.dumps(tool_input, ensure_ascii=False, sort_keys=True),
-                        }
-                    },
-                },
-                "data": {},
-            }
+        return _tool_result(
+            {},
+            "blocked by permission core",
+            params=tool_input,
+            status=ToolStatus.ERROR,
+            error_code="PERMISSION_DENIED",
+            error_details={
+                "details": {
+                    "permission": {
+                        "tool_name": tool_name,
+                        "risk": "high",
+                        "action": "deny",
+                        "reason": "readonly_subagent blocks writes",
+                        "policy_source": "permission_core",
+                        "input_summary": json.dumps(tool_input, ensure_ascii=False, sort_keys=True),
+                    }
+                }
+            },
         )
 
 
@@ -438,6 +487,7 @@ class _MaxOutputWithToolCallsHost(_ToolThenFinalHost):
             {
                 "choices": [
                     {
+                        "finish_reason": "length",
                         "message": {
                             "content": "partial",
                             "tool_calls": [
@@ -461,16 +511,13 @@ class _MaxOutputWithToolCallsHost(_ToolThenFinalHost):
 
         self.tool_orchestrator = _FailIfToolRuns()
 
-    def _extract_response_meta(self, raw_response):
-        return {"finish_reason": "length"}
-
-
 class _ReactiveCompactContextEngine:
     def __init__(self):
         self.compact_calls = []
         self.build_calls = []
         self.last_usage_tokens = 0
         self.total_usage_tokens = 0
+        self.compact_store = type("CompactStore", (), {"active_checkpoint": None})()
 
     def compact_if_needed(self, **kwargs):
         return {"compacted": False, "reason": "budget_ok"}
@@ -579,7 +626,7 @@ class _CompressingHost(_FakeHost):
         return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
 
     def _execute_tool(self, tool_name, tool_input):
-        return "{\"status\": \"success\", \"data\": {\"echo\": \"hi\"}}"
+        return _tool_result({"echo": "hi"}, params=tool_input)
 
 
 class _InvalidArgsToolHost(_ToolThenFinalHost):
@@ -638,13 +685,26 @@ class _RecordingOrchestrator:
 class _BudgetedOrchestrator:
     def run(self, tool_calls, *, step, trace_logger):
         from tools.orchestrator import ToolObservation
+        from tools.base import ToolResult, ToolStatus
 
         return [
             ToolObservation(
                 tool_name="Read",
                 tool_call_id="call_1",
-                observation='{"status":"partial"}',
-                raw_observation='{"status":"success"}',
+                result=ToolResult(
+                    status=ToolStatus.PARTIAL,
+                    data={},
+                    text="budgeted",
+                    stats={"time_ms": 1},
+                    context={"cwd": ".", "params_input": {}},
+                ),
+                raw_result=ToolResult(
+                    status=ToolStatus.SUCCESS,
+                    data={},
+                    text="raw",
+                    stats={"time_ms": 1},
+                    context={"cwd": ".", "params_input": {}},
+                ),
                 metadata={"budgeted": True, "reason": "single_tool_budget"},
             )
         ]
@@ -713,17 +773,14 @@ class _BashVerificationHost(_FakeHost):
         return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
 
     def _execute_tool(self, tool_name, tool_input):
-        return json.dumps(
-            {
-                "status": "success",
-                "data": {"exit_code": 0},
-                "text": "Command succeeded: .venv/bin/python -m pytest -q",
-                "context": {"params_input": tool_input},
-            }
+        return _tool_result(
+            {"exit_code": 0},
+            "Command succeeded: .venv/bin/python -m pytest -q",
+            params=tool_input,
         )
 
 
-class _VerificationInvalidatedByWriteHost(_BashVerificationHost):
+class _VerificationInvalidatedByEditHost(_BashVerificationHost):
     def __init__(self):
         super().__init__()
         self.responses = [
@@ -737,8 +794,8 @@ class _VerificationInvalidatedByWriteHost(_BashVerificationHost):
                                 {
                                     "id": "call_2",
                                     "function": {
-                                        "name": "Write",
-                                        "arguments": "{\"path\": \"a.txt\", \"content\": \"x\"}",
+                                        "name": "Edit",
+                                        "arguments": "{\"path\": \"a.txt\", \"create_content\": \"x\"}",
                                     },
                                 }
                             ],
@@ -752,13 +809,8 @@ class _VerificationInvalidatedByWriteHost(_BashVerificationHost):
     def _execute_tool(self, tool_name, tool_input):
         if tool_name == "Bash":
             return super()._execute_tool(tool_name, tool_input)
-        return json.dumps(
-            {
-                "status": "success",
-                "data": {"path": tool_input.get("path")},
-                "text": "file written",
-                "context": {"params_input": tool_input},
-            }
+        return _tool_result(
+            {"path": tool_input.get("path")}, "file written", params=tool_input
         )
 
 
@@ -804,17 +856,14 @@ class _TodoBlockingHost(_FakeHost):
         return _ToolThenFinalHost._extract_tool_calls(self, raw_response)
 
     def _execute_tool(self, tool_name, tool_input):
-        return json.dumps(
+        return _tool_result(
             {
-                "status": "success",
-                "data": {
-                    "todos": [{"id": "t1", "content": "do thing", "status": "in_progress"}],
-                    "summary": "work",
-                    "stats": {"total": 1, "pending": 0, "in_progress": 1, "completed": 0, "cancelled": 0},
-                },
-                "text": "todo updated",
-                "context": {"params_input": tool_input},
-            }
+                "todos": [{"id": "t1", "content": "do thing", "status": "in_progress"}],
+                "summary": "work",
+                "stats": {"total": 1, "pending": 0, "in_progress": 1, "completed": 0, "cancelled": 0},
+            },
+            "todo updated",
+            params=tool_input,
         )
 
 
@@ -840,6 +889,33 @@ def test_runtime_runner_executes_turn_loop_and_returns_final_answer():
     )
 
 
+def test_runtime_runner_emits_message_transition_and_terminal_facts_once_to_event_sink():
+    from runtime.events import RuntimeEvent
+    from runtime.loop import RuntimeRunner
+
+    host = _FakeHost()
+    emitted: list[RuntimeEvent] = []
+
+    class Sink:
+        def emit(self, event: RuntimeEvent) -> None:
+            emitted.append(event)
+
+    host.runtime_event_sink = Sink()
+
+    result = RuntimeRunner(host).run("event sink task")
+
+    assert result == "runner final answer"
+    assert [event.type for event in emitted].count("message") == 2
+    assert any(
+        event.type == "state_transition"
+        and event.payload["reason"] == "model_returned_final"
+        for event in emitted
+    )
+    terminal_events = [event for event in emitted if event.type == "terminal"]
+    assert len(terminal_events) == 1
+    assert terminal_events[0].payload["reason"] == "completed"
+
+
 def test_permission_denial_is_appended_to_history_and_does_not_break_loop():
     from runtime.loop import RuntimeRunner
 
@@ -863,7 +939,7 @@ def test_permission_trace_event_is_preserved_in_runtime_history_flow():
             trace_logger.log_event(
                 "permission_decision",
                 {
-                    "tool_name": "Write",
+                    "tool_name": "Edit",
                     "risk": "high",
                     "action": "deny",
                     "reason": "readonly_subagent blocks writes",
@@ -877,7 +953,7 @@ def test_permission_trace_event_is_preserved_in_runtime_history_flow():
                     "Obs",
                     (),
                     {
-                        "tool_name": "Write",
+                        "tool_name": "Edit",
                         "tool_call_id": "call_1",
                         "observation": '{"status":"error","error":{"code":"PERMISSION_DENIED","message":"blocked"}}',
                         "metadata": {"permission_action": "deny"},
@@ -894,7 +970,7 @@ def test_permission_trace_event_is_preserved_in_runtime_history_flow():
     assert result == "tool done"
     assert any(
         event[0] == "permission_decision"
-        and event[2]["tool_name"] == "Write"
+        and event[2]["tool_name"] == "Edit"
         for event in host.trace_logger.events
     )
 
@@ -1163,6 +1239,17 @@ def test_runtime_runner_state_tracks_current_model_view_messages():
     assert final_transitions[-1][2]["message_count"] > 0
 
 
+def test_runtime_runner_resets_cancel_marker_for_each_new_turn():
+    from runtime.loop import RuntimeRunner
+
+    host = _FakeHost()
+    host._turn_cancelled = True
+
+    RuntimeRunner(host)._prepare_run("second interrupted turn", show_raw=False)
+
+    assert host._turn_cancelled is False
+
+
 def test_runtime_runner_emits_context_compacted_transition():
     from runtime.loop import RuntimeRunner
 
@@ -1240,24 +1327,6 @@ def test_runtime_runner_records_tool_lifecycle_and_checkpoints_in_transcript():
         == host.context_engine.compact_store.active_checkpoint.source_message_count
     )
     assert checkpoint_payload["created_at"]
-
-
-def test_runtime_runner_notifies_host_when_context_compacts():
-    from runtime.loop import RuntimeRunner
-
-    host = _CompressingHost()
-    compacted = []
-
-    def on_context_compacted(info, messages):
-        compacted.append((info, messages))
-
-    host._on_context_compacted = on_context_compacted
-
-    RuntimeRunner(host).run("hello world", show_raw=False)
-
-    assert compacted
-    assert compacted[-1][0]["compacted"] is True
-    assert compacted[-1][1]
 
 
 def test_resume_restored_history_is_still_projected_by_context_engine(tmp_path):
@@ -1366,7 +1435,7 @@ def test_runtime_runner_can_finish_unverified_when_user_marks_verification_optio
 def test_runtime_runner_invalidates_old_verification_after_file_modification():
     from runtime.loop import RuntimeRunner
 
-    host = _VerificationInvalidatedByWriteHost()
+    host = _VerificationInvalidatedByEditHost()
     runner = RuntimeRunner(host)
 
     result = runner.run("make the fix and run tests", show_raw=False)

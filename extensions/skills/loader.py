@@ -26,34 +26,19 @@ class SkillLoader:
     def __init__(self, project_root: str, skills_dir: str = "skills"):
         self._project_root = Path(project_root).resolve()
         self._skills_dir = (self._project_root / skills_dir).resolve()
-        self._overlay_dir: Path | None = None
         self._skills: Dict[str, SkillMeta] = {}
         self._last_scan_mtime: float = 0.0
         self._last_scan_count: int = 0
 
-    def set_overlay_dir(self, path: Path | None):
-        self._overlay_dir = path
-        self._skills.clear()
-
     def scan(self) -> List[SkillMeta]:
-        """Scan skills directory and refresh cache.
-
-        Overlay 目录（若已设置）中存在的同名 Skill 覆盖源码版本。
-        """
-        files: dict[str, Path] = {}
-        for path in self._iter_skill_files():
-            key = str(path.relative_to(self._skills_dir))
-            files[key] = path
-        if self._overlay_dir and self._overlay_dir.exists():
-            for path in sorted(self._overlay_dir.rglob("SKILL.md")):
-                key = str(path.relative_to(self._overlay_dir))
-                files[key] = path
+        """Scan project-local skills and refresh the cache."""
+        files = self._iter_skill_files()
 
         skills: Dict[str, SkillMeta] = {}
         max_mtime = 0.0
         count = 0
 
-        for path in sorted(files.values()):
+        for path in files:
             count += 1
             try:
                 stat = path.stat()
@@ -115,14 +100,6 @@ class SkillLoader:
                 max_mtime = max(max_mtime, stat.st_mtime)
             except OSError:
                 continue
-        if self._overlay_dir and self._overlay_dir.exists():
-            for path in self._overlay_dir.rglob("SKILL.md"):
-                count += 1
-                try:
-                    stat = path.stat()
-                    max_mtime = max(max_mtime, stat.st_mtime)
-                except OSError:
-                    continue
         return max_mtime, count
 
     def _parse_skill_file(self, path: Path) -> Optional[SkillMeta]:

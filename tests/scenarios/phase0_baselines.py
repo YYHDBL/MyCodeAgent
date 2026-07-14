@@ -5,14 +5,25 @@ from pathlib import Path
 
 from runtime.completion import CompletionGateResult, CompletionGateVerdict
 from runtime.context import ContextEngine
-from runtime.evals import summarize_trace as summarize_trace_metrics
 from runtime.history import Message
 from runtime.loop import RuntimeRunner
+from runtime.transcript import TranscriptRecorder, TranscriptStore
 from tools.context import ToolExecutionContext
 from tools.executor import ToolExecutor
+from tools.base import ToolResult, ToolStatus
 from tools.orchestrator import ToolOrchestrator
 from tools.permissions import PermissionContext, RiskClassifier
 from tools.registry import ToolRegistry
+
+
+def _tool_result(data, text="", *, params=None):
+    return ToolResult(
+        status=ToolStatus.SUCCESS,
+        data=data,
+        text=text,
+        stats={"time_ms": 1},
+        context={"cwd": ".", "params_input": params or {}},
+    )
 
 
 class RecordingTraceLogger:
@@ -42,13 +53,29 @@ class ScenarioHistoryManager:
     def append_assistant(self, content, metadata=None, reasoning_content=None):
         self.messages.append({"role": "assistant", "content": content, "metadata": metadata or {}})
 
-    def append_tool(self, tool_name, raw_result, metadata=None, project_root=None):
-        self.messages.append({"role": "tool", "content": raw_result, "metadata": metadata or {}})
+    def append_tool(self, tool_name, observation, metadata=None):
+        self.messages.append(
+            {
+                "role": "tool",
+                "content": observation,
+                "metadata": {"tool_name": tool_name, **(metadata or {})},
+            }
+        )
 
     def get_messages(self):
         return [
             Message(content=item["content"], role=item["role"], metadata=item.get("metadata", {}))
             for item in self.messages
+        ]
+
+    def load_messages(self, messages):
+        self.messages = [
+            {
+                "role": item.get("role", "assistant"),
+                "content": item.get("content", ""),
+                "metadata": dict(item.get("metadata") or {}),
+            }
+            for item in messages
         ]
 
     def get_message_count(self):
@@ -109,8 +136,6 @@ class BaseScenarioHost:
         self.history_manager = ScenarioHistoryManager()
         self._run_id = 0
         self.max_steps = 3
-        self.enable_agent_teams = False
-        self.team_manager = None
         self.project_root = "."
         self.last_response_raw = None
         self.logged_messages = []
@@ -171,7 +196,7 @@ class BaseScenarioHost:
             return {}, exc
 
     def _execute_tool(self, tool_name, tool_input):
-        return '{"status": "success", "data": {"tool": "%s"}}' % tool_name
+        return _tool_result({"tool": tool_name}, params=tool_input)
 
     def _print_context_preview(self, messages):
         self.logged_messages.append(("preview", str(messages), {}, 0))
@@ -261,15 +286,207 @@ class ToolFailureScenarioHost(ToolThenFinalScenarioHost):
         raise RuntimeError(f"{tool_name} failed")
 
 
+class CountingEditScenarioHost(ToolThenFinalScenarioHost):
+    def __init__(self, effects):
+        super().__init__(tool_name="Edit", final_text="edit done")
+        self.effects = effects
+
+    def _execute_tool(self, tool_name, tool_input):
+        self.effects["writes"] += 1
+        return _tool_result({"write": tool_input}, "recorded write", params=tool_input)
+
+
+class TranscriptAwareContinuationScenarioHost(BaseScenarioHost):
+    """Continue only when transcript history proves the prior write completed."""
+
+    def __init__(self, effects):
+        super().__init__()
+        self.effects = effects
+        self.continuation_decision = None
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                if self.outer._has_completed_write_observation(messages):
+                    self.outer.continuation_decision = "final_after_completed_write"
+                    return {"choices": [{"message": {"content": "continued without replay"}}]}
+                self.outer.continuation_decision = "write_requested_without_completed_write"
+                return {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "resume_write",
+                                        "function": {
+                                            "name": "Edit",
+                                            "arguments": '{"path": "note.txt", "create_content": "retry"}',
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+
+        self.llm = _FakeLLM(self)
+
+    @staticmethod
+    def _has_completed_write_observation(messages):
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+            try:
+                payload = json.loads(message.get("content") or "")
+            except json.JSONDecodeError:
+                continue
+            if payload.get("status") == "success" and "write" in (payload.get("data") or {}):
+                return True
+        return False
+
+    def _execute_tool(self, tool_name, tool_input):
+        self.effects["writes"] += 1
+        return _tool_result({"write": tool_input}, "replayed write", params=tool_input)
+
+
+class StaleEvidenceScenarioHost(ToolThenFinalScenarioHost):
+    def __init__(self):
+        super().__init__(tool_name="Bash", final_text="tests complete")
+        self.max_steps = 4
+        self.responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "verify_tests",
+                                    "function": {
+                                        "name": "Bash",
+                                        "arguments": '{"command": "pytest -q"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "mutate_after_tests",
+                                    "function": {
+                                        "name": "Edit",
+                                        "arguments": '{"path": "note.txt", "create_content": "changed"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "tests complete"}}]},
+            {"choices": [{"message": {"content": "tests complete"}}]},
+        ]
+
+    def _execute_tool(self, tool_name, tool_input):
+        if tool_name == "Bash":
+            return _tool_result({"exit_code": 0}, "deterministic test result", params=tool_input)
+        if tool_name == "Edit":
+            return _tool_result(
+                {"path": tool_input["path"]}, "deterministic mutation result", params=tool_input
+            )
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+
+class VerifiedEditScenarioHost(BaseScenarioHost):
+    """A deterministic mutation followed by fresh verification evidence."""
+
+    def __init__(self):
+        super().__init__()
+        self.max_steps = 4
+        self.effects = {"writes": 0}
+        self.responses = [
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "edit_file",
+                                    "function": {
+                                        "name": "Edit",
+                                        "arguments": '{"path": "note.txt", "create_content": "changed"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [
+                                {
+                                    "id": "verify_tests",
+                                    "function": {
+                                        "name": "Bash",
+                                        "arguments": '{"command": "pytest -q"}',
+                                    },
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+            {"choices": [{"message": {"content": "edit and tests complete"}}]},
+        ]
+
+        class _FakeLLM:
+            def __init__(self, outer):
+                self.outer = outer
+
+            def invoke_raw(self, messages, tools=None, tool_choice=None):
+                self.outer.llm_calls.append(
+                    {"messages": messages, "tools": tools, "tool_choice": tool_choice}
+                )
+                return self.outer.responses.pop(0)
+
+        self.llm = _FakeLLM(self)
+
+    def _execute_tool(self, tool_name, tool_input):
+        if tool_name == "Edit":
+            self.effects["writes"] += 1
+            return _tool_result({"path": tool_input["path"]}, "file changed", params=tool_input)
+        if tool_name == "Bash":
+            return _tool_result({"exit_code": 0}, "deterministic test result", params=tool_input)
+        raise AssertionError(f"unexpected tool: {tool_name}")
+
+
 class PermissionDeniedScenarioHost(ToolThenFinalScenarioHost):
     def __init__(self):
-        super().__init__(tool_name="Write")
+        super().__init__(tool_name="Edit")
         registry = ToolRegistry()
 
-        def _unexpected_write(_input):
-            raise AssertionError("permission denied scenario must not execute Write")
+        def _unexpected_edit(_input):
+            raise AssertionError("permission denied scenario must not execute Edit")
 
-        registry.register_function("Write", "write fixture", _unexpected_write)
+        registry.register_function("Edit", "edit fixture", _unexpected_edit)
         classifier = RiskClassifier()
         self.tool_executor = ToolExecutor(
             registry,
@@ -362,8 +579,12 @@ class CompressingScenarioHost(FinalOnlyScenarioHost):
         self.history_manager.append_assistant("older a")
 
 
-def summarize_trace(events):
-    return summarize_trace_metrics(events)
+def attach_transcript(host, path: str | Path, *, session_id: str = "scenario-session") -> TranscriptStore:
+    """Attach an append-only transcript recorder to a deterministic scenario host."""
+    store = TranscriptStore(path, session_id=session_id)
+    host.transcript_store = store
+    host.transcript_recorder = TranscriptRecorder(store)
+    return store
 
 
 def run_phase0_mock_scenarios(output_path: str | Path | None = None):
@@ -378,24 +599,23 @@ def run_phase0_mock_scenarios(output_path: str | Path | None = None):
     scenarios = []
     for scenario_name, host in cases:
         result = RuntimeRunner(host).run(scenario_name, show_raw=False)
-        metrics = summarize_trace(host.trace_logger.events)
+        events = host.trace_logger.events
+        terminal = next(payload for event, _step, payload in reversed(events) if event == "terminal")
         scenarios.append(
             {
                 "scenario_name": scenario_name,
                 "result": result,
-                "metrics": metrics,
+                "terminal_reason": terminal["reason"],
+                "event_names": [event for event, _step, _payload in events],
             }
         )
 
     report = {
         "scenario_count": len(scenarios),
         "scenarios": scenarios,
-        "aggregate": {
-            "permission_denied_count": sum(item["metrics"]["permission_denied_count"] for item in scenarios),
-            "completion_gate_block_count": sum(item["metrics"]["completion_gate_block_count"] for item in scenarios),
-            "model_recovery_count": sum(item["metrics"]["model_recovery_count"] for item in scenarios),
-            "context_compaction_count": sum(item["metrics"]["context_compaction_count"] for item in scenarios),
-        },
+        "aggregate_event_names": sorted(
+            {event for item in scenarios for event in item["event_names"]}
+        ),
     }
     if output_path is not None:
         path = Path(output_path)

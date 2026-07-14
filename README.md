@@ -1,65 +1,25 @@
 # MyCodeAgent
 
-MyCodeAgent is a local-first coding agent runtime written in Python. It is not a model demo or a thin ReAct wrapper. The project focuses on the engineering harness around an LLM: tool execution, permission checks, context projection, traceability, completion verification, durable memory, subagent isolation, and experimental skill evolution.
+MyCodeAgent is a local-first, single-agent Python coding harness. It supplies
+the reliable machinery around an OpenAI-compatible model: one controlled loop,
+project-confined tools, permission decisions, bounded context, append-only
+transcripts, and JSONL traces. It is meant to be installed once and run inside
+an unrelated repository.
 
-The core question is:
+## Install
 
-> How do we make a coding agent controllable, recoverable, observable, and testable when the model itself is probabilistic?
-
-This repository grew out of the lessons summarized in [Agent应用开发实践踩坑与经验分享](https://github.com/datawhalechina/hello-agents/blob/main/Extra-Chapter/Extra09-Agent%E5%BA%94%E7%94%A8%E5%BC%80%E5%8F%91%E5%AE%9E%E8%B7%B5%E8%B8%A9%E5%9D%91%E4%B8%8E%E7%BB%8F%E9%AA%8C%E5%88%86%E4%BA%AB.md): start with the shortest working loop, make every failure diagnosable, and only add machinery after a real runtime need appears.
-
-## Highlights
-
-- **Runtime-controlled agent loop**: the model proposes actions, but the harness owns state transitions, retries, terminal conditions, and completion gates.
-- **Tool harness**: centralized tool registry, permission decisions, orchestration, result budgeting, and safer command execution.
-- **Context engineering**: history is durable; the model sees a projected view with compaction, memory injection, and traceable prompt assembly.
-- **Trace-first debugging**: JSONL trace events expose model calls, tool calls, permission decisions, context compaction, state transitions, and terminal reasons.
-- **Durable memory**: transcript resume, session memory, and long-term memory are separated by lifecycle.
-- **Skills and MCP**: runtime-extensible skill loading, overlay support, and MCP tool integration.
-- **Experimental Skill Evolution**: an opt-in framework that observes traces, proposes skill patches, evaluates candidates, and writes evolved skills to an overlay instead of modifying source skills.
-
-## Architecture
-
-```mermaid
-flowchart TB
-    A["App / Host<br/>CLI, config, dependency wiring"] --> B
-    B["Runtime Control<br/>loop, recovery, completion gate"] --> C
-    C["Tool Harness<br/>registry, permission, orchestration"] --> D
-    D["Context Engineering<br/>prompt assembly, compact, model view"] --> E
-    E["Durable State<br/>history, transcript, memory"] --> F
-    F["Extensions<br/>tracing, evals, MCP, skills, skill evolution"]
-
-    B -. "state_transition / terminal" .-> T["JSONL Trace"]
-    C -. "tool lifecycle / permission" .-> T
-    D -. "projection / compaction" .-> T
-    E -. "resume / memory facts" .-> T
-```
-
-Main execution path:
-
-```text
-main.py -> app.cli -> runtime.host.CodeAgent
-        -> RuntimeRunner -> ContextEngine -> LLM
-        -> ToolOrchestrator -> History / Transcript -> Completion Gate
-```
-
-The formal harness core lives in `app/`, `runtime/`, `tools/`, and `extensions/`. `experimental/` is kept as research material and is not part of the stable runtime contract.
-
-## Quick Start
-
-Requirements:
-
-- Python 3.10+
-- `uv` recommended, plain `pip` also works
+Python 3.10+ and [uv](https://docs.astral.sh/uv/) are supported.
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements-dev.txt
-cp .env.example .env
+uv sync --locked --extra dev
+uv run mycodeagent --help
 ```
 
-Configure your model provider in `.env`:
+For a regular editable install, use `python -m pip install -e ".[dev]"`.
+`pyproject.toml` is the dependency authority; the requirements files are
+generated compatibility exports.
+
+Configure an OpenAI-compatible provider in `.env` or pass CLI overrides:
 
 ```env
 LLM_PROVIDER=openai
@@ -67,99 +27,99 @@ LLM_MODEL_ID=your-model
 LLM_API_KEY=your-key
 ```
 
-Run the CLI:
+## Use
+
+Start an interactive session in the repository you want to work on:
 
 ```bash
-.venv/bin/python main.py
+cd /path/to/project
+mycodeagent
 ```
 
-Deterministic demos do not require an API key:
+The invocation directory is the default project root. Use `--cwd` when the
+target is elsewhere:
 
 ```bash
-.venv/bin/python demo/harness_portfolio.py all
+mycodeagent --cwd /path/to/project -p "inspect the test failure"
+mycodeagent --cwd /path/to/project -p "summarize the repository" --json
 ```
 
-## Skill Evolution
+`-p` runs one turn and exits. `--json` writes one machine-readable outcome to
+standard output. Interactive sessions provide `/sessions`, `/resume [id]`,
+and `/status`; transcripts under the selected project are the resume source.
+Use Ctrl-C to cancel an active turn safely, then resume it if needed.
 
-Skill Evolution is experimental and disabled by default.
+## Permissions and boundaries
 
-Enable it with either:
+The default schema contains seven tools: `Bash`, `Edit`, `Glob`, `Grep`,
+`Read`, `Task`, and `TodoWrite`. `Edit` is the only file-mutation tool. File
+paths are confined to the selected project; writes use read snapshots and
+atomic replacement. Permission policy controls tool requests, but it is not
+an operating-system sandbox—run the harness only where its process account is
+appropriate.
+
+The runner is `RuntimeRunner`. It records lifecycle facts once through the
+event boundary; the transcript is recovery truth, and the model receives a
+bounded derived view rather than a second persistent session snapshot.
+
+## Optional extensions and lean startup
+
+The normal startup path creates no MCP child process and no verification
+subagent. It uses lightweight JSONL tracing: each trace ends with a
+`session_summary` row containing steps, `tools_used`, and accumulated token
+totals. It does not produce HTML reports or expose a generic trace-evaluation
+API. Local Skills are loaded only when the selected project actually contains
+`skills/**/SKILL.md`.
+
+MCP is intentionally absent from the core installation. Install and enable it
+only when required:
 
 ```bash
-.venv/bin/python main.py --skill-evolution
+uv sync --locked --extra dev --extra mcp
+mycodeagent --enable-mcp
 ```
 
-or:
+The equivalent compatibility commands are:
 
 ```bash
-SKILL_EVOLUTION_ENABLED=1 .venv/bin/python main.py
+uv sync --extra dev --extra mcp
+python -m pip install -e ".[dev,mcp]"
 ```
 
-Design constraints:
+The standalone extra is `mycodeagent[mcp]`.
 
-- Source skills under `skills/` are read-only.
-- Evolved skills are written to `memory/skill_evolution/active/`.
-- Each skill has an independent state machine, buffer, proposal manager, and observer.
-- User-directed hotfixes and agent-inferred evolution are separate paths.
-- Candidate versions can be promoted or rolled back.
-- Lifecycle reports are written in report-only mode; no automatic skill-library consolidation runs yet.
+`--enable-verification-agent` is also an explicit opt-in; when enabled, it
+constructs the completion verifier without changing default startup. Removed
+research systems and optional project-memory experiments are not product
+features; their historical implementations remain discoverable through the
+[research archive](docs/research-archive.md).
 
-## Testing
-
-Run the full suite:
+## Verify
 
 ```bash
-.venv/bin/python -m pytest tests/ -q
+uv run ruff check .
+uv run ruff check . --select E722,F401,F541,F821,F841
+uv run ruff check app core runtime tools extensions prompts utils --select E402
+uv run pytest -q
+uv run pytest -q tests/extensions/test_mcp_extension.py tests/test_core_without_mcp.py tests/test_mcp_protocol.py
+uv run python scripts/check_release_metrics.py
 ```
 
-Current status:
+The metrics command remains enforcing with a `≤15,000` stable-source cap and
+returns nonzero when exceeded. The current 14,095-line release tree passes this
+policy with bounded headroom; the seven-tool and dependency caps are unchanged.
+See [closeout C-008](docs/plans/2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 
-```text
-861 passed, 6 subtests passed
-```
+Credentialed provider probes are deliberately excluded from the deterministic
+suite. Run them only with explicit credentials and
+`RUN_CREDENTIALLED_EVALS=1 uv run pytest -q -m credentialed`.
 
-Focused suites:
+For the current execution flow and invariants, read
+[docs/HARNESS.md](docs/HARNESS.md). Dated plans, previous design notes, and
+demo snapshots are in [the historical archive](docs/archives/README.md).
 
-```bash
-.venv/bin/python -m pytest tests/runtime tests/tools tests/scenarios -q
-.venv/bin/python -m pytest tests/extensions -q
-.venv/bin/python -m pytest tests/experimental -q
-```
+## Non-goals
 
-## Documentation Map
-
-- [Harness architecture](docs/HARNESS.md)
-- [Trace protocol](docs/HARNESS_TRACE_PROTOCOL.md)
-- [Agent loop and completion gate](docs/portfolio/AGENT_LOOP.md)
-- [Tool harness](docs/portfolio/TOOL_HARNESS.md)
-- [Context engineering](docs/portfolio/CONTEXT_ENGINEERING.md)
-- [Memory and subagents](docs/portfolio/MEMORY_SUBAGENT.md)
-- [ReAct comparison](docs/portfolio/REACT_COMPARISON.md)
-- [Project status](docs/portfolio/PROJECT_STATUS.md)
-
-## Roadmap
-
-- Harden Skill Evolution with longer-running end-to-end evaluations.
-- Add report-first proposal curation so repeated hotfixes can be consolidated into general skill guidance.
-- Improve trace viewers and failure summaries for large sessions.
-- Add more deterministic scenario tests for permissions, model recovery, and context compaction.
-- Expand memory lifecycle hooks without turning memory into an opaque global context blob.
-- Keep experimental multi-agent work isolated until the runtime contract is simpler and better tested.
-
-## Non-Goals
-
-MyCodeAgent does not try to clone a full commercial coding product. It intentionally avoids product UI, remote workers, OS-level sandboxing, always-on telemetry, and large multi-agent orchestration in the stable core. Those can be added later only when the runtime evidence justifies them.
-
-## Acknowledgements
-
-MyCodeAgent is influenced by the broader coding-agent ecosystem:
-
-- [Hello-Agents](https://github.com/datawhalechina/hello-agents), especially the learning path and the project write-up [Agent应用开发实践踩坑与经验分享](https://github.com/datawhalechina/hello-agents/blob/main/Extra-Chapter/Extra09-Agent%E5%BA%94%E7%94%A8%E5%BC%80%E5%8F%91%E5%AE%9E%E8%B7%B5%E8%B8%A9%E5%9D%91%E4%B8%8E%E7%BB%8F%E9%AA%8C%E5%88%86%E4%BA%AB.md).
-- [Claude Code](https://github.com/anthropics/claude-code), for showing how powerful terminal-native coding agents can be.
-- [Hermes Agent](https://github.com/NousResearch/hermes-agent), for its memory lifecycle, skill curation, and self-improving agent ideas.
-- [OpenClaw](https://github.com/openclaw/openclaw), for local-first assistant and skill ecosystem exploration.
-- Open-source agent builders who publish traces, failures, prompts, and hard-earned engineering lessons instead of only polished demos.
-
-## License
-
-This project is released under the [MIT License](LICENSE).
+MyCodeAgent is not an enterprise platform, multi-agent team framework,
+self-modifying skill laboratory, IDE, web dashboard, remote-worker system, or
+OS-grade sandbox.

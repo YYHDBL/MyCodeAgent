@@ -1,20 +1,276 @@
 """HelloAgents统一LLM接口 - 基于OpenAI原生API"""
 
+import json
 import logging
 import os
 import time
-from typing import Literal, Optional, Iterator, Dict
-from openai import OpenAI
+from types import MappingProxyType
+from typing import Any, Callable, Iterator, Literal, Optional
+
+from .openai_compat import OpenAICompatibleClient
 
 from .exceptions import HelloAgentsException
 
 logger = logging.getLogger(__name__)
 
+
+def response_attr(value: Any, key: str) -> Any:
+    """Read one field from either an OpenAI-compatible object or mapping."""
+
+    return value.get(key) if isinstance(value, dict) else getattr(value, key, None)
+
+
+def parse_tool_input(raw: Any) -> tuple[Any, str | None]:
+    """Normalize a model tool argument payload without host-specific parsing."""
+
+    if raw is None:
+        return {}, None
+    if isinstance(raw, (dict, list)):
+        return raw, None
+    try:
+        return json.loads(str(raw).strip() or "{}"), None
+    except (TypeError, ValueError) as error:
+        return None, str(error)
+
+
+def _response_message(response: Any) -> Any:
+    choices = response_attr(response, "choices") or []
+    return response_attr(choices[0], "message") if choices else None
+
+
+def extract_response_content(response: Any) -> str | None:
+    """Extract text content from an OpenAI-compatible completion response."""
+
+    content = response_attr(_response_message(response), "content")
+    if isinstance(content, list):
+        return "".join(
+            str(response_attr(part, "text") or "") for part in content
+        )
+    return content
+
+
+def extract_reasoning_content(response: Any) -> Any:
+    """Extract optional reasoning content without changing provider payloads."""
+
+    message = _response_message(response)
+    reasoning = response_attr(message, "reasoning_content") or response_attr(message, "reasoning")
+    if reasoning:
+        return reasoning
+    extra = response_attr(message, "model_extra") or response_attr(message, "additional_kwargs")
+    return response_attr(extra, "reasoning_content") or response_attr(extra, "reasoning")
+
+
+def extract_usage(response: Any) -> dict[str, Any] | None:
+    """Project token usage into the stable runtime shape."""
+
+    usage = response_attr(response, "usage")
+    if not usage:
+        return None
+    return {
+        "prompt_tokens": response_attr(usage, "prompt_tokens"),
+        "completion_tokens": response_attr(usage, "completion_tokens"),
+        "total_tokens": response_attr(usage, "total_tokens"),
+    }
+
+
+def extract_tool_calls(response: Any) -> list[dict[str, Any]]:
+    """Normalize modern and legacy OpenAI-compatible tool calls."""
+
+    message = _response_message(response)
+    calls = response_attr(message, "tool_calls") or []
+    if calls:
+        return [
+            {
+                "id": response_attr(call, "id"),
+                "name": response_attr(response_attr(call, "function") or {}, "name")
+                or response_attr(call, "name")
+                or "unknown_tool",
+                "arguments": response_attr(response_attr(call, "function") or {}, "arguments")
+                or response_attr(call, "arguments")
+                or {},
+            }
+            for call in calls
+        ]
+    function_call = response_attr(message, "function_call")
+    if function_call:
+        return [{
+            "id": None,
+            "name": response_attr(function_call, "name") or "unknown_tool",
+            "arguments": response_attr(function_call, "arguments") or {},
+        }]
+    return []
+
+
+def extract_response_meta(response: Any) -> dict[str, Any]:
+    """Return the response facts used for recovery and completion decisions."""
+
+    choices = response_attr(response, "choices") or []
+    choice = choices[0] if choices else None
+    message = response_attr(choice, "message")
+    content = response_attr(message, "content")
+    reasoning = response_attr(message, "reasoning_content") or response_attr(message, "reasoning")
+    tool_calls = response_attr(message, "tool_calls")
+    return {
+        "finish_reason": response_attr(choice, "finish_reason"),
+        "role": response_attr(message, "role"),
+        "content_len": len(str(content)) if content is not None else 0,
+        "reasoning_len": len(str(reasoning)) if reasoning is not None else 0,
+        "refusal_present": response_attr(message, "refusal") is not None,
+        "tool_calls_count": len(tool_calls) if isinstance(tool_calls, list) else int(bool(tool_calls)),
+        "function_call_present": response_attr(message, "function_call") is not None,
+    }
+
+
+def serialize_response(response: Any) -> Any:
+    """Keep raw model diagnostics JSON-compatible where supported."""
+
+    try:
+        candidate = response.model_dump() if hasattr(response, "model_dump") else response
+        json.dumps(candidate, ensure_ascii=False)
+    except Exception:
+        return {"raw": str(response)}
+    return candidate
+
 # 支持的LLM提供商
 SUPPORTED_PROVIDERS = Literal[
-    "openai", "deepseek", "qwen", "modelscope",
-    "kimi", "zhipu", "siliconflow", "ollama", "vllm", "local", "auto"
+    "openai",
+    "deepseek",
+    "qwen",
+    "modelscope",
+    "kimi",
+    "zhipu",
+    "siliconflow",
+    "ollama",
+    "vllm",
+    "local",
+    "auto",
 ]
+
+PROVIDER_ALIASES = MappingProxyType(
+    {
+        "silicon-flow": "siliconflow",
+        "silicon_flow": "siliconflow",
+    }
+)
+
+PROVIDER_PROFILES = MappingProxyType(
+    {
+        "openai": MappingProxyType(
+            {
+                "key_envs": ("OPENAI_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("OPENAI_API_KEY",),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://api.openai.com/v1",
+                "model": "gpt-3.5-turbo",
+                "url_markers": ("api.openai.com",),
+            }
+        ),
+        "deepseek": MappingProxyType(
+            {
+                "key_envs": ("DEEPSEEK_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("DEEPSEEK_API_KEY",),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-chat",
+                "url_markers": ("api.deepseek.com",),
+            }
+        ),
+        "qwen": MappingProxyType(
+            {
+                "key_envs": ("DASHSCOPE_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("DASHSCOPE_API_KEY",),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen-plus",
+                "url_markers": ("dashscope.aliyuncs.com",),
+            }
+        ),
+        "modelscope": MappingProxyType(
+            {
+                "key_envs": ("MODELSCOPE_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("MODELSCOPE_API_KEY",),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://api-inference.modelscope.cn/v1/",
+                "model": "Qwen/Qwen2.5-72B-Instruct",
+                "url_markers": ("api-inference.modelscope.cn",),
+            }
+        ),
+        "kimi": MappingProxyType(
+            {
+                "key_envs": ("KIMI_API_KEY", "MOONSHOT_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("KIMI_API_KEY", "MOONSHOT_API_KEY"),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://api.moonshot.cn/v1",
+                "model": "moonshot-v1-8k",
+                "url_markers": ("api.moonshot.cn",),
+            }
+        ),
+        "zhipu": MappingProxyType(
+            {
+                "key_envs": ("ZHIPU_API_KEY", "GLM_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("ZHIPU_API_KEY", "GLM_API_KEY"),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "https://open.bigmodel.cn/api/paas/v4",
+                "model": "glm-4",
+                "url_markers": ("open.bigmodel.cn",),
+            }
+        ),
+        "siliconflow": MappingProxyType(
+            {
+                "key_envs": ("SILICONFLOW_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("SILICONFLOW_API_KEY",),
+                "base_url_envs": ("SILICONFLOW_BASE_URL", "LLM_BASE_URL"),
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "Qwen/Qwen2.5-7B-Instruct",
+                "url_markers": ("api.siliconflow.cn",),
+            }
+        ),
+        "ollama": MappingProxyType(
+            {
+                "key_envs": ("OLLAMA_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("OLLAMA_API_KEY", "OLLAMA_HOST"),
+                "base_url_envs": ("OLLAMA_HOST", "LLM_BASE_URL"),
+                "base_url": "http://localhost:11434/v1",
+                "model": "llama3.2",
+                "default_key": "ollama",
+                "url_markers": ("ollama",),
+            }
+        ),
+        "vllm": MappingProxyType(
+            {
+                "key_envs": ("VLLM_API_KEY", "LLM_API_KEY"),
+                "detect_envs": ("VLLM_API_KEY", "VLLM_HOST"),
+                "base_url_envs": ("VLLM_HOST", "LLM_BASE_URL"),
+                "base_url": "http://localhost:8000/v1",
+                "model": "meta-llama/Llama-2-7b-chat-hf",
+                "default_key": "vllm",
+                "url_markers": ("vllm",),
+            }
+        ),
+        "local": MappingProxyType(
+            {
+                "key_envs": ("LLM_API_KEY",),
+                "detect_envs": (),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": "http://localhost:8000/v1",
+                "model": "local-model",
+                "default_key": "local",
+                "url_markers": (),
+            }
+        ),
+        "auto": MappingProxyType(
+            {
+                "key_envs": ("LLM_API_KEY",),
+                "detect_envs": (),
+                "base_url_envs": ("LLM_BASE_URL",),
+                "base_url": None,
+                "model": "gpt-3.5-turbo",
+                "url_markers": (),
+            }
+        ),
+    }
+)
+
 
 class HelloAgentsLLM:
     """
@@ -52,10 +308,6 @@ class HelloAgentsLLM:
             max_tokens: 最大token数
             timeout: 超时时间，从环境变量LLM_TIMEOUT读取，默认60秒
         """
-        # 优先加载 .env（如存在则读取配置）
-        self._dotenv_values: Dict[str, str] = {}
-        self._load_dotenv_first()
-
         # 优先使用传入参数，如果未提供，则从环境变量加载
         self.model = model or self._get_env("LLM_MODEL_ID")
         self.temperature = temperature
@@ -82,39 +334,8 @@ class HelloAgentsLLM:
         # 创建OpenAI客户端
         self._client = self._create_client()
 
-    def _load_dotenv_first(self) -> None:
-        """
-        优先加载 .env 中的配置。
-        若 .env 不存在或未配置对应键，则自然回退到系统环境变量。
-        """
-        try:
-            from dotenv import load_dotenv, find_dotenv, dotenv_values
-        except Exception:
-            return
-
-        dotenv_path = find_dotenv(usecwd=True)
-        if dotenv_path:
-            values = dotenv_values(dotenv_path)
-            # 仅保留有值的键
-            self._dotenv_values = {
-                k: v for k, v in values.items() if v is not None and str(v).strip() != ""
-            }
-            # 读取但不覆盖系统环境变量（优先级由 _get_env 控制）
-            load_dotenv(dotenv_path, override=False)
-        else:
-            # 尝试当前目录（如无 .env 将无效果）
-            values = dotenv_values()
-            self._dotenv_values = {
-                k: v for k, v in values.items() if v is not None and str(v).strip() != ""
-            }
-            load_dotenv(override=False)
-
     def _get_env(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """
-        优先从 .env 读取配置；若无则回退系统环境变量。
-        """
-        if key in self._dotenv_values:
-            return self._dotenv_values.get(key)
+        """Read process environment after the application-owned dotenv load."""
         return os.getenv(key, default)
 
     def _resolve_provider(self, provider: Optional[str], api_key: Optional[str], base_url: Optional[str]) -> str:
@@ -134,11 +355,7 @@ class HelloAgentsLLM:
     def _normalize_provider(self, provider: str) -> str:
         """标准化 provider 名称，兼容大小写和常见别名。"""
         normalized = provider.strip().lower()
-        aliases = {
-            "silicon-flow": "siliconflow",
-            "silicon_flow": "siliconflow",
-        }
-        return aliases.get(normalized, normalized)
+        return PROVIDER_ALIASES.get(normalized, normalized)
 
     def _normalize_base_url(self, base_url: Optional[str]) -> Optional[str]:
         """将误填的完整接口路径归一化为 OpenAI 客户端所需的 base_url。"""
@@ -152,33 +369,12 @@ class HelloAgentsLLM:
         return normalized
 
     def _auto_detect_provider(self, api_key: Optional[str], base_url: Optional[str]) -> str:
-        """
-        自动检测LLM提供商
-
-        检测逻辑：
-        1. 优先检查特定提供商的环境变量
-        2. 根据API密钥格式判断
-        3. 根据base_url判断
-        4. 默认返回通用配置
-        """
-        # 1. 检查特定提供商的环境变量（若命中多个则报错）
-        env_map = {
-            "openai": ["OPENAI_API_KEY"],
-            "zhipu": ["ZHIPU_API_KEY", "GLM_API_KEY"],
-            "deepseek": ["DEEPSEEK_API_KEY"],
-            "qwen": ["DASHSCOPE_API_KEY"],
-            "modelscope": ["MODELSCOPE_API_KEY"],
-            "kimi": ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
-            "siliconflow": ["SILICONFLOW_API_KEY"],
-            "ollama": ["OLLAMA_API_KEY", "OLLAMA_HOST"],
-            "vllm": ["VLLM_API_KEY", "VLLM_HOST"],
-        }
-        hits = []
-        for prov, keys in env_map.items():
-            for key in keys:
-                if self._get_env(key):
-                    hits.append(prov)
-                    break
+        """Resolve declared provider environment names and URL markers."""
+        hits = [
+            provider
+            for provider, profile in PROVIDER_PROFILES.items()
+            if any(self._get_env(key) for key in profile["detect_envs"])
+        ]
         if len(hits) > 1:
             providers = ", ".join(sorted(set(hits)))
             raise HelloAgentsException(
@@ -187,127 +383,31 @@ class HelloAgentsLLM:
         if len(hits) == 1:
             return hits[0]
 
-        # 2. 根据API密钥格式判断
-        actual_api_key = api_key or self._get_env("LLM_API_KEY")
-        if actual_api_key:
-            actual_key_lower = actual_api_key.lower()
-            if actual_api_key.startswith("ms-"):
-                return "modelscope"
-            elif actual_key_lower == "ollama":
-                return "ollama"
-            elif actual_key_lower == "vllm":
-                return "vllm"
-            elif actual_key_lower == "local":
-                return "local"
-            elif actual_api_key.startswith("sk-") and len(actual_api_key) > 50:
-                # 可能是OpenAI、DeepSeek或Kimi，需要进一步判断
-                pass
-            elif actual_api_key.endswith(".") or "." in actual_api_key[-20:]:
-                # 智谱AI的API密钥格式通常包含点号
-                return "zhipu"
-
-        # 3. 根据base_url判断
+        # URL detection remains a convenience only for declared provider URLs.
         actual_base_url = base_url or self._get_env("LLM_BASE_URL")
         if actual_base_url:
             base_url_lower = actual_base_url.lower()
-            if "api.openai.com" in base_url_lower:
-                return "openai"
-            elif "api.deepseek.com" in base_url_lower:
-                return "deepseek"
-            elif "dashscope.aliyuncs.com" in base_url_lower:
-                return "qwen"
-            elif "api-inference.modelscope.cn" in base_url_lower:
-                return "modelscope"
-            elif "api.moonshot.cn" in base_url_lower:
-                return "kimi"
-            elif "open.bigmodel.cn" in base_url_lower:
-                return "zhipu"
-            elif "api.siliconflow.cn" in base_url_lower:
-                return "siliconflow"
-            elif "localhost" in base_url_lower or "127.0.0.1" in base_url_lower:
-                # 本地部署检测 - 优先检查特定服务
-                if ":11434" in base_url_lower or "ollama" in base_url_lower:
-                    return "ollama"
-                elif ":8000" in base_url_lower and "vllm" in base_url_lower:
-                    return "vllm"
-                elif ":8080" in base_url_lower or ":7860" in base_url_lower:
-                    return "local"
-                else:
-                    # 根据API密钥进一步判断
-                    if actual_api_key and actual_api_key.lower() == "ollama":
-                        return "ollama"
-                    elif actual_api_key and actual_api_key.lower() == "vllm":
-                        return "vllm"
-                    else:
-                        return "local"
-            elif any(port in base_url_lower for port in [":8080", ":7860", ":5000"]):
-                # 常见的本地部署端口
-                return "local"
+            for provider, profile in PROVIDER_PROFILES.items():
+                if any(marker in base_url_lower for marker in profile["url_markers"]):
+                    return provider
 
-        # 4. 默认返回auto，使用通用配置
+        # Generic OpenAI-compatible configuration uses LLM_* values.
         return "auto"
 
     def _resolve_credentials(self, api_key: Optional[str], base_url: Optional[str]) -> tuple[str, str]:
-        """根据provider解析API密钥和base_url"""
-        if self.provider == "openai":
-            resolved_api_key = api_key or self._get_env("OPENAI_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.openai.com/v1"
-            return resolved_api_key, resolved_base_url
+        """Resolve credentials from the selected provider's metadata."""
+        profile = PROVIDER_PROFILES.get(self.provider, PROVIDER_PROFILES["auto"])
+        resolved_api_key = api_key or self._first_env(profile["key_envs"]) or profile.get("default_key")
+        resolved_base_url = base_url or self._first_env(profile["base_url_envs"]) or profile["base_url"]
+        return resolved_api_key, resolved_base_url
 
-        elif self.provider == "deepseek":
-            resolved_api_key = api_key or self._get_env("DEEPSEEK_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.deepseek.com"
-            return resolved_api_key, resolved_base_url
+    def _first_env(self, keys: tuple[str, ...]) -> Optional[str]:
+        """Return the first configured process environment value for *keys*."""
+        return next((value for key in keys if (value := self._get_env(key))), None)
 
-        elif self.provider == "qwen":
-            resolved_api_key = api_key or self._get_env("DASHSCOPE_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "modelscope":
-            resolved_api_key = api_key or self._get_env("MODELSCOPE_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api-inference.modelscope.cn/v1/"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "kimi":
-            resolved_api_key = api_key or self._get_env("KIMI_API_KEY") or self._get_env("MOONSHOT_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://api.moonshot.cn/v1"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "zhipu":
-            resolved_api_key = api_key or self._get_env("ZHIPU_API_KEY") or self._get_env("GLM_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "siliconflow":
-            resolved_api_key = api_key or self._get_env("SILICONFLOW_API_KEY") or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("SILICONFLOW_BASE_URL") or self._get_env("LLM_BASE_URL") or "https://api.siliconflow.cn/v1"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "ollama":
-            resolved_api_key = api_key or self._get_env("OLLAMA_API_KEY") or self._get_env("LLM_API_KEY") or "ollama"
-            resolved_base_url = base_url or self._get_env("OLLAMA_HOST") or self._get_env("LLM_BASE_URL") or "http://localhost:11434/v1"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "vllm":
-            resolved_api_key = api_key or self._get_env("VLLM_API_KEY") or self._get_env("LLM_API_KEY") or "vllm"
-            resolved_base_url = base_url or self._get_env("VLLM_HOST") or self._get_env("LLM_BASE_URL") or "http://localhost:8000/v1"
-            return resolved_api_key, resolved_base_url
-
-        elif self.provider == "local":
-            resolved_api_key = api_key or self._get_env("LLM_API_KEY") or "local"
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL") or "http://localhost:8000/v1"
-            return resolved_api_key, resolved_base_url
-
-        else:
-            # auto或其他情况：使用通用配置，支持任何OpenAI兼容的服务
-            resolved_api_key = api_key or self._get_env("LLM_API_KEY")
-            resolved_base_url = base_url or self._get_env("LLM_BASE_URL")
-            return resolved_api_key, resolved_base_url
-
-    def _create_client(self) -> OpenAI:
+    def _create_client(self) -> OpenAICompatibleClient:
         """创建OpenAI客户端"""
-        return OpenAI(
+        return OpenAICompatibleClient(
             api_key=self.api_key,
             base_url=self.base_url,
             timeout=self.timeout
@@ -393,53 +493,54 @@ class HelloAgentsLLM:
                 self._temperature_policy_notice_emitted = True
             return 1
         return temp
-    
+
     def _get_default_model(self) -> str:
         """获取默认模型"""
-        if self.provider == "openai":
-            return "gpt-3.5-turbo"
-        elif self.provider == "deepseek":
-            return "deepseek-chat"
-        elif self.provider == "qwen":
-            return "qwen-plus"
-        elif self.provider == "modelscope":
-            return "Qwen/Qwen2.5-72B-Instruct"
-        elif self.provider == "kimi":
-            return "moonshot-v1-8k"
-        elif self.provider == "zhipu":
-            return "glm-4"
-        elif self.provider == "siliconflow":
-            return "Qwen/Qwen2.5-7B-Instruct"
-        elif self.provider == "ollama":
-            return "llama3.2"  # Ollama常用模型
-        elif self.provider == "vllm":
-            return "meta-llama/Llama-2-7b-chat-hf"  # vLLM常用模型
-        elif self.provider == "local":
-            return "local-model"  # 本地模型占位符
-        else:
-            # auto或其他情况：根据base_url智能推断默认模型
-            base_url = self._get_env("LLM_BASE_URL", "") or ""
-            base_url_lower = base_url.lower()
-            if "modelscope" in base_url_lower:
-                return "Qwen/Qwen2.5-72B-Instruct"
-            elif "deepseek" in base_url_lower:
-                return "deepseek-chat"
-            elif "dashscope" in base_url_lower:
-                return "qwen-plus"
-            elif "moonshot" in base_url_lower:
-                return "moonshot-v1-8k"
-            elif "bigmodel" in base_url_lower:
-                return "glm-4"
-            elif "siliconflow" in base_url_lower:
-                return "Qwen/Qwen2.5-7B-Instruct"
-            elif "ollama" in base_url_lower or ":11434" in base_url_lower:
-                return "llama3.2"
-            elif ":8000" in base_url_lower or "vllm" in base_url_lower:
-                return "meta-llama/Llama-2-7b-chat-hf"
-            elif "localhost" in base_url_lower or "127.0.0.1" in base_url_lower:
-                return "local-model"
-            else:
-                return "gpt-3.5-turbo"
+        profile = PROVIDER_PROFILES.get(self.provider, PROVIDER_PROFILES["auto"])
+        return profile["model"]
+
+    def _build_request(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        stream: bool = False,
+        **overrides: Any,
+    ) -> dict[str, Any]:
+        """Build one normalized OpenAI-compatible completion request."""
+        request = {
+            "model": self.model,
+            "messages": self._normalize_messages_for_provider(messages),
+            "temperature": self._resolve_temperature(overrides.pop("temperature", None)),
+            "max_tokens": overrides.pop("max_tokens", self.max_tokens),
+            "stream": True if stream else None,
+            **overrides,
+        }
+        return self._apply_provider_compat(self._compact_request_kwargs(request))
+
+    def _invoke_with_retries(
+        self,
+        messages: list[dict[str, str]],
+        project_response: Callable[[Any], Any] | None = None,
+        **overrides: Any,
+    ) -> Any:
+        """Make one non-streaming request with the configured retry policy."""
+        for attempt in range(self.max_retries + 1):
+            try:
+                request = self._build_request(messages, **overrides)
+                response = self._client.chat.completions.create(**request)
+                return project_response(response) if project_response else response
+            except Exception as error:
+                if attempt >= self.max_retries:
+                    raise HelloAgentsException(f"LLM调用失败: {str(error)}")
+                wait_s = self.retry_backoff * (2**attempt)
+                logger.warning(
+                    "LLM调用失败，%.1fs后重试（%d/%d）: %s",
+                    wait_s,
+                    attempt + 1,
+                    self.max_retries,
+                    error,
+                )
+                time.sleep(wait_s)
 
     def think(
         self,
@@ -461,20 +562,14 @@ class HelloAgentsLLM:
         """
         logger.info("正在调用 %s 模型...", self.model)
         try:
-            request_kwargs = {
-                "model": self.model,
-                "messages": self._normalize_messages_for_provider(messages),
-                "temperature": self._resolve_temperature(temperature),
-                "max_tokens": self.max_tokens,
-                "stream": True,
-            }
+            overrides: dict[str, Any] = {"temperature": temperature}
             if tools:
-                request_kwargs["tools"] = tools
+                overrides["tools"] = tools
                 if tool_choice is not None:
-                    request_kwargs["tool_choice"] = tool_choice
-            request_kwargs = self._apply_provider_compat(request_kwargs)
-            request_kwargs = self._compact_request_kwargs(request_kwargs)
-            response = self._client.chat.completions.create(**request_kwargs)
+                    overrides["tool_choice"] = tool_choice
+            response = self._client.chat.completions.create(
+                **self._build_request(messages, stream=True, **overrides)
+            )
 
             # 处理流式响应
             logger.debug("大语言模型响应成功（streaming）")
@@ -492,66 +587,16 @@ class HelloAgentsLLM:
         非流式调用LLM，返回完整响应。
         适用于不需要流式输出的场景。
         """
-        for attempt in range(self.max_retries + 1):
-            try:
-                request_kwargs = {
-                    "model": self.model,
-                    "messages": self._normalize_messages_for_provider(messages),
-                    "temperature": self._resolve_temperature(kwargs.get("temperature")),
-                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                }
-                extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
-                if extra_kwargs:
-                    request_kwargs.update(extra_kwargs)
-                request_kwargs = self._apply_provider_compat(request_kwargs)
-                request_kwargs = self._compact_request_kwargs(request_kwargs)
-                response = self._client.chat.completions.create(**request_kwargs)
-                return response.choices[0].message.content
-            except Exception as e:
-                if attempt >= self.max_retries:
-                    raise HelloAgentsException(f"LLM调用失败: {str(e)}")
-                wait_s = self.retry_backoff * (2 ** attempt)
-                logger.warning(
-                    "LLM调用失败，%.1fs后重试（%d/%d）: %s",
-                    wait_s,
-                    attempt + 1,
-                    self.max_retries,
-                    e,
-                )
-                time.sleep(wait_s)
+        return self._invoke_with_retries(
+            messages, lambda response: response.choices[0].message.content, **kwargs
+        )
 
     def invoke_raw(self, messages: list[dict[str, str]], **kwargs):
         """
         非流式调用LLM，返回原始响应对象。
         适用于需要查看完整结构的场景。
         """
-        for attempt in range(self.max_retries + 1):
-            try:
-                request_kwargs = {
-                    "model": self.model,
-                    "messages": self._normalize_messages_for_provider(messages),
-                    "temperature": self._resolve_temperature(kwargs.get("temperature")),
-                    "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-                }
-                extra_kwargs = {k: v for k, v in kwargs.items() if k not in ["temperature", "max_tokens"]}
-                if extra_kwargs:
-                    request_kwargs.update(extra_kwargs)
-                request_kwargs = self._apply_provider_compat(request_kwargs)
-                request_kwargs = self._compact_request_kwargs(request_kwargs)
-                response = self._client.chat.completions.create(**request_kwargs)
-                return response
-            except Exception as e:
-                if attempt >= self.max_retries:
-                    raise HelloAgentsException(f"LLM调用失败: {str(e)}")
-                wait_s = self.retry_backoff * (2 ** attempt)
-                logger.warning(
-                    "LLM调用失败，%.1fs后重试（%d/%d）: %s",
-                    wait_s,
-                    attempt + 1,
-                    self.max_retries,
-                    e,
-                )
-                time.sleep(wait_s)
+        return self._invoke_with_retries(messages, **kwargs)
 
     def stream_invoke(self, messages: list[dict[str, str]], **kwargs) -> Iterator[str]:
         """Alias for think()."""

@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from runtime.subagents import (
-    ExploreResult,
-    SubagentLauncher,
-    SubagentRequest,
-    SubagentStatus,
-)
-from tools.base import ErrorCode, Tool, ToolParameter
+from typing import Any, Dict, List, Optional, Protocol
+from tools.base import ErrorCode, Tool, ToolParameter, ToolResult
 from prompts.tools_prompts.task_prompt import task_prompt
+
+
+@dataclass(frozen=True)
+class TaskRequest:
+    """Neutral request shape consumed by the runtime's optional launcher."""
+
+    profile_name: str
+    task: str
+    model_choice: str | None = None
+    structured_context: dict[str, Any] = field(default_factory=dict)
+    parent_session_id: str | None = None
+    parent_run_id: str | None = None
+
+
+class TaskLauncher(Protocol):
+    def launch(self, request: TaskRequest) -> Any: ...
 
 
 class TaskTool(Tool):
@@ -24,7 +34,7 @@ class TaskTool(Tool):
         name: str = "Task",
         project_root: Optional[Path] = None,
         working_dir: Optional[Path] = None,
-        launcher: Optional[SubagentLauncher] = None,
+        launcher: Optional[TaskLauncher] = None,
     ):
         if project_root is None:
             raise ValueError("project_root must be provided by the framework")
@@ -67,7 +77,7 @@ class TaskTool(Tool):
             ),
         ]
 
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         started = time.monotonic()
         params_input = dict(parameters)
         description = parameters.get("description")
@@ -75,48 +85,49 @@ class TaskTool(Tool):
         profile = str(parameters.get("subagent_type") or "").strip().lower()
         model = str(parameters.get("model") or "light").strip().lower()
         if not isinstance(description, str) or not description.strip():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'description' is required and must be non-empty.",
                 params_input=params_input,
             )
         if not isinstance(prompt, str) or not prompt.strip():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'prompt' is required and must be non-empty.",
                 params_input=params_input,
             )
         if profile != "explore":
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'subagent_type' must be 'explore'.",
                 params_input=params_input,
             )
         if model not in {"main", "light"}:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'model' must be 'main' or 'light'.",
                 params_input=params_input,
             )
         launched = self._launcher.launch(
-            SubagentRequest(
+            TaskRequest(
                 profile_name="explore",
                 task=f"{description.strip()}\n\n{prompt.strip()}",
                 model_choice=model,
             )
         )
         elapsed_ms = int((time.monotonic() - started) * 1000)
-        if launched.status is SubagentStatus.FAILED or not isinstance(launched.result, ExploreResult):
-            return self.create_error_response(
+        status = getattr(getattr(launched, "status", None), "value", getattr(launched, "status", None))
+        if status == "failed" or not _is_explore_result(getattr(launched, "result", None)):
+            return self.error_result(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 message=f"Explore subagent failed: {launched.error or launched.terminal_reason}",
                 params_input=params_input,
                 time_ms=elapsed_ms,
             )
         result = launched.result
-        return self.create_success_response(
+        return self.success_result(
             data={
-                "status": result.status.value,
+                "status": getattr(result.status, "value", result.status),
                 "profile": "explore",
                 "child_session_id": launched.child_session_id,
                 "child_run_id": launched.child_run_id,
@@ -134,3 +145,13 @@ class TaskTool(Tool):
 
 
 __all__ = ["TaskTool"]
+
+
+def _is_explore_result(result: Any) -> bool:
+    return (
+        result is not None
+        and isinstance(getattr(result, "summary", None), str)
+        and callable(getattr(result, "to_dict", None))
+        and hasattr(result, "status")
+        and isinstance(getattr(result, "tool_usage", None), dict)
+    )

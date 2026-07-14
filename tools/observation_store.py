@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+
+from tools.base import ToolResult, ToolStatus, serialize_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -62,71 +63,68 @@ class ObservationTruncator:
         Args:
             project_root: 项目根目录，用于确定落盘路径
         """
-        self._project_root = Path(project_root) if project_root else Path.cwd()
-        self._output_dir = self._project_root / _get_output_dir()
+        self._project_root = (Path(project_root) if project_root else Path.cwd()).resolve()
+        configured_dir = Path(_get_output_dir()).expanduser()
+        if configured_dir.is_absolute():
+            logger.warning("Ignoring TOOL_OUTPUT_DIR outside selected project root")
+            self._output_dir = self._project_root / "tool-output"
+        else:
+            candidate_dir = (self._project_root / configured_dir).resolve()
+            if candidate_dir.is_relative_to(self._project_root):
+                self._output_dir = candidate_dir
+            else:
+                logger.warning("Ignoring TOOL_OUTPUT_DIR outside selected project root")
+                self._output_dir = self._project_root / "tool-output"
         
-    def truncate(self, tool_name: str, raw_result: str) -> str:
+    def truncate(self, tool_name: str, result: ToolResult) -> ToolResult:
         """
         对工具输出进行截断处理
         
         Args:
             tool_name: 工具名称
-            raw_result: 工具返回的原始 JSON 字符串
+            result: typed tool result
             
         Returns:
-            处理后的 JSON 字符串（可能已截断）
+            typed result (possibly truncated)
         """
-        # 尝试解析 JSON
-        parsed = None
-        try:
-            parsed = json.loads(raw_result)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse tool result as JSON; treating as plain text")
-
-        # 检查跳过标记
-        if parsed and self._should_skip(parsed):
-            return raw_result
+        if self._should_skip(result):
+            return result
 
         # 使用可读文本进行尺寸判断（将 \\n 还原为真实换行）
+        raw_result = serialize_tool_result(result)
         preview_source = self._normalize_text(raw_result)
         content_size = self._get_content_size(preview_source)
         if not self._exceeds_limits(content_size):
-            return raw_result
+            return result
 
         # 执行截断
-        return self._do_truncate(tool_name, raw_result, preview_source, parsed, content_size)
+        return self._do_truncate(tool_name, result, raw_result, preview_source, content_size)
 
     def force_truncate(
         self,
         tool_name: str,
-        raw_result: str,
+        result: ToolResult,
         max_preview_bytes: int | None = None,
-    ) -> str:
+    ) -> ToolResult:
         """强制压缩并落盘，即使单条结果未超默认阈值。"""
-        parsed = None
-        try:
-            parsed = json.loads(raw_result)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse tool result as JSON; treating as plain text")
-
+        raw_result = serialize_tool_result(result)
         preview_source = self._normalize_text(raw_result)
         original_size = self._get_content_size(preview_source)
         preview_bytes = max_preview_bytes if max_preview_bytes is not None else min(512, _get_max_bytes())
         preview_bytes = max(preview_bytes, 64)
         return self._do_truncate(
             tool_name,
+            result,
             raw_result,
             preview_source,
-            parsed,
             original_size,
             force_max_lines=min(original_size["lines"], _get_head_tail_lines()),
             force_max_bytes=preview_bytes,
         )
     
-    def _should_skip(self, result: Dict[str, Any]) -> bool:
+    def _should_skip(self, result: ToolResult) -> bool:
         """检查是否应跳过截断"""
-        context = result.get("context", {})
-        return context.get("truncation_skip", False)
+        return bool(result.context.get("truncation_skip", False))
     
     def _get_content_size(self, text: str) -> Dict[str, int]:
         """获取内容大小信息"""
@@ -146,13 +144,13 @@ class ObservationTruncator:
     def _do_truncate(
         self,
         tool_name: str,
+        result: ToolResult,
         raw_result: str,
         preview_source: str,
-        parsed_result: Optional[Dict[str, Any]],
         original_size: Dict[str, int],
         force_max_lines: Optional[int] = None,
         force_max_bytes: Optional[int] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         执行截断操作
         
@@ -179,56 +177,39 @@ class ObservationTruncator:
         )
         
         # 3. 构建截断后的响应（统一结构）
-        status = "success"
-        error = None
-        stats = {}
-        context = {}
-        if isinstance(parsed_result, dict):
-            status = parsed_result.get("status", "success")
-            error = parsed_result.get("error")
-            stats = parsed_result.get("stats") or {}
-            context = parsed_result.get("context") or {}
-
-        # 截断时标记为 partial（除非原本是 error）
-        if status != "error":
-            status = "partial"
-
-        truncated_result: Dict[str, Any] = {
-            "status": status,
-            "data": {
-                "truncated": True,
-                "truncation": {
-                    "direction": direction,
-                    "max_lines": max_lines,
-                    "max_bytes": max_bytes,
-                    "head_tail_lines": head_tail_lines if direction == "head_tail" else None,
-                    "original_lines": original_size["lines"],
-                    "original_bytes": original_size["bytes"],
-                    "kept_lines": kept_size["lines"],
-                    "kept_bytes": kept_size["bytes"],
-                },
-                "preview": preview_text,
+        truncated_data: Dict[str, Any] = {
+            "truncated": True,
+            "truncation": {
+                "direction": direction,
+                "max_lines": max_lines,
+                "max_bytes": max_bytes,
+                "head_tail_lines": head_tail_lines if direction == "head_tail" else None,
+                "original_lines": original_size["lines"],
+                "original_bytes": original_size["bytes"],
+                "kept_lines": kept_size["lines"],
+                "kept_bytes": kept_size["bytes"],
             },
-            "text": "",
-            "stats": stats,
-            "context": context,
+            "preview": preview_text,
         }
 
         if relative_path:
-            truncated_result["data"]["truncation"]["full_output_path"] = relative_path
+            truncated_data["truncation"]["full_output_path"] = relative_path
 
-        # 保留错误字段
-        if status == "error" and error:
-            truncated_result["error"] = error
-
-        # 构建提示文本
         hint = self._build_hint(tool_name, relative_path, original_size)
-        truncated_result["text"] = hint
         
         # 清理过期文件（低频执行）
         self._maybe_cleanup()
         
-        return json.dumps(truncated_result, ensure_ascii=False, separators=(",", ":"))
+        return ToolResult(
+            status=ToolStatus.ERROR if result.status is ToolStatus.ERROR else ToolStatus.PARTIAL,
+            data=truncated_data,
+            text=hint,
+            error_code=result.error_code,
+            error_message=result.error_message,
+            error_details=result.error_details,
+            stats=result.stats,
+            context=result.context,
+        )
     
     def _truncate_content(
         self,
@@ -376,49 +357,41 @@ def get_truncator(project_root: Optional[str] = None) -> ObservationTruncator:
     return _truncator_instance
 
 
-def truncate_observation(
+def truncate_result(
     tool_name: str,
-    raw_result: str,
+    result: ToolResult,
     project_root: Optional[str] = None,
-) -> str:
+) -> ToolResult:
     """
     截断工具输出的便捷函数
     
     Args:
         tool_name: 工具名称
-        raw_result: 原始 JSON 结果字符串
+        result: typed tool result
         project_root: 项目根目录
         
     Returns:
-        处理后的 JSON 字符串
+        typed result
     """
     truncator = get_truncator(project_root)
-    return truncator.truncate(tool_name, raw_result)
+    return truncator.truncate(tool_name, result)
 
 
-def force_truncate_observation(
+def force_truncate_result(
     tool_name: str,
-    raw_result: str,
+    result: ToolResult,
     project_root: Optional[str] = None,
     max_preview_bytes: Optional[int] = None,
-) -> str:
+) -> ToolResult:
     """强制压缩工具输出的便捷函数。"""
     truncator = get_truncator(project_root)
-    return truncator.force_truncate(tool_name, raw_result, max_preview_bytes)
-
-
-def compress_tool_result(tool_name: str, raw_result: str) -> str:
-    """
-    Convenience alias for the runtime observation truncation path.
-    """
-    return truncate_observation(tool_name, raw_result)
+    return truncator.force_truncate(tool_name, result, max_preview_bytes)
 
 
 
 __all__ = [
     "ObservationTruncator",
-    "compress_tool_result",
-    "force_truncate_observation",
+    "force_truncate_result",
     "get_truncator",
-    "truncate_observation",
+    "truncate_result",
 ]

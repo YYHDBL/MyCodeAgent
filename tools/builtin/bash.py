@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from prompts.tools_prompts.bash_prompt import bash_prompt
-from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
+from ..base import Tool, ToolParameter, ToolResult, ErrorCode
 from core.env import load_env
 
 load_env()
@@ -78,7 +78,7 @@ class BashTool(Tool):
         # 是否允许网络工具（默认禁用）
         self._allow_network = os.environ.get("BASH_ALLOW_NETWORK", "false").lower() == "true"
 
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         """
         执行 Shell 命令
 
@@ -105,7 +105,7 @@ class BashTool(Tool):
         
         # command 必填
         if not command:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Missing required parameter 'command'.",
                 params_input=params_input,
@@ -113,7 +113,7 @@ class BashTool(Tool):
         
         # command 必须是字符串
         if not isinstance(command, str):
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'command' must be a string.",
                 params_input=params_input,
@@ -121,7 +121,7 @@ class BashTool(Tool):
         
         # timeout_ms 校验
         if not isinstance(timeout_ms, int) or timeout_ms < 1 or timeout_ms > self.MAX_TIMEOUT_MS:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"timeout_ms must be an integer between 1 and {self.MAX_TIMEOUT_MS}.",
                 params_input=params_input,
@@ -133,7 +133,7 @@ class BashTool(Tool):
         
         safety_result = self._check_command_safety(command)
         if safety_result is not None:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=safety_result,
                 params_input=params_input,
@@ -157,13 +157,13 @@ class BashTool(Tool):
             if not directory_resolved:
                 directory_resolved = "."
         except ValueError:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.ACCESS_DENIED,
                 message="Access denied. Path must be within project root.",
                 params_input=params_input,
             )
         except OSError as e:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INTERNAL_ERROR,
                 message=f"Path resolution failed: {e}",
                 params_input=params_input,
@@ -171,7 +171,7 @@ class BashTool(Tool):
         
         # 检查目录是否存在
         if not target_dir.exists():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.NOT_FOUND,
                 message=f"Directory '{directory}' does not exist.",
                 params_input=params_input,
@@ -179,7 +179,7 @@ class BashTool(Tool):
         
         # 检查是否为目录
         if not target_dir.is_dir():
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"'{directory}' is not a directory.",
                 params_input=params_input,
@@ -191,7 +191,7 @@ class BashTool(Tool):
         
         cd_check_result = self._check_cd_paths(command, target_dir)
         if cd_check_result is not None:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.ACCESS_DENIED,
                 message=cd_check_result,
                 params_input=params_input,
@@ -237,7 +237,7 @@ class BashTool(Tool):
                 stderr = stderr.decode("utf-8", errors="replace")
         except PermissionError:
             time_ms = int((time.monotonic() - start_time) * 1000)
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.PERMISSION_DENIED,
                 message="Permission denied executing command.",
                 params_input=params_input,
@@ -245,7 +245,7 @@ class BashTool(Tool):
             )
         except Exception as e:
             time_ms = int((time.monotonic() - start_time) * 1000)
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.EXECUTION_ERROR,
                 message=f"Command failed: {e}",
                 params_input=params_input,
@@ -297,7 +297,7 @@ class BashTool(Tool):
                     text_lines.append(stderr[:1000] + ("..." if len(stderr) > 1000 else ""))
                 text = "\n".join(text_lines)
                 
-                return self.create_partial_response(
+                return self.partial_result(
                     data=data,
                     text=text,
                     params_input=params_input,
@@ -307,7 +307,7 @@ class BashTool(Tool):
                 )
             else:
                 # 超时且无输出 -> error
-                return self.create_error_response(
+                return self.error_result(
                     error_code=ErrorCode.TIMEOUT,
                     message="Command timed out with no output.",
                     params_input=params_input,
@@ -329,7 +329,7 @@ class BashTool(Tool):
                 text_lines.append(stderr[:1000] + ("..." if len(stderr) > 1000 else ""))
             text = "\n".join(text_lines)
             
-            return self.create_success_response(
+            return self.success_result(
                 data=data,
                 text=text,
                 params_input=params_input,
@@ -351,7 +351,7 @@ class BashTool(Tool):
                 text_lines.append(stderr[:2000] + ("..." if len(stderr) > 2000 else ""))
             text = "\n".join(text_lines)
             
-            return self.create_partial_response(
+            return self.partial_result(
                 data=data,
                 text=text,
                 params_input=params_input,
@@ -430,7 +430,7 @@ class BashTool(Tool):
         for word in words:
             if word in self.READ_SEARCH_COMMANDS:
                 tool_suggestion = {
-                    "ls": "LS",
+                    "ls": "Glob",
                     "cat": "Read",
                     "head": "Read",
                     "tail": "Read",
