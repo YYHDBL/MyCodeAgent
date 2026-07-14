@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from subprocess import run
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,23 +16,15 @@ MAX_STABLE_TOOLS = 7
 def python_lines() -> int:
     """Use the M0 baseline definition: stable source excluding removed research."""
 
-    paths = run(
-        [
-            "rg",
-            "--files",
-            *STABLE_SOURCE_ROOTS,
-            "-g",
-            "*.py",
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
+    paths = (
+        path
+        for source_root in STABLE_SOURCE_ROOTS
+        for path in (ROOT / source_root).rglob("*.py")
+    )
     return sum(
-        len((ROOT / path).read_text(encoding="utf-8").splitlines())
+        len(path.read_text(encoding="utf-8").splitlines())
         for path in paths
-        if not path.startswith("extensions/skill_evolution/")
+        if not path.relative_to(ROOT).as_posix().startswith("extensions/skill_evolution/")
     )
 
 

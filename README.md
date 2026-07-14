@@ -106,7 +106,7 @@ uv run python scripts/check_release_metrics.py
 ```
 
 The metrics command remains enforcing with a `≤15,000` stable-source cap and
-returns nonzero when exceeded. The current 14,095-line release tree passes this
+returns nonzero when exceeded. The current 14,094-line release tree passes this
 policy with bounded headroom; the seven-tool and dependency caps are unchanged.
 See [closeout C-008](docs/plans/2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 

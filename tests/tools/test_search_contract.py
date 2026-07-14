@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from tools.builtin.glob import GlobTool
-from tools.builtin.search_code import GrepTool
+from tools.builtin.search_code import GrepTool, _UnsupportedRipgrepPattern
 from tools.base import serialize_tool_result
 
 
@@ -107,14 +107,14 @@ def test_grep_skips_binary_files(search_project: Path) -> None:
     assert response["data"]["matches"] == []
 
 
-def test_grep_reports_the_python_fallback_as_partial(
+def test_grep_python_fallback_succeeds_when_results_are_complete(
     search_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("tools.builtin.search_code.shutil.which", lambda _: None)
 
     response = _response(GrepTool(project_root=search_project), {"pattern": "TODO"})
 
-    assert response["status"] == "partial"
+    assert response["status"] == "success"
     assert response["data"]["fallback_used"] is True
     assert response["data"]["fallback_reason"] == "rg_not_found"
 
@@ -130,10 +130,18 @@ def test_grep_bounds_one_long_matching_line_with_partial_metadata(tmp_path: Path
     assert len(response["data"]["matches"][0]["text"]) <= GrepTool.max_line_chars
 
 
-def test_grep_falls_back_when_rg_rejects_a_python_valid_regex(search_project: Path) -> None:
+def test_grep_falls_back_when_rg_rejects_a_python_valid_regex(
+    search_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def reject_pattern(*_args, **_kwargs):
+        raise _UnsupportedRipgrepPattern("unsupported")
+
+    monkeypatch.setattr("tools.builtin.search_code.shutil.which", lambda _: "/usr/bin/rg")
+    monkeypatch.setattr(GrepTool, "_rg_matches", reject_pattern)
+
     response = _response(GrepTool(project_root=search_project), {"pattern": "TODO(?=:)"})
 
-    assert response["status"] == "partial"
+    assert response["status"] == "success"
     assert response["data"]["matches"] == [
         {"file": "src/app.py", "line": 1, "text": "TODO: implement"},
         {"file": "src/nested/worker.py", "line": 1, "text": "todo: nested"},

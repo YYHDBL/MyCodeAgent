@@ -6,7 +6,7 @@ import json
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -21,7 +21,7 @@ UNSAFE_UNCERTAIN_REPLAY_TOOLS = {"Edit", "Bash", "Task"}
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def resolve_transcript_session_id(trace_session_id: str | None) -> str:

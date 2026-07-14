@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def _utc_now() -> datetime:
     """Return a timezone-aware UTC timestamp."""
 
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 class TraceLogger:

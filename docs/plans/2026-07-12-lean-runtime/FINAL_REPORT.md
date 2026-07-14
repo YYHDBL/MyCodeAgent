@@ -22,7 +22,7 @@ no verifier or subagent. JSONL remains the only trace artifact and ends with a
 totals; no HTML renderer, trace protocol module, or `runtime.evals` API is
 restored.
 
-The release command now reports `stable_production_python_lines=14095`, exact
+The release command now reports `stable_production_python_lines=14094`, exact
 seven stable tools, and exits 0 under the user-approved 15,000-line policy in
 closeout [C-008](../2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 Only the line cap changed; roots, exclusions, tool cap, and dependency cap are

@@ -135,4 +135,4 @@ The authoritative dependency graph and acceptance matrix are in the dated
 R0 through R5 are recorded there. The user subsequently approved a 15,000-line
 stable-production budget in closeout
 [C-008](../2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines),
-under which the current 14,095-line tree passes the enforcing metric normally.
+under which the current 14,094-line tree passes the enforcing metric normally.

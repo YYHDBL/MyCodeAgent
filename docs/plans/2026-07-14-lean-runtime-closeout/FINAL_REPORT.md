@@ -6,7 +6,7 @@ Status: **RELEASE-READY — PUBLICATION AUTHORIZED**
 
 This report includes fresh R6-01 evidence from the dedicated implementation worktree
 `/Users/yyhdbl/.config/superpowers/worktrees/MyCodeAgent/lean-runtime-20260712`.
-Q-06 now passes normally at 14,095 lines under the user-approved 15,000-line
+Q-06 now passes normally at 14,094 lines under the user-approved 15,000-line
 [C-008](DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 C-008 supersedes C-006 without changing the metric's roots, exclusions,
 seven-tool cap, or dependency cap.
@@ -51,7 +51,7 @@ seven-tool cap, or dependency cap.
 | Q-03 | PASS | `uv run pytest -q tests/extensions/test_mcp_extension.py tests/test_core_without_mcp.py tests/test_mcp_protocol.py` → `20 passed, 6 subtests passed`. |
 | Q-04 | PASS | `uv lock --check` → `Resolved 46 packages`. |
 | Q-05 | PASS | Fresh Python 3.12 venv editable install in a new unrelated Git repository: installed `mycodeagent --help` exited 0 in `1.322s` (<3s); the temporary directory was removed. |
-| Q-06 | PASS | `uv run python scripts/check_release_metrics.py` → exit 0, `stable_production_python_lines=14095`, `stable_tool_count=7`, `stable_tools=Bash, Edit, Glob, Grep, Read, Task, TodoWrite`. C-008 sets the cap to `15_000`; roots `(app, core, runtime, tools, extensions)`, exclusions, tool cap `7`, and four required dependencies are unchanged. |
+| Q-06 | PASS | `uv run python scripts/check_release_metrics.py` → exit 0, `stable_production_python_lines=14094`, `stable_tool_count=7`, `stable_tools=Bash, Edit, Glob, Grep, Read, Task, TodoWrite`. C-008 sets the cap to `15_000`; roots `(app, core, runtime, tools, extensions)`, exclusions, tool cap `7`, and four required dependencies are unchanged. |
 | Q-07 | PASS | `rg 'experimental\\.teams\|skill_evolution\|Team[A-Z]' app core runtime tools extensions prompts` returned no matches (rg exit 1, expected); `experimental/teams` and `extensions/skill_evolution` are absent. |
 | Q-08 | PASS | `uv run pytest -q tests/test_release_metrics.py tests/test_tool_surface_docs.py tests/test_maintenance_boundaries.py tests/test_cli_one_shot.py tests/test_lean_defaults.py` → `34 passed`; active documentation and the regression agree on the 15,000-line policy and normal exit-0 release gate. |
 | D-01 | PASS | This report and `INTEGRATION_HANDOFF.md` map every acceptance ID to fresh, reproducible evidence; no release exception remains. |
@@ -61,8 +61,8 @@ seven-tool cap, or dependency cap.
 
 | Metric | Program baseline | Final fresh count |
 |---|---:|---:|
-| Stable production Python | 19,320 | 14,095 |
-| Stable production Python (R0 closeout baseline) | 14,243 | 14,095 |
+| Stable production Python | 19,320 | 14,094 |
+| Stable production Python (R0 closeout baseline) | 14,243 | 14,094 |
 | Test Python | 17,904 | 13,692 |
 | Markdown documentation | 10,393 | 10,015 |
 | Required dependencies | 7 | 4 |

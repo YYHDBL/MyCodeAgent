@@ -122,11 +122,10 @@ class GrepTool(Tool):
             data["fallback_used"] = True
             data["fallback_reason"] = fallback_reason
         text = f"Found {len(matches)} matching line(s) in '{rel_root}'."
-        if truncated or fallback_reason is not None:
-            if fallback_reason is not None:
-                text += " Used the Python fallback because ripgrep was unavailable or failed."
-            if truncated:
-                text += " Results were truncated; narrow the path, glob, pattern, or matching lines."
+        if fallback_reason is not None:
+            text += " Used the Python fallback because ripgrep was unavailable or failed."
+        if truncated:
+            text += " Results were truncated; narrow the path, glob, pattern, or matching lines."
             return self.partial_result(
                 data=data,
                 text=text,

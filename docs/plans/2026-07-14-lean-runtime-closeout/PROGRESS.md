@@ -24,7 +24,7 @@ Append one entry per completed task using the format in
   task records use subjects rather than self-referential content-derived SHAs.
 - Release approval: all gates pass under the user-approved C-008 policy; direct
   integration and publication are authorized.
-- Q-06: `scripts/check_release_metrics.py` exits 0 at 14,095 stable production
+- Q-06: `scripts/check_release_metrics.py` exits 0 at 14,094 stable production
   lines and seven stable tools under the 15,000-line cap. C-008 supersedes the
   temporary C-006 exception; source roots, exclusions, tool contract, and
   dependency cap are unchanged.
@@ -44,6 +44,11 @@ Append one entry per completed task using the format in
   strict-critical, and stable-source E402 Ruff checks passed; scenarios passed
   23/23; MCP coverage passed 20 tests plus 6 subtests; lock check resolved 46
   packages; installed CLI help exited 0 in 1.322 seconds from an unrelated repo.
+- Publication follow-up: the first GitHub run exposed missing-ripgrep and
+  Python 3.10 portability assumptions. The metric now uses `pathlib`; complete
+  Python Grep fallback is a success with explicit metadata; UTC and `tomllib`
+  use Python 3.10-compatible forms. A local isolated Python 3.10 full run passes
+  all 580 tests, and the current stable count is 14,094.
 - Remaining: merge into a clean `main` integration worktree, repeat the release
   gates on the merged tree, and push without touching the original dirty
   `feature/skill-evolution` worktree.

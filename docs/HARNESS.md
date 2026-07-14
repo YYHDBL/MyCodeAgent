@@ -64,7 +64,7 @@ memory store is shipped.
 Normal lint enforces undefined-name and basic dead-code rules. Release checks
 also run strict `E722,F401,F541,F821,F841` selection and `E402` against stable
 packages; neither is a type-checking guarantee. The release-metric command
-enforces the user-approved 15,000-line cap; the current 14,095-line tree passes
+enforces the user-approved 15,000-line cap; the current 14,094-line tree passes
 while the seven-tool and dependency caps remain unchanged. See closeout
 [C-008](plans/2026-07-14-lean-runtime-closeout/DECISIONS.md#c-008-raise-the-stable-production-budget-to-15000-lines).
 

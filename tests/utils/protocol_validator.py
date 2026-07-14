@@ -4,7 +4,7 @@
 
 验证规则清单：
 - V001-V012: 结构验证（必需字段、类型、禁止自定义顶层字段）
-- S001-S008: 状态语义验证（error字段、截断、回退）
+- S001-S008: 状态语义验证（error字段、截断、回退说明）
 - T001-T004: text内容验证（非空、长度、说明）
 - D001-D007: 工具特定字段验证（entries/paths/matches）
 
@@ -275,11 +275,8 @@ class ProtocolValidator:
             if not any(kw.lower() in text.lower() for kw in truncate_keywords):
                 result.add_warning("S006", "data.truncated=true 时 text 应说明截断情况")
         
-        # S007-S008: 回退时必须是 partial 状态
+        # S007-S008: 完整回退可成功；回退必须向模型说明
         if data.get("fallback_used") is True or "fallback" in data:
-            if status != "partial":
-                result.add_error("S007", "使用回退策略时 status 必须为 'partial'")
-            
             # S008: 回退时 text 应说明（警告级别）
             text = response.get("text", "")
             fallback_keywords = ["fallback", "回退", "降级", "slower", "python"]

@@ -6,7 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 import textwrap
-import tomllib
+
+try:
+    import tomllib
+except ImportError:  # Python 3.10
+    import tomli as tomllib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
