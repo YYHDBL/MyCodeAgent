@@ -8,6 +8,17 @@ from tools.orchestrator import (
     ToolOrchestrator,
     ToolResultBudget,
 )
+from tools.base import ToolResult, ToolStatus
+
+
+def _success(data=None, text=""):
+    return ToolResult(
+        status=ToolStatus.SUCCESS,
+        data=data or {},
+        text=text,
+        stats={"time_ms": 1},
+        context={"cwd": ".", "params_input": {}},
+    )
 
 
 def test_tool_orchestrator_exports_v1_types():
@@ -16,12 +27,12 @@ def test_tool_orchestrator_exports_v1_types():
     obs = ToolObservation(
         tool_name="Echo",
         tool_call_id="call_1",
-        observation='{"status": "success"}',
+        result=_success(),
     )
 
     assert obs.tool_name == "Echo"
     assert obs.tool_call_id == "call_1"
-    assert obs.observation == '{"status": "success"}'
+    assert obs.result.status is ToolStatus.SUCCESS
 
     plan = ToolCallPlan(
         call={"id": "call_1"},
@@ -41,12 +52,12 @@ def test_tool_observation_accepts_budget_metadata():
     obs = ToolObservation(
         tool_name="Read",
         tool_call_id="call_1",
-        observation='{"status":"partial"}',
-        raw_observation='{"status":"success"}',
+        result=_success(),
+        raw_result=_success(),
         metadata={"budgeted": True, "replaced": True},
     )
 
-    assert obs.raw_observation == '{"status":"success"}'
+    assert obs.raw_result.status is ToolStatus.SUCCESS
     assert obs.metadata["budgeted"] is True
 
 
@@ -82,14 +93,14 @@ class _Host:
 
     def _execute_tool(self, tool_name, tool_input):
         self.calls.append((tool_name, tool_input))
-        return json.dumps({"status": "success", "data": {"ok": True}})
+        return _success({"ok": True})
 
 
 class _TimedHost(_Host):
     def _execute_tool(self, tool_name, tool_input):
         self.calls.append((tool_name, tool_input))
         time.sleep(tool_input.get("delay", 0))
-        return json.dumps({"status": "success", "data": {"tool": tool_name, "delay": tool_input.get("delay", 0)}})
+        return _success({"tool": tool_name, "delay": tool_input.get("delay", 0)})
 
 
 class _MixedFailureHost(_TimedHost):
@@ -98,31 +109,28 @@ class _MixedFailureHost(_TimedHost):
         time.sleep(tool_input.get("delay", 0))
         if tool_input.get("explode"):
             raise RuntimeError("boom")
-        return json.dumps({"status": "success", "data": {"tool": tool_name}})
+        return _success({"tool": tool_name})
 
 
 class _EmptyHost(_Host):
     def _execute_tool(self, tool_name, tool_input):
-        return ""
+        return _success()
 
 
 class _LargeHost(_Host):
     def _execute_tool(self, tool_name, tool_input):
-        return json.dumps({
-            "status": "success",
-            "data": {"content": "x" * 2000},
-            "text": "large",
-        })
+        return _success({"content": "x" * 2000}, "large")
 
 
 class _SizedHost(_Host):
     def _execute_tool(self, tool_name, tool_input):
         size = tool_input["size"]
-        return json.dumps({
-            "status": "success",
-            "data": {"content": "x" * size},
-            "text": f"size {size}",
-        })
+        return _success({"content": "x" * size}, f"size {size}")
+
+
+class _ManyLinesHost(_Host):
+    def _execute_tool(self, tool_name, tool_input):
+        return _success({"content": "\n".join(f"line {index}" for index in range(3000))})
 
 
 def test_run_serial_executes_one_tool_and_returns_observation():
@@ -333,9 +341,33 @@ def test_run_applies_single_tool_result_budget(tmp_path, monkeypatch):
 
     assert payload["status"] == "partial"
     assert payload["data"]["truncated"] is True
-    assert result[0].raw_observation is not None
+    assert result[0].raw_result is not None
     assert result[0].metadata["replaced"] is True
     assert result[0].metadata["reason"] == "single_tool_budget"
+
+
+def test_run_applies_typed_line_limit_before_result_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOOL_OUTPUT_MAX_LINES", "10")
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_RESULT_BYTES", "1000000")
+    monkeypatch.setenv("MYCODEAGENT_MAX_TOOL_MESSAGE_BYTES", "1000000")
+
+    host = _ManyLinesHost()
+    host.project_root = str(tmp_path)
+    orchestrator = ToolOrchestrator(host)
+
+    result = orchestrator.run(
+        [{"id": "call_1", "name": "Read", "arguments": "{}"}],
+        step=2,
+        trace_logger=host.trace_logger,
+    )
+
+    payload = json.loads(result[0].observation)
+
+    assert payload["status"] == "partial"
+    assert payload["data"]["truncated"] is True
+    assert payload["data"]["truncation"]["original_lines"] > 10
+    assert result[0].raw_result is not None
+    assert result[0].metadata["reason"] == "observation_limit"
 
 
 def test_run_applies_aggregate_message_budget_largest_first(tmp_path, monkeypatch):
@@ -368,7 +400,7 @@ def test_run_emits_permission_trace_event_when_tool_denied():
     from tools.registry import ToolRegistry
 
     class _NoopTool:
-        name = "Write"
+        name = "Edit"
 
         def run(self, parameters):  # pragma: no cover - should never execute
             raise AssertionError("permission denied tool must not run")
@@ -392,7 +424,7 @@ def test_run_emits_permission_trace_event_when_tool_denied():
     orchestrator = ToolOrchestrator(host)
 
     result = orchestrator.run_serial(
-        [{"id": "call_1", "name": "Write", "arguments": '{"path": "a.txt"}'}],
+        [{"id": "call_1", "name": "Edit", "arguments": '{"path": "a.txt"}'}],
         step=2,
         trace_logger=host.trace_logger,
     )
@@ -402,7 +434,7 @@ def test_run_emits_permission_trace_event_when_tool_denied():
     assert payload["error"]["code"] == "PERMISSION_DENIED"
     assert any(
         event[0] == "permission_decision"
-        and event[2]["tool_name"] == "Write"
+        and event[2]["tool_name"] == "Edit"
         and event[2]["action"] == "deny"
         for event in host.trace_logger.events
     )
@@ -427,5 +459,5 @@ def test_budget_does_not_restore_or_reprocess_replaced_result(tmp_path, monkeypa
 
     assert result[0].metadata["reason"] == "single_tool_budget"
     assert result[0].metadata["replaced"] is True
-    assert result[0].raw_observation is not None
+    assert result[0].raw_result is not None
     assert result[1].metadata["reason"] == "aggregate_message_budget"

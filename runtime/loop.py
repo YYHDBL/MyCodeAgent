@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import uuid
 from typing import Any
 
+from core.llm import (
+    extract_reasoning_content,
+    extract_response_content,
+    extract_response_meta,
+    extract_tool_calls,
+    extract_usage,
+    serialize_response,
+)
 from runtime.completion import (
     CompletionGateVerdict,
     DeterministicCompletionVerifier,
     build_completion_candidate,
     collect_verification_evidence,
     infer_completion_requirements,
+)
+from runtime.events import (
+    RuntimeEvent,
+    create_runtime_event_sink,
+    record_active_checkpoint,
+    trace_model_request_state,
+    transition_state,
 )
 from runtime.input_preprocess import preprocess_input
 from runtime.model_errors import ModelErrorKind, classify_model_error
@@ -25,6 +38,44 @@ class RuntimeRunner:
     def __init__(self, host: Any):
         self.host = host
 
+    def _event_sink(self):
+        host = self.host
+        sink = getattr(host, "runtime_event_sink", None)
+        if sink is None:
+            sink = create_runtime_event_sink(
+                getattr(host, "trace_logger", None),
+                getattr(host, "transcript_recorder", None),
+            )
+            host.runtime_event_sink = sink
+        if not callable(getattr(host, "emit_runtime_event", None)):
+            host.emit_runtime_event = self._emit_runtime_event
+        return sink
+
+    def _emit(self, event_type: str, payload: dict[str, Any], *, step: int) -> None:
+        self._emit_runtime_event(
+            run_id=self._get_transcript_run_id(),
+            step=step,
+            event_type=event_type,
+            payload=payload,
+        )
+
+    def _emit_runtime_event(
+        self,
+        *,
+        run_id: str,
+        step: int,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._event_sink().emit(
+            RuntimeEvent(
+                run_id=run_id,
+                step=step,
+                type=event_type,
+                payload=payload,
+            )
+        )
+
     def _transition(
         self,
         state: LoopState,
@@ -35,32 +86,14 @@ class RuntimeRunner:
         details: dict[str, Any] | None = None,
         **changes: Any,
     ) -> LoopState:
-        next_step = step if step is not None else state.step
-        state_field_names = set(LoopState.__dataclass_fields__)
-        state_changes = {key: value for key, value in changes.items() if key in state_field_names}
-        detail_changes = {key: value for key, value in changes.items() if key not in state_field_names}
-        payload_details = details if details is not None else detail_changes
-        next_state = state.next(reason, step=next_step, details=payload_details, **state_changes)
-        if trace_logger:
-            trace_logger.log_event(
-                "state_transition",
-                {
-                    "step": next_state.step,
-                    "turn_count": next_state.turn_count,
-                    "reason": reason.value,
-                    "message_count": len(next_state.messages),
-                    "details": payload_details,
-                },
-                step=step if step is not None else next_state.step,
-            )
-        self._record_transcript_state_transition(
-            from_state=state.transition.reason.value if state.transition else None,
-            to_state=reason.value,
-            reason=reason.value,
-            step=step if step is not None else next_state.step,
-            details=payload_details,
+        return transition_state(
+            state,
+            reason,
+            emit=lambda event, payload, event_step: self._emit(event, payload, step=event_step),
+            step=step,
+            details=details,
+            **changes,
         )
-        return next_state
 
     def _terminal(
         self,
@@ -70,16 +103,7 @@ class RuntimeRunner:
         step: int = 0,
         **details: Any,
     ) -> None:
-        if trace_logger:
-            trace_logger.log_event(
-                "terminal",
-                {"reason": reason.value, "details": details},
-                step=step,
-            )
-        self._record_transcript_terminal(reason=reason.value, step=step, details=details)
-
-    def _get_transcript_recorder(self):
-        return getattr(self.host, "transcript_recorder", None)
+        self._emit("terminal", {"reason": reason.value, "details": details}, step=step)
 
     def _get_transcript_run_id(self) -> str:
         run_id = getattr(self.host, "_active_transcript_run_id", None)
@@ -88,93 +112,11 @@ class RuntimeRunner:
         fallback = getattr(self.host, "_run_id", 0)
         return f"run-{fallback}"
 
-    def _record_transcript_message(
-        self,
-        *,
-        role: str,
-        content: str,
-        step: int,
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        recorder = self._get_transcript_recorder()
-        if recorder is None:
-            return
-        recorder.record_message(
-            run_id=self._get_transcript_run_id(),
-            step=step,
-            role=role,
-            content=content,
-            metadata=metadata or {},
-        )
-
-    def _record_transcript_state_transition(
-        self,
-        *,
-        from_state: str | None,
-        to_state: str,
-        reason: str,
-        step: int,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        recorder = self._get_transcript_recorder()
-        if recorder is None:
-            return
-        recorder.record_state_transition(
-            run_id=self._get_transcript_run_id(),
-            step=step,
-            from_state=from_state,
-            to_state=to_state,
-            reason=reason,
-            details=details or {},
-        )
-
-    def _record_transcript_checkpoint(self, *, step: int, checkpoint_id: str, payload: dict[str, Any]) -> None:
-        recorder = self._get_transcript_recorder()
-        if recorder is None:
-            return
-        recorder.record_checkpoint(
-            run_id=self._get_transcript_run_id(),
-            step=step,
-            checkpoint_id=checkpoint_id,
-            payload=payload,
-        )
-
     def _record_active_transcript_checkpoint(self, *, step: int) -> None:
-        compact_store = getattr(getattr(self.host, "context_engine", None), "compact_store", None)
-        checkpoint = getattr(compact_store, "active_checkpoint", None)
-        if checkpoint is None:
-            return
-        self._record_transcript_checkpoint(
+        record_active_checkpoint(
+            self.host,
+            emit=lambda event, payload, event_step: self._emit(event, payload, step=event_step),
             step=step,
-            checkpoint_id=checkpoint.id,
-            payload={
-                "summary": checkpoint.summary,
-                "source_message_count": checkpoint.source_message_count,
-                "retain_start_idx": checkpoint.retain_start_idx,
-                "messages_compacted": checkpoint.messages_compacted,
-                "created_at": checkpoint.created_at,
-                "metadata": dict(checkpoint.metadata),
-            },
-        )
-
-    def _notify_context_compacted(self, compact_info: dict[str, Any]) -> None:
-        callback = getattr(self.host, "_on_context_compacted", None)
-        if not callback:
-            return
-        try:
-            callback(compact_info, self.host.history_manager.get_messages())
-        except Exception:
-            self.host.logger.warning("Context compaction lifecycle hook failed", exc_info=True)
-
-    def _record_transcript_terminal(self, *, reason: str, step: int, details: dict[str, Any]) -> None:
-        recorder = self._get_transcript_recorder()
-        if recorder is None:
-            return
-        recorder.record_terminal(
-            run_id=self._get_transcript_run_id(),
-            step=step,
-            reason=reason,
-            details=details,
         )
 
     def _trace_model_request_state(
@@ -184,60 +126,12 @@ class RuntimeRunner:
         tools_schema: list[dict[str, Any]],
         step: int,
     ) -> None:
-        host = self.host
-        if hasattr(host.context_builder, "get_prompt_assembly"):
-            prompt_assembly = host.context_builder.get_prompt_assembly()
-            previous_prompt_fingerprints = getattr(host, "_last_prompt_fingerprints", {})
-            current_prompt_fingerprints = {
-                "constitution": prompt_assembly.constitution_fingerprint,
-                "tool_contracts": prompt_assembly.tool_contracts_fingerprint,
-                "project_rules": prompt_assembly.project_rules_fingerprint,
-                "runtime_signals": prompt_assembly.runtime_signals_fingerprint,
-            }
-            changed_layers = [
-                layer
-                for layer, value in current_prompt_fingerprints.items()
-                if previous_prompt_fingerprints.get(layer) not in (None, value)
-            ]
-            trace_logger.log_event(
-                "prompt_assembly",
-                {
-                    "constitution_fingerprint": prompt_assembly.constitution_fingerprint,
-                    "tool_contracts_fingerprint": prompt_assembly.tool_contracts_fingerprint,
-                    "project_rules_fingerprint": prompt_assembly.project_rules_fingerprint,
-                    "runtime_signals_fingerprint": prompt_assembly.runtime_signals_fingerprint,
-                    "system_fingerprint": prompt_assembly.system_fingerprint,
-                    "stable_message_count": len(prompt_assembly.stable_messages),
-                    "runtime_signal_count": len(prompt_assembly.runtime_signal_messages),
-                    "changed_layers": changed_layers,
-                },
-                step=step,
-            )
-            host._last_prompt_fingerprints = current_prompt_fingerprints
-
-        tool_schema_payload = json.dumps(
-            tools_schema,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        tool_schema_fingerprint = hashlib.sha256(
-            tool_schema_payload.encode("utf-8")
-        ).hexdigest()
-        previous_tool_schema_fingerprint = getattr(host, "_last_tool_schema_fingerprint", None)
-        trace_logger.log_event(
-            "tool_schema",
-            {
-                "fingerprint": tool_schema_fingerprint,
-                "tool_count": len(tools_schema),
-                "changed": previous_tool_schema_fingerprint not in (
-                    None,
-                    tool_schema_fingerprint,
-                ),
-            },
+        trace_model_request_state(
+            self.host,
+            emit=lambda event, payload, event_step: self._emit(event, payload, step=event_step),
+            tools_schema=tools_schema,
             step=step,
         )
-        host._last_tool_schema_fingerprint = tool_schema_fingerprint
 
     def _append_user_message(self, content: str, metadata: dict[str, Any] | None = None) -> None:
         append_user = self.host.history_manager.append_user
@@ -284,7 +178,7 @@ class RuntimeRunner:
         message: str,
         finish_reason: str | None = None,
     ) -> None:
-        trace_logger.log_event(
+        self._emit(
             "model_error_classified",
             {
                 "stage": stage,
@@ -307,7 +201,7 @@ class RuntimeRunner:
         retry_limit: int,
         action: str,
     ) -> None:
-        trace_logger.log_event(
+        self._emit(
             "model_recovery_attempted",
             {
                 "kind": kind.value,
@@ -328,7 +222,7 @@ class RuntimeRunner:
         retry_limit: int,
         reason: str,
     ) -> None:
-        trace_logger.log_event(
+        self._emit(
             "model_recovery_failed",
             {
                 "kind": kind.value,
@@ -342,7 +236,6 @@ class RuntimeRunner:
     def run(self, input_text: str, **kwargs) -> str:
         show_raw = kwargs.pop("show_raw", False)
         processed_input, trace_logger, run_id = self._prepare_run(input_text, show_raw)
-        raw_input = processed_input
         response_text = ""
         try:
             response_text = self._react_loop(
@@ -352,9 +245,6 @@ class RuntimeRunner:
             )
         finally:
             self._finish_run(trace_logger, run_id, response_text)
-            host = self.host
-            if hasattr(host, "_on_run_finished"):
-                host._on_run_finished(processed_input=raw_input)
         return response_text
 
     def _prepare_run(self, input_text: str, show_raw: bool) -> tuple[str, Any, int]:
@@ -383,23 +273,27 @@ class RuntimeRunner:
         trace_logger = host.trace_logger
         if hasattr(trace_logger, "clear_current_run_events"):
             trace_logger.clear_current_run_events()
+        host._turn_cancelled = False
         host._run_id += 1
         run_id = host._run_id
         host._active_transcript_run_id = f"run-{run_id}"
         host._log_system_messages_if_needed(trace_logger)
-        trace_logger.log_event(
+        self._emit(
             "run_start",
             {"run_id": run_id, "input": input_text, "processed": processed_input},
             step=0,
         )
         self._append_user_message(processed_input)
-        self._record_transcript_message(role="user", content=processed_input, step=0, metadata={})
-        trace_logger.log_event(
+        self._emit(
+            "message",
+            {"role": "user", "content": processed_input, "metadata": {}},
+            step=0,
+        )
+        self._emit(
             "user_input",
             {"text": input_text, "processed": processed_input},
             step=0,
         )
-        host._log_message_write(trace_logger, "user", processed_input, {}, step=0)
         if host.console_verbose:
             host._console(f"\n⚙️ Engine 启动: {input_text}")
         elif host.logger.isEnabledFor(10):
@@ -409,7 +303,7 @@ class RuntimeRunner:
     def _finish_run(self, trace_logger, run_id: int, response_text: str) -> None:
         """Record run completion and release run-scoped state."""
         host = self.host
-        trace_logger.log_event(
+        self._emit(
             "run_end",
             {"run_id": run_id, "final": response_text},
             step=0,
@@ -496,7 +390,6 @@ class RuntimeRunner:
                             trace_logger=trace_logger,
                         )
                         if compact_info.get("compacted"):
-                            self._notify_context_compacted(compact_info)
                             self._record_active_transcript_checkpoint(step=step)
                             state = self._transition(
                                 state,
@@ -525,7 +418,7 @@ class RuntimeRunner:
                             messages = model_view.messages
                             base_messages = messages
                             state = state.update(messages=messages)
-                            trace_logger.log_event(
+                            self._emit(
                                 "context_build",
                                 {
                                     "message_count": len(messages),
@@ -605,9 +498,9 @@ class RuntimeRunner:
                         else raw_response
                     )
 
-                response_text = host._extract_content(raw_response) or ""
-                reasoning_content = host._extract_reasoning_content(raw_response)
-                usage = host._extract_usage(raw_response)
+                response_text = extract_response_content(raw_response) or ""
+                reasoning_content = extract_reasoning_content(raw_response)
+                usage = extract_usage(raw_response)
                 if usage and usage.get("total_tokens") is not None:
                     host.context_engine.record_usage(usage["total_tokens"])
                     max_total_tokens = int(getattr(host, "max_total_tokens", 0) or 0)
@@ -631,10 +524,10 @@ class RuntimeRunner:
                         )
                         return "抱歉，我无法在限定预算内完成这个任务。"
 
-                response_meta = host._extract_response_meta(raw_response)
-                tool_calls = host._extract_tool_calls(raw_response)
-                raw_dump = host._extract_raw_response(raw_response)
-                trace_logger.log_event(
+                response_meta = extract_response_meta(raw_response)
+                tool_calls = extract_tool_calls(raw_response)
+                raw_dump = serialize_response(raw_response)
+                self._emit(
                     "model_output",
                     {
                         "raw": response_text,
@@ -707,7 +600,7 @@ class RuntimeRunner:
                             "retry_limit": retry_limit,
                         },
                     )
-                    trace_logger.log_event(
+                    self._emit(
                         "empty_response_retry",
                         {
                             "finish_reason": response_meta.get("finish_reason"),
@@ -772,7 +665,7 @@ class RuntimeRunner:
                     retry_limit=retry_limit,
                 )
                 if classification.kind is ModelErrorKind.EMPTY_RESPONSE:
-                    trace_logger.log_event(
+                    self._emit(
                         "error",
                         {
                             "stage": "llm_response",
@@ -807,64 +700,43 @@ class RuntimeRunner:
                     },
                     reasoning_content=reasoning_content,
                 )
-                self._record_transcript_message(
-                    role="assistant",
-                    content=assistant_content,
-                    step=step,
-                    metadata={
-                        "action_type": "tool_call",
-                        "tool_calls": tool_calls,
+                self._emit(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": assistant_content,
+                        "metadata": {"action_type": "tool_call", "tool_calls": tool_calls},
                     },
+                    step=step,
                 )
-                host._log_message_write(
-                    trace_logger,
-                    "assistant",
-                    assistant_content,
-                    {"action_type": "tool_call", "tool_calls": tool_calls},
-                    step,
+                observations = host.tool_orchestrator.run(
+                    tool_calls,
+                    step=step,
+                    trace_logger=trace_logger,
                 )
-                if getattr(host, "tool_orchestrator", None) is None:
-                    raise RuntimeError("Runtime host must provide a ToolOrchestrator instance")
-                if hasattr(host.tool_orchestrator, "run"):
-                    observations = host.tool_orchestrator.run(
-                        tool_calls,
-                        step=step,
-                        trace_logger=trace_logger,
-                    )
-                else:
-                    observations = host.tool_orchestrator.run_serial(
-                        tool_calls,
-                        step=step,
-                        trace_logger=trace_logger,
-                    )
                 for obs in observations:
                     obs_metadata = getattr(obs, "metadata", None) or {}
                     host.history_manager.append_tool(
                         tool_name=obs.tool_name,
-                        raw_result=obs.observation,
+                        observation=obs.observation,
                         metadata={
                             "step": step,
                             "tool_call_id": obs.tool_call_id,
                             **obs_metadata,
                         },
-                        project_root=host.project_root,
                     )
-                    self._record_transcript_message(
-                        role="tool",
-                        content=obs.observation,
-                        step=step,
-                        metadata={
-                            "tool_name": obs.tool_name,
-                            "tool_call_id": obs.tool_call_id,
-                            **obs_metadata,
+                    self._emit(
+                        "message",
+                        {
+                            "role": "tool",
+                            "content": obs.observation,
+                            "metadata": {
+                                "tool_name": obs.tool_name,
+                                "tool_call_id": obs.tool_call_id,
+                                **obs_metadata,
+                            },
                         },
-                    )
-                    host._log_message_write(
-                        trace_logger,
-                        "tool",
-                        obs.observation,
-                        {"tool_name": obs.tool_name, "tool_call_id": obs.tool_call_id},
-                        step,
+                        step=step,
                     )
 
                     if host.console_verbose:
@@ -894,7 +766,7 @@ class RuntimeRunner:
                 response_meta=response_meta,
                 history_messages=host.history_manager.get_messages(),
             )
-            trace_logger.log_event(
+            self._emit(
                 "completion_candidate",
                 candidate.to_trace_payload(),
                 step=step,
@@ -904,7 +776,7 @@ class RuntimeRunner:
                 user_input=pending_input,
                 history_messages=host.history_manager.get_messages(),
             )
-            trace_logger.log_event(
+            self._emit(
                 "completion_requirements",
                 requirements.to_trace_payload(),
                 step=step,
@@ -912,7 +784,7 @@ class RuntimeRunner:
 
             evidence = collect_verification_evidence(host.history_manager.get_messages())
             for item in evidence:
-                trace_logger.log_event("verification_evidence", item.to_trace_payload(), step=step)
+                self._emit("verification_evidence", item.to_trace_payload(), step=step)
 
             verdict = self._get_completion_verifier().evaluate(
                 candidate,
@@ -920,7 +792,7 @@ class RuntimeRunner:
                 evidence,
                 host.history_manager.get_messages(),
             )
-            trace_logger.log_event(
+            self._emit(
                 "completion_gate_verdict",
                 verdict.to_trace_payload(),
                 step=step,
@@ -933,18 +805,14 @@ class RuntimeRunner:
                     metadata={"step": step, "action_type": action_type},
                     reasoning_content=reasoning_content,
                 )
-                self._record_transcript_message(
-                    role="assistant",
-                    content=final_text,
+                self._emit(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": final_text,
+                        "metadata": {"action_type": action_type},
+                    },
                     step=step,
-                    metadata={"action_type": action_type},
-                )
-                host._log_message_write(
-                    trace_logger,
-                    "assistant",
-                    final_text,
-                    {"action_type": action_type},
-                    step,
                 )
                 state = self._transition(
                     state,
@@ -972,7 +840,7 @@ class RuntimeRunner:
                     final_length=len(final_text),
                     completion_verdict=verdict.verdict.value,
                 )
-                trace_logger.log_event(
+                self._emit(
                     "finish",
                     {"final": final_text, "completion_verdict": verdict.verdict.value},
                     step=step,
@@ -984,18 +852,14 @@ class RuntimeRunner:
                 metadata={"step": step, "action_type": "final_candidate"},
                 reasoning_content=reasoning_content,
             )
-            self._record_transcript_message(
-                role="assistant",
-                content=final_text,
+            self._emit(
+                "message",
+                {
+                    "role": "assistant",
+                    "content": final_text,
+                    "metadata": {"action_type": "final_candidate"},
+                },
                 step=step,
-                metadata={"action_type": "final_candidate"},
-            )
-            host._log_message_write(
-                trace_logger,
-                "assistant",
-                final_text,
-                {"action_type": "final_candidate"},
-                step,
             )
             block_count = state.completion_block_count + 1
             feedback = verdict.blocking_feedback or "Completion blocked by runtime gate."
@@ -1003,18 +867,14 @@ class RuntimeRunner:
                 feedback,
                 metadata={"step": step, "source": "completion_gate"},
             )
-            self._record_transcript_message(
-                role="user",
-                content=feedback,
+            self._emit(
+                "message",
+                {
+                    "role": "user",
+                    "content": feedback,
+                    "metadata": {"source": "completion_gate"},
+                },
                 step=step,
-                metadata={"source": "completion_gate"},
-            )
-            host._log_message_write(
-                trace_logger,
-                "user",
-                feedback,
-                {"source": "completion_gate"},
-                step,
             )
             state = self._transition(
                 state,
@@ -1069,19 +929,6 @@ class RuntimeRunner:
         """Refresh runtime signals, compact history, and build the model view."""
         host = self.host
         tools_schema = host._get_openai_tools_for_current_mode()
-        if (
-            host.enable_agent_teams
-            and host.team_manager
-            and hasattr(host.context_builder, "set_runtime_system_blocks")
-        ):
-            events = host.team_manager.drain_events()
-            runtime_state = host.team_manager.export_state()
-            runtime_blocks = host._format_runtime_system_blocks(
-                events,
-                runtime_state=runtime_state,
-            )
-            host.context_builder.set_runtime_system_blocks(runtime_blocks)
-
         self._trace_model_request_state(
             trace_logger,
             tools_schema=tools_schema,
@@ -1101,7 +948,6 @@ class RuntimeRunner:
             trace_logger=trace_logger,
         )
         if compact_info.get("compacted"):
-            self._notify_context_compacted(compact_info)
             self._record_active_transcript_checkpoint(step=step)
             state = self._transition(
                 state,
@@ -1121,7 +967,7 @@ class RuntimeRunner:
                 step=step,
                 trace_logger=trace_logger,
             ).messages
-            trace_logger.log_event(
+            self._emit(
                 "history_compression_final_context",
                 {"message_count": len(final_context), "messages": final_context},
                 step=step,
@@ -1149,7 +995,7 @@ class RuntimeRunner:
         )
         messages = model_view.messages
         state = state.update(step=step, messages=messages)
-        trace_logger.log_event(
+        self._emit(
             "context_build",
             {
                 "message_count": len(messages),

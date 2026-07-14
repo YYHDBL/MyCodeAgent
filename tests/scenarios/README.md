@@ -1,6 +1,6 @@
 # Phase 0 Baseline Scenarios
 
-这些场景用于冻结 mock harness 基线，并在后续阶段继续提供可比较的 deterministic eval 输入。
+这些场景用于冻结 mock harness 基线，并在后续阶段继续提供可比较的 deterministic event facts。
 
 ## 自动化 mock 场景
 
@@ -19,25 +19,16 @@
 - `max_steps`: 工具循环导致最大步数终止
 - `empty_response_failed`: 连续空响应后终止
 
-基线指标：
+基线断言直接检查：
 
-- `model_call_count`
-- `step_count`
-- `tool_call_count`
-- `tool_error_count`
-- `permission_denied_count`
-- `completion_gate_block_count`
-- `model_recovery_count`
-- `context_compaction_count`
-- `projection_modes`
-- `terminal_reason`
-- `failure_stage`
+- `model_output` 事实和步骤推进
+- 终止事实及其 `reason`
+- 权限拒绝、完成门、恢复和 compact 事件
 
-批量 summary 入口：
+批量事件报告入口：
 
 - `tests.scenarios.phase0_baselines.run_phase0_mock_scenarios()`
-- 输出可序列化 JSON report
-- 汇总逻辑位于 `runtime/evals.py`
+- 输出可序列化 JSON report，其中每个场景包含终止原因和事件名
 
 ## 真实模型场景
 

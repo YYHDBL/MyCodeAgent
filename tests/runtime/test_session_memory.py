@@ -177,7 +177,7 @@ def test_session_memory_keeps_uncertain_actions_as_unresolved_risk(tmp_path: Pat
     store.append_tool_lifecycle(
         run_id="run-1",
         step=2,
-        tool_name="Write",
+        tool_name="Edit",
         tool_call_id="call-2",
         status="requested",
         payload={"args": {"path": "notes.txt"}},
@@ -185,7 +185,7 @@ def test_session_memory_keeps_uncertain_actions_as_unresolved_risk(tmp_path: Pat
     store.append_tool_lifecycle(
         run_id="run-1",
         step=2,
-        tool_name="Write",
+        tool_name="Edit",
         tool_call_id="call-2",
         status="started",
         payload={"args": {"path": "notes.txt"}},
@@ -218,3 +218,74 @@ def test_session_memory_rebuild_matches_resume_recovery(tmp_path: Path):
     resume = ResumeLoader(store).load(run_id="run-1")
 
     assert resume.session_memory == before_resume
+
+
+def test_session_memory_resume_is_idempotent_with_compact_checkpoint(tmp_path: Path):
+    from runtime.transcript import ResumeLoader, TranscriptStore
+
+    store = TranscriptStore(tmp_path / "transcript.jsonl", session_id="session-1")
+    store.append_message(run_id="run-1", step=0, role="user", content="Keep this goal")
+    store.append_checkpoint(
+        run_id="run-1",
+        step=1,
+        checkpoint_id="compact-1",
+        payload={"summary": "Compacted prior context", "retain_start_idx": 1},
+    )
+    store.append_message(run_id="run-2", step=0, role="assistant", content="Continue safely")
+
+    first = ResumeLoader(store).load_session()
+    second = ResumeLoader(store).load_session()
+
+    assert first.session_memory == second.session_memory
+    assert first.checkpoint == second.checkpoint
+    assert first.session_memory.current_goal.text == "Keep this goal"
+
+
+def test_session_memory_keeps_cross_run_duplicate_started_action_uncertain(tmp_path: Path):
+    from runtime.transcript import ResumeLoader, TranscriptStore
+
+    store = TranscriptStore(tmp_path / "transcript.jsonl", session_id="session-1")
+    store.append_tool_lifecycle(
+        run_id="run-1", step=1, tool_name="Edit", tool_call_id="shared", status="requested"
+    )
+    store.append_tool_lifecycle(
+        run_id="run-1", step=1, tool_name="Edit", tool_call_id="shared", status="started"
+    )
+    store.append_tool_lifecycle(
+        run_id="run-2", step=1, tool_name="Read", tool_call_id="shared", status="requested"
+    )
+    store.append_tool_lifecycle(
+        run_id="run-2", step=1, tool_name="Read", tool_call_id="shared", status="completed"
+    )
+
+    resume = ResumeLoader(store).load_session()
+
+    assert [action.tool_call_id for action in resume.uncertain_actions] == ["shared"]
+    assert any("Edit (shared)" in item.text for item in resume.session_memory.todo_items)
+    assert any("Edit (shared)" in item.text for item in resume.session_memory.verification_status)
+
+
+def test_session_memory_incremental_updates_keep_cross_run_duplicate_actions_isolated(tmp_path: Path):
+    from runtime.session_memory import SessionMemoryDeriver
+    from runtime.transcript import TranscriptStore
+
+    store = TranscriptStore(tmp_path / "transcript.jsonl", session_id="session-1")
+    first = store.append_tool_lifecycle(
+        run_id="run-1", step=1, tool_name="Edit", tool_call_id="shared", status="requested"
+    )
+    second = store.append_tool_lifecycle(
+        run_id="run-1", step=1, tool_name="Edit", tool_call_id="shared", status="started"
+    )
+    third = store.append_tool_lifecycle(
+        run_id="run-2", step=1, tool_name="Read", tool_call_id="shared", status="requested"
+    )
+    fourth = store.append_tool_lifecycle(
+        run_id="run-2", step=1, tool_name="Read", tool_call_id="shared", status="completed"
+    )
+    deriver = SessionMemoryDeriver()
+
+    memory = deriver.update(None, [first, second])
+    updated = deriver.update(memory, [third, fourth])
+
+    assert any("Edit (shared)" in item.text for item in updated.todo_items)
+    assert any("Edit (shared)" in item.text for item in updated.verification_status)

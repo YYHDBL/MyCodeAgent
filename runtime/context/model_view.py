@@ -21,8 +21,6 @@ class ModelView:
     dynamic_message_count: int = 0
     session_memory_message_count: int = 0
     session_memory_chars: int = 0
-    long_term_memory_message_count: int = 0
-    long_term_memory_chars: int = 0
     dynamic_context_sources: tuple[str, ...] = field(default_factory=tuple)
 
     @property

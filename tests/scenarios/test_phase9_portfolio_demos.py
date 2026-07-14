@@ -10,7 +10,7 @@ def test_portfolio_demo_catalog_covers_four_core_modules():
         "agent-loop",
         "tool-harness",
         "context-engineering",
-        "memory-subagent",
+        "recovery-subagent",
     )
 
 
@@ -30,9 +30,15 @@ def test_tool_harness_demo_shows_batching_order_and_permission_denial():
     assert report["summary"]["observation_order"] == [
         "read-slow",
         "grep-fast",
-        "write-denied",
+        "edit-denied",
     ]
     assert report["summary"]["permission_denied_count"] == 1
+    results = {item["tool"]: item["result"] for item in report["observations"]}
+    assert results["Read"]["status"] == "success"
+    assert results["Read"]["data"]["content"] == "read result"
+    assert results["Grep"]["status"] == "success"
+    assert results["Grep"]["data"]["content"] == "grep result"
+    assert results["Edit"]["error"]["code"] == "PERMISSION_DENIED"
     assert "tool_orchestration_plan" in _event_names(report)
     assert "permission_decision" in _event_names(report)
 
@@ -48,13 +54,12 @@ def test_context_demo_keeps_full_history_and_projects_compact_model_view():
     assert "model_view_build" in _event_names(report)
 
 
-def test_memory_subagent_demo_shows_resume_memory_injection_and_child_isolation():
-    report = run_demo("memory-subagent")
+def test_recovery_subagent_demo_shows_resume_and_child_isolation():
+    report = run_demo("recovery-subagent")
 
     assert report["summary"]["uncertain_action_count"] == 1
     assert report["summary"]["uncertain_replay_allowed"] is False
     assert report["summary"]["session_memory_injected"] is True
-    assert report["summary"]["long_term_memory_injected"] is True
     assert report["summary"]["subagent_status"] == "completed"
     assert "model_view_build" in _event_names(report)
     assert "subagent_requested" in _event_names(report)

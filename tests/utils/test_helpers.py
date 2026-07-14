@@ -62,7 +62,7 @@ def create_temp_project(structure: Optional[Dict[str, Any]] = None):
     
     Example:
         with create_temp_project({"src/main.py": "..."}) as project:
-            tool = ListFilesTool(project_root=project.root)
+            tool = GlobTool(project_root=project.root)
             response = tool.run({"path": "."})
     """
     temp_dir = Path(tempfile.mkdtemp(prefix="test_project_"))
@@ -189,7 +189,7 @@ python src/main.py
 }
 
 
-def parse_response(response_str: str) -> Dict[str, Any]:
+def parse_response(response_str: Any) -> Dict[str, Any]:
     """
     解析工具响应 JSON
     
@@ -202,6 +202,11 @@ def parse_response(response_str: str) -> Dict[str, Any]:
     Raises:
         ValueError: JSON 解析失败
     """
+    if not isinstance(response_str, str):
+        from tools.base import ToolResult, serialize_tool_result
+
+        if isinstance(response_str, ToolResult):
+            response_str = serialize_tool_result(response_str)
     try:
         return json.loads(response_str)
     except json.JSONDecodeError as e:
@@ -249,5 +254,5 @@ def format_response(response_str: str, indent: int = 2) -> str:
     try:
         parsed = json.loads(response_str)
         return json.dumps(parsed, ensure_ascii=False, indent=indent)
-    except:
+    except Exception:
         return response_str

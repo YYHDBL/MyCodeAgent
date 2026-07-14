@@ -1,8 +1,5 @@
-import json
-
 import pytest
 
-from tools.base import ErrorCode, ToolStatus
 from tools.permissions import (
     PermissionAction,
     PermissionContext,
@@ -86,7 +83,7 @@ def test_readonly_subagent_denies_write_actions():
     classifier = RiskClassifier()
 
     decision = classifier.classify(
-        "Write",
+        "Edit",
         {"path": "notes.txt", "content": "hello"},
         PermissionContext(runtime_mode="readonly_subagent"),
     )
@@ -107,25 +104,6 @@ def test_todo_write_is_allowed_without_file_path_for_main_agent():
 
     assert decision.action is PermissionAction.ALLOW
     assert decision.risk is RiskLevel.LOW
-
-
-def test_memory_is_allowed_for_main_agent_but_denied_for_readonly_subagent():
-    classifier = RiskClassifier()
-
-    allowed = classifier.classify(
-        "Memory",
-        {"action": "add", "target": "user", "content": "User prefers concise replies."},
-        PermissionContext(runtime_mode="main_agent"),
-    )
-    denied = classifier.classify(
-        "Memory",
-        {"action": "add", "target": "user", "content": "User prefers concise replies."},
-        PermissionContext(runtime_mode="readonly_subagent"),
-    )
-
-    assert allowed.action is PermissionAction.ALLOW
-    assert denied.action is PermissionAction.DENY
-    assert "readonly_subagent" in denied.reason
 
 
 def test_todo_write_is_allowed_as_internal_planning_for_readonly_subagent():

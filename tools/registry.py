@@ -10,7 +10,7 @@ import os
 import hashlib
 from typing import Optional, Any, Callable, TypedDict
 
-from .base import Tool, ToolStatus, ErrorCode, ToolParameter
+from .base import Tool, ToolResult, ToolStatus, ErrorCode, ToolParameter
 from .circuit_breaker import CircuitBreaker
 from core.env import load_env
 
@@ -70,14 +70,19 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         logger.info("工具 '%s' 已注册。", tool.name)
 
-    def register_function(self, name: str, description: str, func: Callable[[str], str]):
+    def register_function(
+        self,
+        name: str,
+        description: str,
+        func: Callable[[Any], ToolResult],
+    ):
         """
         直接注册函数作为工具（简便方式）
 
         Args:
             name: 工具名称
             description: 工具描述
-            func: 工具函数，接受字符串参数，返回字符串结果
+            func: 工具函数，接受原始输入，返回 ToolResult
         """
         if name in self._functions:
             logger.warning("工具 '%s' 已存在，将被覆盖。", name)
@@ -207,7 +212,7 @@ class ToolRegistry:
         """获取Tool对象"""
         return self._tools.get(name)
 
-    def get_function(self, name: str) -> Optional[Callable]:
+    def get_function(self, name: str) -> Optional[Callable[[Any], ToolResult]]:
         """获取工具函数"""
         func_info = self._functions.get(name)
         return func_info["func"] if func_info else None
@@ -222,29 +227,22 @@ class ToolRegistry:
         """Whether a tool/function is currently executable."""
         return self._circuit_breaker.is_available(name)
 
-    def create_circuit_open_response(self, name: str, parameters: dict[str, Any]) -> str:
-        payload = {
-            "status": ToolStatus.ERROR.value,
-            "data": {},
-            "text": f"工具 '{name}' 因连续失败被临时禁用。",
-            "error": {
-                "code": ErrorCode.CIRCUIT_OPEN.value,
-                "message": f"工具 '{name}' 因连续失败被临时禁用。",
-            },
-            "stats": {"time_ms": 0},
-            "context": {"cwd": ".", "params_input": parameters},
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+    def create_circuit_open_result(self, name: str, parameters: dict[str, Any]) -> ToolResult:
+        message = f"工具 '{name}' 因连续失败被临时禁用。"
+        return ToolResult(
+            status=ToolStatus.ERROR,
+            data={},
+            text=message,
+            error_code=ErrorCode.CIRCUIT_OPEN,
+            error_message=message,
+            stats={"time_ms": 0},
+            context={"cwd": ".", "params_input": parameters},
+        )
 
-    def record_execution_result(self, name: str, result_payload: Optional[dict]) -> None:
+    def record_execution_result(self, name: str, result: ToolResult) -> None:
         """Update execution health after a tool run."""
-        if not isinstance(result_payload, dict):
-            return
-        status = result_payload.get("status")
-        if status == ToolStatus.ERROR.value:
-            err = result_payload.get("error", {}) or {}
-            err_msg = err.get("message") if isinstance(err, dict) else None
-            self._circuit_breaker.record_failure(name, str(err_msg or result_payload.get("text") or ""))
+        if result.status is ToolStatus.ERROR:
+            self._circuit_breaker.record_failure(name, str(result.error_message or result.text or ""))
         else:
             self._circuit_breaker.record_success(name)
 
@@ -256,15 +254,15 @@ class ToolRegistry:
         """Inject optimistic-lock parameters for write-like tools when available."""
         return self._inject_optimistic_lock_params(tool_name, parameters)
 
-    def normalize_result(self, tool_name: str, result: Any, params_input: Any) -> dict:
-        """Normalize a raw tool return value to the common tool response protocol."""
+    def normalize_result(self, tool_name: str, result: Any, params_input: Any) -> ToolResult:
+        """Validate that a registered tool returned the internal result type."""
         return self._normalize_result(tool_name, result, params_input)
 
-    def create_internal_error_payload(self, name: str, message: str, params_input: dict) -> dict:
-        """Create a common internal-error payload."""
-        return self._create_internal_error_payload(name, message, params_input)
+    def create_internal_error_result(self, name: str, message: str, params_input: dict) -> ToolResult:
+        """Create a common internal-error result."""
+        return self._create_internal_error_result(name, message, params_input)
 
-    def execute_tool(self, name: str, input_text) -> str:
+    def execute_tool(self, name: str, input_text) -> ToolResult:
         """
         执行工具
 
@@ -273,7 +271,7 @@ class ToolRegistry:
             input_text: 输入参数
 
         Returns:
-            工具执行结果（符合《通用工具响应协议》的 JSON 字符串）
+            Typed internal tool result.
         """
         from .executor import ToolExecutor
 
@@ -290,7 +288,7 @@ class ToolRegistry:
     
     def _inject_optimistic_lock_params(self, tool_name: str, parameters: dict) -> dict:
         """
-        为 Write/Edit 工具自动注入乐观锁参数
+        为 Edit 工具自动注入乐观锁参数
         
         如果参数中缺少 expected_mtime_ms / expected_size_bytes，
         尝试从 Read 缓存中查找并注入。
@@ -340,9 +338,9 @@ class ToolRegistry:
         
         return parameters
     
-    def _cache_read_meta(self, result: Any, params_input: dict) -> None:
+    def _cache_read_meta(self, result: ToolResult, params_input: dict) -> None:
         """
-        缓存 Read 工具的元信息（用于后续 Write/Edit 的乐观锁校验）
+        缓存 Read 工具的元信息（用于后续 Edit 的乐观锁校验）
         
         仅在 Read 成功或 partial 时缓存。
         
@@ -350,22 +348,13 @@ class ToolRegistry:
             result_str: Read 工具的响应字符串
             params_input: 原始输入参数
         """
-        if isinstance(result, dict):
-            parsed = result
-        else:
-            try:
-                parsed = json.loads(result)
-            except json.JSONDecodeError:
-                return
-        
         # 仅缓存成功/partial 状态
-        status = parsed.get("status")
-        if status not in ("success", "partial"):
+        if result.status not in (ToolStatus.SUCCESS, ToolStatus.PARTIAL):
             return
         
         # 提取元信息
-        stats = parsed.get("stats", {})
-        context = parsed.get("context", {})
+        stats = result.stats
+        context = result.context
         
         file_mtime_ms = stats.get("file_mtime_ms")
         file_size_bytes = stats.get("file_size_bytes")
@@ -374,8 +363,8 @@ class ToolRegistry:
         # 必须同时有 mtime 和 size
         if file_mtime_ms is None or file_size_bytes is None:
             logger.warning(
-                f"[OptimisticLock] Read response missing file_mtime_ms or file_size_bytes. "
-                f"Skipping cache."
+                "[OptimisticLock] Read response missing file_mtime_ms or file_size_bytes. "
+                "Skipping cache."
             )
             return
         
@@ -410,105 +399,26 @@ class ToolRegistry:
         self._read_cache.clear()
         logger.debug("[OptimisticLock] Read cache cleared.")
     
-    def _normalize_result(self, tool_name: str, result: Any, params_input: Any) -> dict:
-        if isinstance(result, dict):
-            payload = result
-        elif isinstance(result, str):
-            try:
-                payload = json.loads(result)
-            except json.JSONDecodeError:
-                return self._create_internal_error_payload(
-                    name=tool_name,
-                    message=f"Tool '{tool_name}' returned invalid JSON.",
-                    params_input=params_input if isinstance(params_input, dict) else {"input": params_input},
-                )
-        else:
-            return self._create_internal_error_payload(
-                name=tool_name,
-                message=f"Tool '{tool_name}' returned unsupported result type.",
-                params_input=params_input if isinstance(params_input, dict) else {"input": params_input},
-            )
+    def _normalize_result(self, tool_name: str, result: Any, params_input: Any) -> ToolResult:
+        if isinstance(result, ToolResult):
+            return result
+        return self._create_internal_error_result(
+            name=tool_name,
+            message=f"Tool '{tool_name}' returned unsupported result type.",
+            params_input=params_input if isinstance(params_input, dict) else {"input": params_input},
+        )
 
-        if not isinstance(payload, dict):
-            return self._create_internal_error_payload(
-                name=tool_name,
-                message=f"Tool '{tool_name}' returned invalid payload.",
-                params_input=params_input if isinstance(params_input, dict) else {"input": params_input},
-            )
-
-        status = payload.get("status")
-        if status not in (ToolStatus.SUCCESS.value, ToolStatus.PARTIAL.value, ToolStatus.ERROR.value):
-            return self._create_internal_error_payload(
-                name=tool_name,
-                message=f"Tool '{tool_name}' returned non-protocol response.",
-                params_input=params_input if isinstance(params_input, dict) else {"input": params_input},
-            )
-
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            data = {}
-
-        text = payload.get("text") or ""
-        if not isinstance(text, str):
-            text = str(text)
-
-        stats = payload.get("stats")
-        if not isinstance(stats, dict):
-            stats = {}
-        stats.setdefault("time_ms", 0)
-
-        context = payload.get("context")
-        if not isinstance(context, dict):
-            context = {}
-        context.setdefault("cwd", ".")
-        if "params_input" not in context:
-            context["params_input"] = (
-                params_input if isinstance(params_input, dict) else {"input": params_input}
-            )
-
-        normalized = {
-            "status": status,
-            "data": data,
-            "text": text,
-            "stats": stats,
-            "context": context,
-        }
-
-        if status == ToolStatus.ERROR.value:
-            error = payload.get("error")
-            if not isinstance(error, dict):
-                error = {
-                    "code": ErrorCode.INTERNAL_ERROR.value,
-                    "message": text or "Tool execution error",
-                }
-            else:
-                error.setdefault("code", ErrorCode.INTERNAL_ERROR.value)
-                error.setdefault("message", text or "Tool execution error")
-            normalized["error"] = error
-
-        return normalized
-
-    def _create_internal_error_payload(self, name: str, message: str, params_input: dict) -> dict:
-        """创建内部错误响应 payload（符合协议）"""
-        return {
-            "status": ToolStatus.ERROR.value,
-            "data": {},
-            "text": message,
-            "error": {
-                "code": ErrorCode.INTERNAL_ERROR.value,
-                "message": message,
-            },
-            "stats": {"time_ms": 0},
-            "context": {
-                "cwd": ".",
-                "params_input": params_input,
-            },
-        }
-
-    def _create_internal_error_response(self, name: str, message: str, params_input: dict) -> str:
-        """创建内部错误响应（符合协议）"""
-        payload = self._create_internal_error_payload(name, message, params_input)
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+    def _create_internal_error_result(self, name: str, message: str, params_input: dict) -> ToolResult:
+        """Create a typed internal error result."""
+        return ToolResult(
+            status=ToolStatus.ERROR,
+            data={},
+            text=message,
+            error_code=ErrorCode.INTERNAL_ERROR,
+            error_message=message,
+            stats={"time_ms": 0},
+            context={"cwd": ".", "params_input": params_input},
+        )
 
     def get_tools_description(self) -> str:
         """

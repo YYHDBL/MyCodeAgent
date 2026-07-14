@@ -1,92 +1,52 @@
-# MyCodeAgent Agent Guide
+# Contributor guide
 
-Last updated: 2026-06-06
+Keep MyCodeAgent a lean, local-first single-agent coding harness. The stable
+runtime has one loop, `runtime.loop.RuntimeRunner`; do not introduce another
+agent loop, a compatibility alias for removed systems, or a framework layer
+with one caller.
 
-## Project Goal
+## Durable boundaries
 
-MyCodeAgent is a learning-oriented Python code-agent harness. Keep the default single-agent runtime small while preserving the important harness boundaries: explicit loop state, controlled tool execution, and model-facing context projection.
+- `app/cli.py` owns user-facing parsing and rendering. Interactive and
+  one-shot paths share the same runtime builder.
+- `core/config.py` owns typed defaults. Explicit CLI flags override it.
+- `runtime/host.py` composes dependencies; `runtime/events.py` projects each
+  runtime fact to transcript and trace consumers.
+- `runtime/context/` builds the bounded model view. Do not make compaction
+  destructive or move context policy into history.
+- `runtime/transcript.py` is durable recovery truth. New sessions do not write
+  snapshots; the legacy reader is a one-way import only.
+- `tools/` owns execution, permission routing, result budgeting, and the
+  project-confined filesystem boundary. Tools must not import `runtime`.
+- `Edit` is the only stable mutation tool. Preserve root confinement,
+  read-snapshot conflict checks, atomic writes, and bounded recoverable output.
 
-Do not turn this repository into an enterprise platform. Prefer a clear implementation that demonstrates the design principle.
+Default startup must remain single-agent and must not start MCP, a verification
+subagent, or network extensions. MCP stays in `mycodeagent[mcp]`; local Skills
+stay lazy and read-only. Removed research systems belong only in Git history,
+not in shipped compatibility modules, prompts, flags, or docs.
 
-## Canonical Runtime
+## Change discipline
 
-```text
-main.py
-  -> app.cli
-  -> app.bootstrap
-  -> runtime.host.CodeAgent
-  -> runtime.loop.RuntimeRunner
-```
+Add a behavior-level regression test before changing behavior. Keep the
+canonical runtime flow visible, preserve transcript/trace terminal facts, and
+prefer deletion over adapters when a stable concept has been removed. Do not
+expand scope with IDE, web, worker, telemetry, or multi-agent features.
 
-There is one canonical single-agent loop: `runtime/loop.py`.
+## Required verification
 
-## Runtime Responsibilities
-
-- `runtime/host.py`: dependency wiring and host adapters
-- `runtime/loop.py`: loop stages and state transitions
-- `runtime/state.py`: `LoopState`, transition reasons, terminal reasons
-- `runtime/history.py`: complete runtime message log only
-- `runtime/context/`: context budget, compact checkpoint, projection, normalization, and `ModelView`
-- `runtime/prompt_builder.py`: stable system prompt construction
-- `runtime/input_preprocess.py`: user input and `@file` preprocessing
-- `runtime/observation_store.py`: large tool-output persistence and truncation
-- `runtime/session.py`: session snapshot persistence
-- `runtime/summary.py`: summary generation helper used by context compaction
-
-Do not move context decisions back into `HistoryManager`. It must not own token budgets, model-message serialization, or destructive compaction.
-
-## Tool Responsibilities
-
-- `tools/executor.py`: one validated tool execution lifecycle
-- `tools/orchestrator.py`: tool planning, safe batching, ordered observations, and result budgets
-- `tools/registry.py`: tool registration and read/write metadata
-- `tools/builtin/`: concrete tools
-
-Concurrency is opt-in. Only explicitly safe read-only calls may run concurrently. Unknown or side-effecting tools stay serial.
-
-Tool output is a context resource. Preserve full oversized output on disk and send the model a bounded view.
-
-## Context Invariants
-
-- Full history remains available in `HistoryManager`.
-- `ContextEngine.build_model_view()` is the model request boundary.
-- Compact creates a checkpoint; it does not delete old history.
-- `ProjectionBuilder` applies the checkpoint at read time.
-- Clearing history or loading a session must reset context checkpoint and usage state.
-- A current checkpoint must not be regenerated for unchanged history.
-
-## Optional Systems
-
-- `extensions/mcp/`: MCP integration
-- `extensions/skills/`: local skill discovery
-- `extensions/tracing/`: trace logging and sanitization
-- `experimental/teams/`: opt-in multi-agent runtime
-
-Experimental team code must not become a dependency of the default runtime path.
-
-## Editing Rules
-
-- Preserve the canonical boundaries above.
-- Avoid compatibility wrappers and duplicate runtime centers.
-- Add tests beside the owning subsystem.
-- Do not add broad abstractions for hypothetical future features.
-- Keep trace events and transition reasons when adding recovery paths.
-- Never make context compaction destructive.
-
-## Verification
-
-Run the full suite before completion:
+Run these commands before proposing a release:
 
 ```bash
-.venv/bin/python -m pytest -q
+uv run ruff check .
+uv run pytest -q
+uv run pytest -q tests/extensions/test_mcp_extension.py tests/test_core_without_mcp.py tests/test_mcp_protocol.py
+uv run python scripts/check_release_metrics.py
+uv run mycodeagent --help
 ```
 
-Useful focused suites:
-
-```bash
-.venv/bin/python -m pytest tests/runtime tests/tools -q
-.venv/bin/python -m pytest tests/extensions -q
-.venv/bin/python -m pytest tests/experimental -q
-```
-
-Current harness design: `docs/HARNESS.md`.
+The MCP command requires `uv sync --locked --extra dev --extra mcp`. The
+release metrics command enforces the committed production-line and stable-tool
+budgets. Current architecture and user behavior are documented in
+`docs/HARNESS.md`; superseded material is explicitly archived under
+`docs/archives/`.

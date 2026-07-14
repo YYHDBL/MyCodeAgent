@@ -10,7 +10,6 @@ from tests.scenarios.phase0_baselines import (
     ToolFailureScenarioHost,
     ToolThenFinalScenarioHost,
     run_phase0_mock_scenarios,
-    summarize_trace,
 )
 
 
@@ -18,7 +17,7 @@ def test_phase0_mock_baselines_cover_expected_runtime_paths():
     cases = [
         ("normal_complete", ToolThenFinalScenarioHost(tool_name="Read", final_text="tool done"), "tool done", "completed"),
         ("read_only_search", ToolThenFinalScenarioHost(), "tool done", "completed"),
-        ("file_edit", ToolThenFinalScenarioHost(tool_name="Write"), "tool done", "completed"),
+        ("file_edit", ToolThenFinalScenarioHost(tool_name="Edit"), "tool done", "completed"),
         ("tool_failure", ToolFailureScenarioHost(), "tool done", "completed"),
         ("permission_deny", PermissionDeniedScenarioHost(), "tool done", "completed"),
         ("context_compaction", CompressingScenarioHost(), "runner final answer", "completed"),
@@ -32,12 +31,11 @@ def test_phase0_mock_baselines_cover_expected_runtime_paths():
         result = RuntimeRunner(host).run(name, show_raw=False)
 
         assert result == expected_text
-        summary = summarize_trace(host.trace_logger.events)
-        assert summary["terminal_reason"] == expected_terminal
-        assert summary["step_count"] >= 1
-        assert summary["tool_call_count"] >= 0
-        assert "failure_stage" in summary
-        assert "model_call_count" in summary
+        events = host.trace_logger.events
+        terminal = next(payload for event, _step, payload in reversed(events) if event == "terminal")
+        assert terminal["reason"] == expected_terminal
+        assert any(event == "model_output" for event, _step, _payload in events)
+        assert max(step for _event, step, _payload in events) >= 1
 
 
 def test_phase0_mock_baseline_batch_runner_returns_json_summary(tmp_path):
@@ -50,10 +48,10 @@ def test_phase0_mock_baseline_batch_runner_returns_json_summary(tmp_path):
     assert report["scenarios"]
     by_name = {item["scenario_name"]: item for item in report["scenarios"]}
     assert {"normal_complete", "tool_call", "completion_gate_block", "model_recovery", "permission_deny", "context_compaction"} <= set(by_name)
-    assert by_name["permission_deny"]["metrics"]["permission_denied_count"] >= 1
-    assert by_name["completion_gate_block"]["metrics"]["failure_stage"] == "completion_gate"
-    assert by_name["model_recovery"]["metrics"]["model_recovery_count"] >= 1
-    assert by_name["context_compaction"]["metrics"]["context_compaction_count"] >= 1
+    assert "tool_lifecycle" in by_name["permission_deny"]["event_names"]
+    assert by_name["completion_gate_block"]["terminal_reason"] == "completion_gate_blocked"
+    assert "model_recovery_attempted" in by_name["model_recovery"]["event_names"]
+    assert "context_compaction_completed" in by_name["context_compaction"]["event_names"]
 
 
 def test_permission_deny_scenario_uses_real_permission_execution_chain():

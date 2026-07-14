@@ -7,33 +7,29 @@ import json
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.styles import Style as PromptStyle
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.rule import Rule
+from rich.syntax import Syntax
+from rich.text import Text
+from rich.theme import Theme
+
+from app.bootstrap import build_runtime
 from core.env import load_env
-
-load_env()
-
-try:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.formatted_text import HTML
-    from prompt_toolkit.history import FileHistory
-    from prompt_toolkit.styles import Style as PromptStyle
-    from rich.console import Console
-    from rich.markdown import Markdown
-    from rich.panel import Panel
-    from rich.rule import Rule
-    from rich.syntax import Syntax
-    from rich.text import Text
-    from rich.theme import Theme
-except ImportError:
-    print("Please install required packages: pip install rich prompt_toolkit")
-    sys.exit(1)
-
-from app.bootstrap import PROJECT_ROOT, build_runtime
 from prompts.agents_prompts.init_prompt import CODE_LAW_GENERATION_PROMPT
 from runtime.host import CodeAgent
 from utils.ui_components import EnhancedUI, ToolCallTree
+
+load_env()
 
 custom_theme = Theme(
     {
@@ -50,26 +46,6 @@ custom_theme = Theme(
 )
 
 console = Console(theme=custom_theme)
-
-
-def _load_team_cli_commands():
-    from experimental.teams.cli_commands import (
-        DELEGATE_USAGE,
-        TEAM_MSG_USAGE,
-        TEAM_WATCH_USAGE,
-        parse_delegate_command,
-        parse_team_message_command,
-        parse_team_watch_command,
-    )
-
-    return {
-        "DELEGATE_USAGE": DELEGATE_USAGE,
-        "TEAM_MSG_USAGE": TEAM_MSG_USAGE,
-        "TEAM_WATCH_USAGE": TEAM_WATCH_USAGE,
-        "parse_delegate_command": parse_delegate_command,
-        "parse_team_message_command": parse_team_message_command,
-        "parse_team_watch_command": parse_team_watch_command,
-    }
 
 
 class RichConsoleCodeAgent(CodeAgent):
@@ -183,31 +159,22 @@ class RichConsoleCodeAgent(CodeAgent):
         if msg:
             console.print(f"[dim]{msg}[/dim]")
 
-    def _execute_tool(self, tool_name: str, tool_input: Any) -> str:
+    def _execute_tool(self, tool_name: str, tool_input: Any):
         if self.ui:
             self.ui.show_tool_call(tool_name, tool_input)
-            if tool_name in {"Task", "TeamFanout", "TeamCollect"}:
+            if tool_name == "Task":
                 mode = ""
                 if isinstance(tool_input, dict):
                     mode = str(tool_input.get("mode", "") or "").strip()
                 mode_suffix = f" mode={mode}" if mode else ""
                 console.print(
-                    f"[bold magenta]⚡ Team Dispatch[/bold magenta] "
+                    f"[bold magenta]⚡ Task Dispatch[/bold magenta] "
                     f"{tool_name}{mode_suffix}"
                 )
 
         with console.status(f"[bold cyan]Executing {tool_name}...[/bold cyan]", spinner="dots"):
             result = super()._execute_tool(tool_name, tool_input)
 
-        if self.ui and self.enable_agent_teams and self.team_manager and tool_name in {
-            "Task",
-            "TeamFanout",
-            "TeamCollect",
-        }:
-            try:
-                self.ui.show_team_progress(self.team_manager.export_state())
-            except Exception:
-                pass
         return result
 
 
@@ -236,21 +203,21 @@ def _print_banner(code_law_exists: bool, ui: Optional[EnhancedUI] = None) -> Non
     console.print()
 
 
-def _default_session_path() -> str:
-    sessions_dir = os.path.join(PROJECT_ROOT, "memory", "sessions")
-    os.makedirs(sessions_dir, exist_ok=True)
-    return os.path.join(sessions_dir, "session-latest.json")
+def _default_session_path(project_root: str) -> str:
+    transcripts_dir = os.path.join(project_root, "memory", "transcripts")
+    os.makedirs(transcripts_dir, exist_ok=True)
+    return transcripts_dir
 
 
-def _maybe_save_session(agent: CodeAgent, path: str, flag: dict[str, bool], reason: str) -> None:
+def _maybe_save_session(agent: CodeAgent, flag: dict[str, bool], reason: str) -> None:
     if flag.get("saved"):
         return
     try:
-        agent.save_session(path)
-        console.print(f"[dim]Auto-saved session ({reason}): {path}[/dim]")
+        path = agent.transcript_path()
+        console.print(f"[dim]Session is durable in transcript ({reason}): {path}[/dim]")
         flag["saved"] = True
     except Exception as exc:
-        console.print(f"[bold red]✗ Auto-save failed:[/bold red] {exc}")
+        console.print(f"[bold red]✗ Session status failed:[/bold red] {exc}")
 
 
 def _print_assistant_response(text: str) -> None:
@@ -268,6 +235,141 @@ def check_code_law_exists(project_root: str) -> bool:
     return (Path(project_root) / "code_law.md").exists()
 
 
+def _one_shot_outcome(
+    agent: Any,
+    response: str,
+    *,
+    terminal_reason: Optional[str] = None,
+) -> dict[str, Any]:
+    """Adapt the current trace protocol into the scriptable CLI result contract."""
+
+    trace_logger = getattr(agent, "trace_logger", None)
+    session_id = getattr(trace_logger, "session_id", None)
+    if session_id is None:
+        session_id = getattr(getattr(agent, "transcript_store", None), "session_id", None)
+
+    terminal_details: dict[str, Any] = {}
+    if terminal_reason is None and trace_logger and hasattr(trace_logger, "get_current_run_events"):
+        for event in reversed(trace_logger.get_current_run_events()):
+            if event.get("event") != "terminal":
+                continue
+            payload = event.get("payload") or {}
+            terminal_reason = payload.get("reason")
+            terminal_details = payload.get("details") or {}
+            break
+
+    terminal_reason = terminal_reason or "completed"
+    status = "success" if terminal_reason in {"completed", "completed_unverified"} else "failure"
+    outcome: dict[str, Any] = {
+        "status": status,
+        "response": response,
+        "session_id": session_id,
+        "terminal_reason": terminal_reason,
+    }
+
+    usage = getattr(trace_logger, "_total_usage", None)
+    if isinstance(usage, dict):
+        outcome["usage"] = dict(usage)
+    verification = {
+        key: value
+        for key, value in terminal_details.items()
+        if key.startswith("completion_") or key.startswith("verification")
+    }
+    if verification:
+        outcome["verification"] = verification
+    return outcome
+
+
+def _write_one_shot_outcome(outcome: dict[str, Any], *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(outcome, ensure_ascii=False))
+    else:
+        print(outcome["response"])
+
+
+@dataclass(frozen=True)
+class InteractiveTurnOutcome:
+    response: str | None
+    cancelled: bool = False
+
+
+def run_interactive_turn(agent: Any, user_input: str, *, show_raw: bool) -> InteractiveTurnOutcome:
+    """Run one prompt and keep an interrupt scoped to that prompt."""
+
+    try:
+        return InteractiveTurnOutcome(agent.run(user_input, show_raw=show_raw))
+    except KeyboardInterrupt:
+        result = agent.cancel_active_turn()
+        if result.get("cancelled"):
+            console.print("[warning]Turn cancelled. The session can be resumed from its transcript.[/warning]")
+        else:
+            console.print("[warning]Turn interrupted before runtime work started.[/warning]")
+        return InteractiveTurnOutcome(None, cancelled=True)
+
+
+def handle_lifecycle_command(agent: Any, user_input: str) -> bool:
+    """Render transcript lifecycle commands using the host's public API."""
+
+    command, _, argument = user_input.strip().partition(" ")
+    command = command.lower()
+    argument = argument.strip()
+    if command == "/status":
+        console.print(json.dumps(agent.get_session_status(), ensure_ascii=False, sort_keys=True))
+        return True
+    if command == "/sessions":
+        sessions = agent.list_transcript_sessions()
+        if not sessions:
+            console.print("[dim]No transcript sessions found.[/dim]")
+            return True
+        for item in sessions:
+            console.print(f"{item.session_id}  latest={item.latest_run_id or '-'}")
+        return True
+    if command == "/resume":
+        try:
+            resume = agent.resume_transcript(argument or None)
+        except ValueError as exc:
+            console.print(f"[bold red]✗ Resume failed:[/bold red] {exc}")
+            return True
+        console.print(f"[bold green]✓ Resumed transcript:[/bold green] {resume.session_id} ({resume.run_id})")
+        for action in resume.uncertain_actions:
+            console.print(
+                f"[warning]Uncertain action: {action.tool_name} ({action.tool_call_id}); verify before retrying.[/warning]"
+            )
+        return True
+    return False
+
+
+def run_one_shot(args: Any, runtime: Any) -> int:
+    """Run one prompt through the canonical runtime and render only its final outcome."""
+
+    agent = runtime.agent
+    json_output = bool(getattr(args, "json", False))
+    try:
+        response = agent.run(
+            args.print_prompt,
+            show_raw=bool(getattr(args, "show_raw", False)),
+        )
+    except KeyboardInterrupt:
+        cancel = getattr(agent, "cancel_active_turn", None)
+        if callable(cancel):
+            cancel()
+        outcome = _one_shot_outcome(agent, "", terminal_reason="interrupted")
+        outcome["status"] = "interrupted"
+        exit_code = 130
+    except Exception as exc:
+        outcome = _one_shot_outcome(agent, "", terminal_reason="runtime_error")
+        outcome["error"] = str(exc)
+        exit_code = 1
+    else:
+        outcome = _one_shot_outcome(agent, response)
+        exit_code = 0 if outcome["status"] == "success" else 1
+    finally:
+        agent.close()
+
+    _write_one_shot_outcome(outcome, json_output=json_output)
+    return exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the MyCodeAgent local coding harness")
     parser.add_argument("--name", default="code", help="agent name")
@@ -278,28 +380,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-url", default=None, help="base url (override LLM_BASE_URL)")
     parser.add_argument("--temperature", type=float, default=None, help="temperature (override TEMPERATURE)")
     parser.add_argument(
-        "--teammate-mode",
-        choices=["auto", "in-process", "tmux"],
+        "--cwd",
         default=None,
-        help="teammate display mode (override TEAMMATE_MODE)",
+        help="target project directory (defaults to the invocation directory)",
+    )
+    parser.add_argument("--enable-mcp", action="store_true", help="enable optional MCP tools")
+    parser.add_argument(
+        "--enable-verification-agent",
+        action="store_true",
+        help="enable the optional verification subagent",
     )
     parser.add_argument("--show-raw", action="store_true", help="print raw response structure")
+    parser.add_argument("-p", "--print", dest="print_prompt", help="run one prompt and exit")
+    parser.add_argument("--json", action="store_true", help="emit one-shot outcome as JSON")
     parser.add_argument(
-        "--skill-evolution", action="store_true",
-        help="enable controlled skill evolution (experimental)",
+        "--resume",
+        nargs="?",
+        const="",
+        default=None,
+        help="resume a transcript session (latest session when no ID is supplied)",
     )
     return parser
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    one_shot = getattr(args, "print_prompt", None) is not None
+    if getattr(args, "json", False) and not one_shot:
+        parser.error("--json requires -p/--print")
+    if one_shot and not args.print_prompt.strip():
+        parser.error("-p/--print requires a non-empty prompt")
 
     try:
-        runtime = build_runtime(
-            args,
-            project_root=PROJECT_ROOT,
-            agent_class=RichConsoleCodeAgent,
-            agent_kwargs_factory=lambda config, llm, project_root: {
+        runtime_kwargs: dict[str, Any] = {
+            "agent_class": CodeAgent if one_shot else RichConsoleCodeAgent
+        }
+        if not one_shot:
+            runtime_kwargs["agent_kwargs_factory"] = lambda config, llm, project_root: {
                 "ui": EnhancedUI(
                     console=console,
                     model=llm.model,
@@ -307,20 +425,66 @@ def main() -> None:
                     project_root=project_root,
                     version="v1.0",
                 )
-            },
-        )
+            }
+        runtime = build_runtime(args, **runtime_kwargs)
     except Exception as exc:
-        console.print(f"[error]Failed to initialize runtime: {exc}[/error]")
-        return
+        if one_shot and getattr(args, "json", False):
+            _write_one_shot_outcome(
+                {
+                    "status": "invalid_input",
+                    "response": "",
+                    "session_id": None,
+                    "terminal_reason": "invalid_configuration",
+                    "error": str(exc),
+                },
+                json_output=True,
+            )
+        elif one_shot:
+            print(f"Failed to initialize runtime: {exc}", file=sys.stderr)
+        else:
+            console.print(f"[error]Failed to initialize runtime: {exc}[/error]")
+        raise SystemExit(2)
+
+    if one_shot:
+        if getattr(args, "resume", None) is not None:
+            try:
+                runtime.agent.resume_transcript(getattr(args, "resume") or None)
+            except ValueError as exc:
+                if getattr(args, "json", False):
+                    _write_one_shot_outcome(
+                        {
+                            "status": "invalid_input",
+                            "response": "",
+                            "session_id": None,
+                            "terminal_reason": "invalid_resume",
+                            "error": str(exc),
+                        },
+                        json_output=True,
+                    )
+                else:
+                    print(f"Failed to resume transcript: {exc}", file=sys.stderr)
+                runtime.agent.close()
+                raise SystemExit(2)
+        raise SystemExit(run_one_shot(args, runtime))
 
     agent = runtime.agent
+    project_root = runtime.project_root
     enhanced_ui = agent.ui
-    code_law_exists = check_code_law_exists(PROJECT_ROOT)
+    code_law_exists = check_code_law_exists(project_root)
     _print_banner(code_law_exists, enhanced_ui)
-    auto_save_path = _default_session_path()
+    _default_session_path(project_root)
     auto_save_flag = {"saved": False}
 
-    history_file = os.path.join(PROJECT_ROOT, ".chat_history")
+    if getattr(args, "resume", None) is not None:
+        try:
+            resume = agent.resume_transcript(getattr(args, "resume") or None)
+        except ValueError as exc:
+            console.print(f"[error]Failed to resume transcript: {exc}[/error]")
+            agent.close()
+            raise SystemExit(2)
+        console.print(f"[bold green]✓ Resumed transcript:[/bold green] {resume.session_id} ({resume.run_id})")
+
+    history_file = os.path.join(project_root, ".chat_history")
     session = PromptSession(history=FileHistory(history_file))
     prompt_style = PromptStyle.from_dict(
         {
@@ -339,149 +503,53 @@ def main() -> None:
                 ).strip()
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]Goodbye![/dim]")
-                _maybe_save_session(agent, auto_save_path, auto_save_flag, "keyboard interrupt")
+                _maybe_save_session(agent, auto_save_flag, "keyboard interrupt")
                 break
 
             if not user_input:
                 continue
             if user_input.lower() in {"exit", "quit", "q"}:
                 console.print("\n[dim]Shutting down...[/dim]")
-                _maybe_save_session(agent, auto_save_path, auto_save_flag, "exit")
+                _maybe_save_session(agent, auto_save_flag, "exit")
                 break
 
             if user_input.startswith("/"):
+                if handle_lifecycle_command(agent, user_input):
+                    continue
                 if user_input.lower() in {"/model", "/info"}:
                     enhanced_ui.show_banner()
                     enhanced_ui.show_detailed_token_summary()
                     continue
                 if user_input.lower().startswith("/save"):
-                    parts = user_input.split(maxsplit=1)
-                    path = parts[1].strip() if len(parts) > 1 else _default_session_path()
                     try:
-                        agent.save_session(path)
-                        console.print(f"[bold green]✓ Session saved:[/bold green] {path}")
+                        console.print(
+                            f"[bold green]✓ Session transcript is already durable:[/bold green] {agent.transcript_path()}"
+                        )
                     except Exception as exc:
                         console.print(f"[bold red]✗ Save failed:[/bold red] {exc}")
                     continue
                 if user_input.lower().startswith("/load"):
                     parts = user_input.split(maxsplit=1)
-                    path = parts[1].strip() if len(parts) > 1 else _default_session_path()
+                    path = parts[1].strip() if len(parts) > 1 else str(agent.transcript_path())
                     if not os.path.exists(path):
                         console.print(f"[bold red]✗ Session not found:[/bold red] {path}")
                         continue
                     try:
-                        agent.load_session(path)
-                        console.print(f"[bold green]✓ Session loaded:[/bold green] {path}")
+                        agent.load_transcript(path)
+                        console.print(f"[bold green]✓ Transcript loaded:[/bold green] {path}")
                     except Exception as exc:
                         console.print(f"[bold red]✗ Load failed:[/bold red] {exc}")
                     continue
-                if user_input.lower().startswith("/team msg "):
-                    if not agent.enable_agent_teams or agent.team_manager is None:
-                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
-                        continue
-                    team_cli = _load_team_cli_commands()
-                    try:
-                        payload = team_cli["parse_team_message_command"](user_input, from_member=agent.name)
-                    except ValueError as exc:
-                        console.print(f"[bold red]✗ {exc}[/bold red]")
-                        continue
-                    try:
-                        sent = agent.team_manager.send_message(
-                            team_name=payload["team_name"],
-                            from_member=payload["from_member"],
-                            to_member=payload["to_member"],
-                            text=payload["text"],
-                            message_type=payload["type"],
-                            summary=payload["summary"],
-                        )
-                        console.print(
-                            "[bold green]✓ Team message sent:[/bold green] "
-                            f"{payload['team_name']} -> {payload['to_member']} "
-                            f"({sent.get('status', 'pending')})"
-                        )
-                    except Exception as exc:
-                        console.print(f"[bold red]✗ Team message failed:[/bold red] {exc}")
-                    continue
-                if user_input.lower().startswith("/team watch "):
-                    if not agent.enable_agent_teams or agent.team_manager is None:
-                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
-                        continue
-                    team_cli = _load_team_cli_commands()
-                    try:
-                        cmd = team_cli["parse_team_watch_command"](user_input)
-                    except ValueError as exc:
-                        console.print(f"[bold red]✗ {exc}[/bold red]")
-                        continue
-                    team_name = str(cmd.get("team_name"))
-                    rounds = int(cmd.get("rounds", 15))
-                    console.print(
-                        f"[bold cyan]Watching team[/bold cyan] {team_name} "
-                        f"for {rounds} rounds..."
-                    )
-                    for i in range(rounds):
-                        try:
-                            snapshot = agent.team_manager.collect_work(team_name)
-                            state = agent.team_manager.export_state()
-                        except Exception as exc:
-                            console.print(f"[bold red]✗ Team watch failed:[/bold red] {exc}")
-                            break
-                        counts = snapshot.get("counts", {}) if isinstance(snapshot, dict) else {}
-                        queued = int(counts.get("queued", 0) or 0)
-                        running = int(counts.get("running", 0) or 0)
-                        succeeded = int(counts.get("succeeded", 0) or 0)
-                        failed = int(counts.get("failed", 0) or 0)
-                        team_state = state.get("teams", {}).get(team_name, {}) if isinstance(state, dict) else {}
-                        active = len(team_state.get("active_teammates", [])) if isinstance(team_state, dict) else 0
-                        idle = len(team_state.get("idle_teammates", [])) if isinstance(team_state, dict) else 0
-                        console.print(
-                            f"[dim][{i+1}/{rounds}] "
-                            f"queued={queued} running={running} succeeded={succeeded} failed={failed} "
-                            f"active={active} idle={idle}[/dim]"
-                        )
-                        if queued == 0 and running == 0:
-                            console.print("[bold green]✓ Team watch reached steady state.[/bold green]")
-                            break
-                        time.sleep(1.0)
-                    continue
-                if user_input.lower().startswith("/delegate"):
-                    if not agent.enable_agent_teams:
-                        console.print("[bold red]✗ AgentTeams is disabled.[/bold red]")
-                        continue
-                    team_cli = _load_team_cli_commands()
-                    try:
-                        cmd = team_cli["parse_delegate_command"](user_input)
-                    except ValueError as exc:
-                        console.print(f"[bold red]✗ {exc}[/bold red]")
-                        continue
-                    if cmd.get("action") == "status":
-                        console.print(
-                            "[bold cyan]Delegate mode:[/bold cyan] "
-                            f"{'ON' if agent.delegate_mode else 'OFF'}"
-                        )
-                        continue
-                    enabled = bool(cmd.get("enabled"))
-                    agent.set_delegate_mode(enabled)
-                    console.print(
-                        "[bold green]✓ Delegate mode updated:[/bold green] "
-                        f"{'ON' if enabled else 'OFF'}"
-                    )
-                    continue
                 if user_input.lower() == "/help":
-                    team_help = ""
-                    if agent.enable_agent_teams:
-                        team_cli = _load_team_cli_commands()
-                        team_help = (
-                            f"{team_cli['TEAM_MSG_USAGE']}\n"
-                            f"{team_cli['TEAM_WATCH_USAGE']}\n"
-                            f"{team_cli['DELEGATE_USAGE']}\n"
-                        )
                     console.print(
                         Panel(
                             "[bold]Available Commands:[/bold]\n"
                             "/model, /info - Show model and usage info\n"
-                            "/save [path] - Save session snapshot\n"
-                            "/load [path] - Load session snapshot\n"
-                            f"{team_help}"
+                            "/status - Show session and runtime status\n"
+                            "/sessions - List transcript sessions\n"
+                            "/resume [id] - Resume a transcript session\n"
+                            "/save - Show durable transcript path\n"
+                            "/load [path] - Load transcript (or import one legacy snapshot)\n"
                             "/help - Show this help\n"
                             "exit, quit, q - Exit the chat\n"
                             "init - Generate code_law.md",
@@ -502,14 +570,17 @@ def main() -> None:
                 console.print("[info]Initializing Agent Protocol...[/info]")
                 enhanced_input = (
                     f"{CODE_LAW_GENERATION_PROMPT}\n\n"
-                    "请使用 LS、Glob、Grep、Read 等工具探索项目，然后使用 Write 工具生成 code_law.md 文件。"
+                    "请使用 Glob、Grep、Read 等工具探索项目，然后使用 Edit 工具创建 code_law.md 文件。"
                 )
                 enhanced_ui.tool_tree = ToolCallTree()
                 enhanced_ui.token_tracker.calls.clear()
 
                 start_time = time.time()
                 console.print()
-                response = agent.run(enhanced_input, show_raw=args.show_raw)
+                turn = run_interactive_turn(agent, enhanced_input, show_raw=args.show_raw)
+                if turn.cancelled:
+                    continue
+                response = turn.response or ""
                 elapsed = time.time() - start_time
 
                 console.print()
@@ -522,7 +593,7 @@ def main() -> None:
                 enhanced_ui.show_token_summary()
                 console.print()
 
-                if check_code_law_exists(PROJECT_ROOT):
+                if check_code_law_exists(project_root):
                     console.print("[bold green]✓ code_law.md generated successfully.[/bold green]")
                     code_law_exists = True
                 else:
@@ -534,7 +605,10 @@ def main() -> None:
 
             start_time = time.time()
             console.print()
-            response = agent.run(user_input, show_raw=args.show_raw)
+            turn = run_interactive_turn(agent, user_input, show_raw=args.show_raw)
+            if turn.cancelled:
+                continue
+            response = turn.response or ""
             elapsed = time.time() - start_time
 
             console.print()
@@ -545,11 +619,6 @@ def main() -> None:
             timing_text.append(f"⏱️  Completed in {elapsed:.1f}s", style="dim cyan")
             console.print(timing_text)
             enhanced_ui.show_token_summary()
-            if agent.enable_agent_teams and agent.team_manager:
-                try:
-                    enhanced_ui.show_team_progress(agent.team_manager.export_state())
-                except Exception:
-                    pass
             console.print()
 
             if args.show_raw and hasattr(agent, "last_response_raw") and agent.last_response_raw is not None:
@@ -561,5 +630,5 @@ def main() -> None:
                     )
                 )
     finally:
-        _maybe_save_session(agent, auto_save_path, auto_save_flag, "finalize")
+        _maybe_save_session(agent, auto_save_flag, "finalize")
         agent.close()

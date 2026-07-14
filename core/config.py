@@ -1,12 +1,22 @@
 """配置管理"""
 
 import os
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 from pydantic import BaseModel
 
 from core.env import load_env
 
 load_env()
+
+
+_TRUE_VALUES = {"1", "true", "yes", "y", "on"}
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a canonical boolean environment value without compatibility aliases."""
+
+    return os.getenv(name, str(default)).strip().lower() in _TRUE_VALUES
+
 
 class Config(BaseModel):
     """HelloAgents配置类"""
@@ -26,67 +36,41 @@ class Config(BaseModel):
     # 历史记录配置
     max_history_length: int = 100
 
-    # AgentTeams 配置（MVP）
-    enable_agent_teams: bool = False
-    agent_teams_store_dir: str = ".teams"
-    agent_tasks_store_dir: str = ".tasks"
-    teammate_mode: str = "auto"
-    delegate_mode: bool = False
-    
     # 上下文工程配置（E5）
     context_window: int = 128000  # 默认 128K tokens
     compression_threshold: float = 0.8  # 触发压缩的阈值比例
     min_retain_rounds: int = 10  # 最少保留的轮次数
     summary_timeout: int = 120  # Summary 生成超时（秒）
     session_memory_char_budget: int = 4000
-    long_term_memory_enabled: bool = True
-    memory_char_limit: int = 3000
-    user_memory_char_limit: int = 1500
-    user_memory_path: Optional[str] = None
-    memory_nudge_interval: int = 0
-    enable_verification_agent: bool = True
-    
-    # Skill Evolution 配置（实验性）
-    enable_skill_evolution: bool = False
+    enable_verification_agent: bool = False
+
+    # Optional capabilities.  These values are the sole runtime defaults; the
+    # bootstrap applies explicit CLI opt-ins to this object before construction.
+    enable_mcp: bool = False
+    enable_skills: bool = True
+    skills_refresh_on_call: bool = False
+    enable_tracing: bool = True
     
     @classmethod
     def from_env(cls) -> "Config":
         """从环境变量创建配置"""
-        enable_agent_teams_raw = os.getenv("ENABLE_AGENT_TEAMS")
-        if enable_agent_teams_raw is None:
-            # Alternate experimental-teams env flag
-            enable_agent_teams_raw = os.getenv("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "false")
-        teammate_mode_raw = (os.getenv("TEAMMATE_MODE", "auto") or "auto").strip().lower()
-        if teammate_mode_raw not in {"auto", "in-process", "tmux"}:
-            teammate_mode_raw = "auto"
-        delegate_mode_raw = os.getenv("TEAM_DELEGATE_MODE", "false")
         return cls(
-            debug=os.getenv("DEBUG", "false").lower() == "true",
+            debug=_env_flag("DEBUG", False),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
-            show_react_steps=os.getenv("SHOW_REACT_STEPS", "true").lower() == "true",
-            show_progress=os.getenv("SHOW_PROGRESS", "true").lower() == "true",
+            show_react_steps=_env_flag("SHOW_REACT_STEPS", True),
+            show_progress=_env_flag("SHOW_PROGRESS", True),
             temperature=float(os.getenv("TEMPERATURE", "0.7")),
             max_tokens=int(os.getenv("MAX_TOKENS")) if os.getenv("MAX_TOKENS") else None,
-            enable_agent_teams=str(enable_agent_teams_raw).lower() in {"1", "true", "yes", "y", "on"},
-            agent_teams_store_dir=os.getenv("AGENT_TEAMS_STORE_DIR", ".teams"),
-            agent_tasks_store_dir=os.getenv("AGENT_TASKS_STORE_DIR", ".tasks"),
-            teammate_mode=teammate_mode_raw,
-            delegate_mode=str(delegate_mode_raw).lower() in {"1", "true", "yes", "y", "on"},
             context_window=int(os.getenv("CONTEXT_WINDOW", "128000")),
             compression_threshold=float(os.getenv("COMPRESSION_THRESHOLD", "0.8")),
             min_retain_rounds=int(os.getenv("MIN_RETAIN_ROUNDS", "10")),
             summary_timeout=int(os.getenv("SUMMARY_TIMEOUT", "120")),
             session_memory_char_budget=int(os.getenv("SESSION_MEMORY_CHAR_BUDGET", "4000")),
-            long_term_memory_enabled=os.getenv("LONG_TERM_MEMORY_ENABLED", "true").lower()
-            in {"1", "true", "yes", "y", "on"},
-            memory_char_limit=int(os.getenv("MEMORY_CHAR_LIMIT", "3000")),
-            user_memory_char_limit=int(os.getenv("USER_MEMORY_CHAR_LIMIT", "1500")),
-            user_memory_path=os.getenv("USER_MEMORY_PATH") or None,
-            memory_nudge_interval=int(os.getenv("MEMORY_NUDGE_INTERVAL", "0")),
-            enable_verification_agent=os.getenv("ENABLE_VERIFICATION_AGENT", "true").lower()
-            in {"1", "true", "yes", "y", "on"},
-            enable_skill_evolution=os.getenv("SKILL_EVOLUTION_ENABLED", "false").lower()
-            in {"1", "true", "yes", "y", "on"},
+            enable_verification_agent=_env_flag("ENABLE_VERIFICATION_AGENT", False),
+            enable_mcp=_env_flag("ENABLE_MCP", False),
+            enable_skills=_env_flag("ENABLE_SKILLS", True),
+            skills_refresh_on_call=_env_flag("SKILLS_REFRESH_ON_CALL", False),
+            enable_tracing=_env_flag("ENABLE_TRACING", True),
         )
     
     def to_dict(self) -> Dict[str, Any]:

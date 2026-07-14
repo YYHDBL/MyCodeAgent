@@ -36,7 +36,7 @@ from tools.permissions import PermissionContext, RiskClassifier
 from tools.registry import ToolRegistry
 
 
-READONLY_TOOLS = frozenset({"LS", "Glob", "Grep", "Read"})
+READONLY_TOOLS = frozenset({"Glob", "Grep", "Read"})
 
 EXPLORE_SYSTEM_PROMPT = """You are an Explore Agent.
 Inspect the repository with read-only tools and return exactly one JSON object:
@@ -90,7 +90,7 @@ class RuntimeProfile:
             raise ValueError("runtime profile model choice must be main or light")
         if self.recursive_subagents or "Task" in self.tool_allowlist:
             raise ValueError("formal subagent profiles cannot recurse")
-        forbidden = {"Write", "Edit", "MultiEdit", "Bash", "AskUser"}
+        forbidden = {"Edit", "Bash"}
         if forbidden & self.tool_allowlist:
             raise ValueError("formal subagent profiles must be strictly read-only")
 
@@ -289,8 +289,6 @@ class _SubagentRuntimeHost:
         self._run_id = 0
         self._active_transcript_run_id = None
         self._system_messages_logged = False
-        self.enable_agent_teams = False
-        self.team_manager = None
         self.history_manager = HistoryManager(config=self.config)
         self.context_builder = ContextBuilder(
             tool_registry=registry,
@@ -339,67 +337,11 @@ class _SubagentRuntimeHost:
             trace_logger.log_system_messages(self.context_builder.get_system_messages())
             self._system_messages_logged = True
 
-    def _log_message_write(self, *args, **kwargs) -> None:
-        return None
-
     def _print_context_preview(self, _messages: list[dict[str, Any]]) -> None:
         return None
 
     def _get_openai_tools_for_current_mode(self) -> list[dict[str, Any]]:
         return self.tool_registry.get_openai_tools()
-
-    def _ensure_json_input(self, raw: Any):
-        if isinstance(raw, dict):
-            return raw, None
-        try:
-            return json.loads(raw or "{}"), None
-        except Exception as exc:
-            return None, exc
-
-    @staticmethod
-    def _extract_content(raw: Any) -> str:
-        message = _response_message(raw)
-        content = _attr(message, "content") or ""
-        if isinstance(content, list):
-            return "".join(str(_attr(part, "text") or "") for part in content)
-        return str(content)
-
-    @staticmethod
-    def _extract_reasoning_content(raw: Any) -> str | None:
-        return _attr(_response_message(raw), "reasoning_content")
-
-    @staticmethod
-    def _extract_tool_calls(raw: Any) -> list[dict[str, Any]]:
-        message = _response_message(raw)
-        calls = _attr(message, "tool_calls") or []
-        result = []
-        for call in calls:
-            function = _attr(call, "function") or {}
-            result.append(
-                {
-                    "id": _attr(call, "id"),
-                    "name": _attr(function, "name") or _attr(call, "name"),
-                    "arguments": _attr(function, "arguments") or _attr(call, "arguments") or {},
-                }
-            )
-        return result
-
-    @staticmethod
-    def _extract_usage(raw: Any) -> dict[str, Any]:
-        usage = _attr(raw, "usage") or {}
-        if hasattr(usage, "model_dump"):
-            usage = usage.model_dump()
-        return dict(usage) if isinstance(usage, dict) else {}
-
-    @staticmethod
-    def _extract_response_meta(raw: Any) -> dict[str, Any]:
-        choices = _attr(raw, "choices") or []
-        choice = choices[0] if choices else {}
-        return {"finish_reason": _attr(choice, "finish_reason")}
-
-    @staticmethod
-    def _extract_raw_response(raw: Any) -> Any:
-        return raw.model_dump() if hasattr(raw, "model_dump") else raw
 
 
 class SubagentLauncher:
@@ -571,7 +513,10 @@ class SubagentLauncher:
                 session_id=f"child-{uuid.uuid4().hex}",
             )
         return _RecordingTrace(
-            create_trace_logger(trace_dir=str(self.project_root / "memory" / "traces"))
+            create_trace_logger(
+                trace_dir=str(self.project_root / "memory" / "traces"),
+                project_root=self.project_root,
+            )
         )
 
     def _parent_event(
@@ -735,15 +680,6 @@ def _summarize_child_messages(messages: list[Any], *, char_budget: int = 8000) -
             break
         lines.append(line[:remaining])
     return "\n".join(lines)[:char_budget]
-
-
-def _attr(value: Any, name: str) -> Any:
-    return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
-
-
-def _response_message(raw: Any) -> Any:
-    choices = _attr(raw, "choices") or []
-    return _attr(choices[0], "message") if choices else {}
 
 
 def _child_metrics(events: list[tuple[str, int, dict[str, Any]]]) -> tuple[str, dict[str, int], int]:

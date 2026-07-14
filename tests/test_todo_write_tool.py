@@ -7,15 +7,12 @@
     python -m unittest tests.test_todo_write_tool -v
 """
 
-import json
 import unittest
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
 
-from tools.builtin.todo_write import TodoWriteTool, MAX_TODO_COUNT, MAX_CONTENT_LENGTH
-from tools.base import ErrorCode
+from tools.builtin.todo_write import TodoWriteTool
 from tests.utils.test_helpers import parse_response
 
 

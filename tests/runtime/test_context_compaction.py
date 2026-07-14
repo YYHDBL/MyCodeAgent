@@ -1,7 +1,9 @@
 import json
 
-from runtime.context import RoundSegmenter
-from runtime.history import Message
+from core.config import Config
+from runtime.context import CompactStore, ContextCompactor, ProjectionBuilder, RoundSegmenter
+from runtime.history import HistoryManager, Message
+
 
 
 def test_round_segmenter_identifies_user_started_rounds():
@@ -28,11 +30,6 @@ def test_round_segmenter_handles_consecutive_users():
     rounds = RoundSegmenter().identify(messages)
 
     assert [(r.start_idx, r.end_idx) for r in rounds] == [(0, 0), (1, 2)]
-
-
-from core.config import Config
-from runtime.context import CompactStore, ContextCompactor
-from runtime.history import HistoryManager
 
 
 def _append_round(history: HistoryManager, idx: int):
@@ -103,9 +100,6 @@ def test_context_compactor_skips_when_summary_unavailable():
     assert info["compacted"] is False
     assert info["reason"] == "summary_unavailable"
     assert store.active_checkpoint is None
-
-
-from runtime.context import ProjectionBuilder
 
 
 def test_projection_uses_active_compact_checkpoint_without_mutating_source():

@@ -7,10 +7,15 @@ import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
-import anyio
+from extensions.mcp.errors import MCP_EXTRA_ERROR, MCPExtraRequiredError
+
+try:
+    from mcp.client.session import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+    from mcp.client.streamable_http import streamablehttp_client
+    import anyio
+except ImportError as exc:
+    raise MCPExtraRequiredError(MCP_EXTRA_ERROR) from exc
 
 
 @dataclass

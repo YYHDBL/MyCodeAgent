@@ -23,7 +23,7 @@ def temp_project():
 
     Usage:
         def test_something(temp_project):
-            tool = ListFilesTool(project_root=temp_project.root)
+            tool = GlobTool(project_root=temp_project.root)
             ...
     """
     with create_temp_project() as project:

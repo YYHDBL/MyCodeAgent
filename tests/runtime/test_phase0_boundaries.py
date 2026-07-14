@@ -1,5 +1,17 @@
-def test_runtime_loop_uses_host_orchestrator_only():
-    source = open("runtime/loop.py", encoding="utf-8").read()
+def test_runtime_loop_delegates_tool_calls_to_the_host_orchestrator():
+    from runtime.loop import RuntimeRunner
+    from tests.runtime.test_runner import _ToolThenFinalHost
 
-    assert "ToolOrchestrator(host).run(" not in source
-    assert "from tools.orchestrator import ToolOrchestrator" not in source
+    host = _ToolThenFinalHost()
+    calls = []
+    original_run = host.tool_orchestrator.run
+
+    def record_run(tool_calls, *, step, trace_logger):
+        calls.append((tool_calls, step, trace_logger))
+        return original_run(tool_calls, step=step, trace_logger=trace_logger)
+
+    host.tool_orchestrator.run = record_run
+
+    assert RuntimeRunner(host).run("use Echo") == "tool done"
+    assert calls[0][0][0]["name"] == "Echo"
+    assert calls[0][1] == 1

@@ -6,18 +6,16 @@
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from prompts.tools_prompts.read_prompt import read_prompt
-from ..base import Tool, ToolParameter, ToolStatus, ErrorCode
+from ..base import Tool, ToolParameter, ToolResult, ErrorCode
+from ..workspace import FileWorkspace, WorkspaceError
 
 
 class ReadTool(Tool):
     """文件读取工具，支持行号、分页、编码回退、mtime 追踪"""
 
-    # 二进制检测的采样大小（读取前 8KB 检测是否包含 null byte）
-    BINARY_CHECK_SIZE = 8192
-    
     # limit 的硬上限（单次最多读取 2000 行）
     MAX_LIMIT = 2000
     
@@ -52,10 +50,10 @@ class ReadTool(Tool):
             working_dir=working_dir if working_dir else project_root,
         )
         
-        # 保存项目根目录，用于路径解析和沙箱检查
         self._root = self._project_root
+        self._workspace = FileWorkspace(self._root)
 
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         """
         执行文件读取操作
 
@@ -85,7 +83,7 @@ class ReadTool(Tool):
         
         # path 必填
         if not path:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="Parameter 'path' is required.",
                 params_input=params_input,
@@ -93,7 +91,7 @@ class ReadTool(Tool):
         
         # start_line 校验：必须是正整数
         if not isinstance(start_line, int) or start_line < 1:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="start_line must be a positive integer (>= 1).",
                 params_input=params_input,
@@ -101,132 +99,41 @@ class ReadTool(Tool):
         
         # limit 校验：必须在 1 到 MAX_LIMIT 之间
         if not isinstance(limit, int) or limit < 1 or limit > self.MAX_LIMIT:
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"limit must be an integer between 1 and {self.MAX_LIMIT}.",
                 params_input=params_input,
             )
 
-        # =====================================================================
-        # 路径解析与沙箱校验
-        # =====================================================================
-        
         try:
-            # 解析输入路径
-            input_path = Path(path)
-            if input_path.is_absolute():
-                # 绝对路径：直接解析
-                target = input_path.resolve()
-            else:
-                # 相对路径：基于项目根目录解析
-                target = (self._root / input_path).resolve()
-
-            # 沙箱安全检查：确保目标路径在项目根目录内
-            # 如果 target 不在 _root 下，relative_to 会抛出 ValueError
-            target.relative_to(self._root)
-        except ValueError:
-            # 路径在项目根目录外，拒绝访问
-            return self.create_error_response(
-                error_code=ErrorCode.ACCESS_DENIED,
-                message=f"Access denied. Path '{path}' is outside project root.",
-                params_input=params_input,
-            )
-        except OSError as e:
-            # 路径解析失败（如权限问题、符号链接循环等）
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Path resolution failed: {e}",
-                params_input=params_input,
+            target = self._workspace.resolve(path)
+        except WorkspaceError as error:
+            return self._workspace_error_response(
+                error, path, params_input, int((time.monotonic() - start_time) * 1000)
             )
 
-        # 计算解析后的相对路径（用于响应中显示）
+        rel_path = self._workspace.relative(target)
         try:
-            rel_path = str(target.relative_to(self._root))
-            if not rel_path:
-                rel_path = "."
-        except ValueError:
-            # 如果无法计算相对路径，使用绝对路径
-            rel_path = str(target)
-
-        # =====================================================================
-        # 文件存在性与类型检查
-        # =====================================================================
-        
-        # 检查文件是否存在
-        if not target.exists():
-            return self.create_error_response(
-                error_code=ErrorCode.NOT_FOUND,
-                message=f"File '{path}' does not exist.",
-                params_input=params_input,
-                path_resolved=rel_path,
-            )
-        
-        # 检查是否为目录（目录需要使用 LS 工具，不能用 Read）
-        if target.is_dir():
-            return self.create_error_response(
-                error_code=ErrorCode.IS_DIRECTORY,
-                message=f"Path '{path}' is a directory. Use LS to explore it.",
-                params_input=params_input,
+            raw_content, encoding_used, fallback_used, snapshot = self._workspace.read_text(path)
+        except WorkspaceError as error:
+            return self._workspace_error_response(
+                error,
+                path,
+                params_input,
+                int((time.monotonic() - start_time) * 1000),
                 path_resolved=rel_path,
             )
 
-        # =====================================================================
-        # 二进制文件检测 & mtime 追踪（C4）
-        # =====================================================================
-        
-        try:
-            # 获取文件状态（大小和修改时间）
-            file_stat = target.stat()
-            file_size = file_stat.st_size
-            file_mtime_ns = file_stat.st_mtime_ns
-            file_mtime_ms = file_mtime_ns // 1_000_000  # 转换为毫秒（乐观锁所需）
-            
-            # mtime 追踪：检测文件是否被外部修改（C4）
-            cache_key = str(target)
-            modified_externally = False
-            if cache_key in ReadTool._mtime_cache:
-                last_mtime = ReadTool._mtime_cache[cache_key]
-                if file_mtime_ns != last_mtime:
-                    modified_externally = True
-            # 更新缓存
-            ReadTool._mtime_cache[cache_key] = file_mtime_ns
-            
-            # 检测是否为二进制文件（读取前 8KB，如果包含 null byte 则判定为二进制）
-            if self._is_binary_file(target):
-                return self.create_error_response(
-                    error_code=ErrorCode.BINARY_FILE,
-                    message=f"File '{path}' appears to be binary. Cannot read as text.",
-                    params_input=params_input,
-                    path_resolved=rel_path,
-                )
-        except OSError as e:
-            # 无法访问文件（如权限问题）
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Cannot access file: {e}",
-                params_input=params_input,
-                path_resolved=rel_path,
-            )
-
-        # =====================================================================
-        # 读取文件内容
-        # =====================================================================
-        
-        try:
-            # 读取文件内容，支持分页和编码回退
-            content, total_lines, encoding_used, fallback_used = self._read_file_content(
-                target, start_line, limit
-            )
-        except Exception as e:
-            # 读取失败（如权限问题、IO错误等）
-            time_ms = int((time.monotonic() - start_time) * 1000)
-            return self.create_error_response(
-                error_code=ErrorCode.INTERNAL_ERROR,
-                message=f"Failed to read file: {e}",
-                params_input=params_input,
-                time_ms=time_ms,
-                path_resolved=rel_path,
-            )
+        file_size = snapshot.size
+        file_mtime_ns = snapshot.mtime_ns
+        file_mtime_ms = snapshot.mtime_ms
+        cache_key = str(target)
+        modified_externally = (
+            cache_key in ReadTool._mtime_cache
+            and ReadTool._mtime_cache[cache_key] != file_mtime_ns
+        )
+        ReadTool._mtime_cache[cache_key] = file_mtime_ns
+        content, total_lines = self._read_file_content(raw_content, start_line, limit)
 
         # =====================================================================
         # start_line 边界检查
@@ -234,7 +141,7 @@ class ReadTool(Tool):
         # 空文件且 start_line > 1：错误
         if total_lines == 0 and start_line > 1:
             time_ms = int((time.monotonic() - start_time) * 1000)
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message="start_line exceeds file length (file is empty). Valid start_line is 1.",
                 params_input=params_input,
@@ -246,7 +153,7 @@ class ReadTool(Tool):
         # start_line 超出文件行数：错误
         if start_line > total_lines and total_lines > 0:
             time_ms = int((time.monotonic() - start_time) * 1000)
-            return self.create_error_response(
+            return self.error_result(
                 error_code=ErrorCode.INVALID_PARAM,
                 message=f"start_line ({start_line}) exceeds file length ({total_lines} lines). "
                         f"Valid range: 1 to {total_lines}.",
@@ -279,34 +186,12 @@ class ReadTool(Tool):
             params_input=params_input,
         )
 
-    def _is_binary_file(self, path: Path) -> bool:
-        """
-        检测文件是否为二进制文件
-        
-        读取前 8KB，如果包含 null byte (\x00) 则判定为二进制。
-        
-        Args:
-            path: 文件路径
-        
-        Returns:
-            True 如果是二进制文件，False 如果是文本文件
-        """
-        try:
-            # 读取文件前 8KB
-            with open(path, "rb") as f:
-                chunk = f.read(self.BINARY_CHECK_SIZE)
-                # 如果包含 null byte，判定为二进制文件
-                return b"\x00" in chunk
-        except Exception:
-            # 读取失败，保守判定为非二进制文件
-            return False
-
     def _read_file_content(
         self, 
-        path: Path, 
+        text: str,
         start_line: int, 
-        limit: int
-    ) -> Tuple[str, int, str, bool]:
+        limit: int,
+    ) -> tuple[str, int]:
         """
         读取文件内容并添加行号
         
@@ -316,32 +201,15 @@ class ReadTool(Tool):
             limit: 最大行数
         
         Returns:
-            (formatted_content, total_lines, encoding_used, fallback_used)
-            - formatted_content: 格式化后的内容（带行号）
-            - total_lines: 文件总行数
-            - encoding_used: 使用的编码
-            - fallback_used: 是否使用了编码回退
+            (formatted_content, total_lines)
         """
-        encoding_used = "utf-8"
-        fallback_used = False
-        
-        # 尝试 UTF-8 严格模式
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                all_lines = f.readlines()
-        except UnicodeDecodeError:
-            # UTF-8 解码失败，回退到 UTF-8 + errors="replace"
-            # 这样可以继续读取，但部分字符会被替换为 �
-            fallback_used = True
-            encoding_used = "utf-8 (replace)"
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                all_lines = f.readlines()
+        all_lines = text.splitlines(keepends=True)
         
         total_lines = len(all_lines)
         
         # 空文件处理
         if total_lines == 0:
-            return "", 0, encoding_used, fallback_used
+            return "", 0
         
         # 提取目标行（支持分页）
         start_idx = start_line - 1  # 转换为 0-based
@@ -349,7 +217,7 @@ class ReadTool(Tool):
         
         # 如果 start_line 超出范围，返回空内容（后续会检测并报错）
         if start_idx >= total_lines:
-            return "", total_lines, encoding_used, fallback_used
+            return "", total_lines
         
         # 提取指定范围的行
         selected_lines = all_lines[start_idx:end_idx]
@@ -363,7 +231,41 @@ class ReadTool(Tool):
         
         content = "".join(formatted_parts)
         
-        return content, total_lines, encoding_used, fallback_used
+        return content, total_lines
+
+    def _workspace_error_response(
+        self,
+        error: WorkspaceError,
+        path: str,
+        params_input: Dict[str, Any],
+        time_ms: int,
+        *,
+        path_resolved: Optional[str] = None,
+    ) -> ToolResult:
+        code = {
+            "not_found": ErrorCode.NOT_FOUND,
+            "directory": ErrorCode.IS_DIRECTORY,
+            "binary": ErrorCode.BINARY_FILE,
+            "not_regular": ErrorCode.INVALID_PARAM,
+            "invalid_path": ErrorCode.INVALID_PARAM,
+            "absolute": ErrorCode.ACCESS_DENIED,
+            "outside": ErrorCode.ACCESS_DENIED,
+        }.get(error.kind, ErrorCode.INTERNAL_ERROR)
+        messages = {
+            "not_found": f"File '{path}' does not exist.",
+            "directory": f"Path '{path}' is a directory. Use Glob to explore it.",
+            "binary": f"File '{path}' appears to be binary. Cannot read as text.",
+            "not_regular": f"Path '{path}' is not a regular file.",
+            "absolute": f"Access denied. Path '{path}' is outside project root.",
+            "outside": f"Access denied. Path '{path}' is outside project root.",
+        }
+        return self.error_result(
+            error_code=code,
+            message=messages.get(error.kind, str(error)),
+            params_input=params_input,
+            time_ms=time_ms,
+            path_resolved=path_resolved,
+        )
 
     def _format_response(
         self,
@@ -379,7 +281,7 @@ class ReadTool(Tool):
         modified_externally: bool,
         time_ms: int,
         params_input: Dict[str, Any],
-    ) -> str:
+    ) -> ToolResult:
         """
         构建标准化响应
         
@@ -470,7 +372,7 @@ class ReadTool(Tool):
         
         # 根据状态返回不同类型的响应
         if is_partial:
-            return self.create_partial_response(
+            return self.partial_result(
                 data=data,
                 text=text,
                 params_input=params_input,
@@ -479,7 +381,7 @@ class ReadTool(Tool):
                 path_resolved=rel_path,
             )
         else:
-            return self.create_success_response(
+            return self.success_result(
                 data=data,
                 text=text,
                 params_input=params_input,

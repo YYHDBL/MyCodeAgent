@@ -84,7 +84,7 @@ def test_collect_verification_evidence_invalidates_after_later_mutation():
                     "context": {"params_input": {"path": "a.txt", "content": "x"}},
                 }
             ),
-            metadata={"tool_name": "Write", "step": 2},
+                metadata={"tool_name": "Edit", "step": 2},
         ),
     ]
 

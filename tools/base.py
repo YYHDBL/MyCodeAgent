@@ -5,6 +5,7 @@
 
 from abc import ABC, abstractmethod
 from enum import Enum
+from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 import json
@@ -44,13 +45,60 @@ class ErrorCode(str, Enum):
     BINARY_FILE = "BINARY_FILE"       # 文件是二进制格式
     CONFLICT = "CONFLICT"             # 文件在读取后被修改（乐观锁冲突）
     CIRCUIT_OPEN = "CIRCUIT_OPEN"     # 工具熔断中（临时禁用）
-    ASK_USER_UNAVAILABLE = "ASK_USER_UNAVAILABLE"  # 子代理禁止交互
     MCP_PARAM_ERROR = "MCP_PARAM_ERROR"            # MCP 参数错误
     MCP_PARSE_ERROR = "MCP_PARSE_ERROR"            # MCP 解析错误
     MCP_EXECUTION_ERROR = "MCP_EXECUTION_ERROR"    # MCP 执行错误
     MCP_NETWORK_ERROR = "MCP_NETWORK_ERROR"        # MCP 网络错误
     MCP_TIMEOUT = "MCP_TIMEOUT"                    # MCP 超时
     MCP_NOT_FOUND = "MCP_NOT_FOUND"                # MCP 工具不存在
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    """The only result value passed between tool-runtime components.
+
+    Tools keep structured data and execution metadata in Python until the
+    orchestrator writes a model tool message.  The familiar JSON envelope is
+    deliberately a boundary representation, not an internal transport type.
+    """
+
+    status: ToolStatus
+    text: str
+    data: Dict[str, Any] = field(default_factory=dict)
+    error_code: ErrorCode | str | None = None
+    error_message: str | None = None
+    error_details: Dict[str, Any] = field(default_factory=dict)
+    stats: Dict[str, Any] = field(default_factory=dict)
+    context: Dict[str, Any] = field(default_factory=dict)
+
+
+def tool_result_payload(result: ToolResult) -> Dict[str, Any]:
+    """Build the one model-facing tool-observation envelope."""
+
+    payload: Dict[str, Any] = {
+        "status": result.status.value,
+        "data": result.data,
+        "text": result.text,
+        "stats": result.stats,
+        "context": result.context,
+    }
+    if result.status is ToolStatus.ERROR:
+        payload["error"] = {
+            "code": (
+                result.error_code.value
+                if isinstance(result.error_code, ErrorCode)
+                else result.error_code or ErrorCode.INTERNAL_ERROR.value
+            ),
+            "message": result.error_message or result.text or "Tool execution error",
+            **result.error_details,
+        }
+    return payload
+
+
+def serialize_tool_result(result: ToolResult) -> str:
+    """Serialize the one model-facing tool-observation envelope."""
+
+    return json.dumps(tool_result_payload(result), ensure_ascii=False, indent=2)
 
 
 # =============================================================================
@@ -120,7 +168,7 @@ class Tool(ABC):
     # -------------------------------------------------------------------------
     
     @abstractmethod
-    def run(self, parameters: Dict[str, Any]) -> str:
+    def run(self, parameters: Dict[str, Any]) -> ToolResult:
         """
         执行工具（必须实现）
         
@@ -128,7 +176,7 @@ class Tool(ABC):
             parameters: 工具参数字典
             
         Returns:
-            JSON 格式的响应字符串（必须符合《通用工具响应协议》）
+            Internal ``ToolResult``.  JSON is written only at the model boundary.
         """
         pass
     
@@ -159,10 +207,10 @@ class Tool(ABC):
             return "."
     
     # -------------------------------------------------------------------------
-    # 响应构建辅助方法（遵循《通用工具响应协议》）
+    # Result construction helpers
     # -------------------------------------------------------------------------
     
-    def create_success_response(
+    def success_result(
         self,
         data: Dict[str, Any],
         text: str,
@@ -171,7 +219,7 @@ class Tool(ABC):
         extra_stats: Optional[Dict[str, Any]] = None,
         path_resolved: Optional[str] = None,
         extra_context: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         创建成功响应（status="success"）
         
@@ -187,9 +235,9 @@ class Tool(ABC):
             extra_context: 额外的上下文字段
             
         Returns:
-            JSON 格式的响应字符串
+            Typed internal result
         """
-        return self._build_response(
+        return self._result(
             status=ToolStatus.SUCCESS,
             data=data,
             text=text,
@@ -200,7 +248,7 @@ class Tool(ABC):
             extra_context=extra_context,
         )
     
-    def create_partial_response(
+    def partial_result(
         self,
         data: Dict[str, Any],
         text: str,
@@ -209,7 +257,7 @@ class Tool(ABC):
         extra_stats: Optional[Dict[str, Any]] = None,
         path_resolved: Optional[str] = None,
         extra_context: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         创建部分成功响应（status="partial"）
         
@@ -226,9 +274,9 @@ class Tool(ABC):
             extra_context: 额外的上下文字段
             
         Returns:
-            JSON 格式的响应字符串
+            Typed internal result
         """
-        return self._build_response(
+        return self._result(
             status=ToolStatus.PARTIAL,
             data=data,
             text=text,
@@ -239,7 +287,7 @@ class Tool(ABC):
             extra_context=extra_context,
         )
     
-    def create_error_response(
+    def error_result(
         self,
         error_code: ErrorCode,
         message: str,
@@ -248,7 +296,7 @@ class Tool(ABC):
         data: Optional[Dict[str, Any]] = None,
         path_resolved: Optional[str] = None,
         extra_context: Optional[Dict[str, Any]] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         创建错误响应（status="error"）
         
@@ -264,37 +312,21 @@ class Tool(ABC):
             extra_context: 额外的上下文字段
             
         Returns:
-            JSON 格式的响应字符串
+            Typed internal result
         """
-        # 构建 context
-        context: Dict[str, Any] = {
-            "cwd": self.get_cwd_rel(),
-            "params_input": params_input,
-        }
-        if path_resolved is not None:
-            context["path_resolved"] = path_resolved
-        if extra_context:
-            context.update(extra_context)
-        
-        # 构建 stats
-        stats: Dict[str, Any] = {"time_ms": time_ms}
-        
-        # 构建 payload（error 响应的 data 允许携带结构化信息）
-        error_data: Dict[str, Any] = data or {}
-        payload = {
-            "status": ToolStatus.ERROR.value,
-            "data": error_data,
-            "text": message,
-            "error": {
-                "code": error_code.value,
-                "message": message,
-            },
-            "stats": stats,
-            "context": context,
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return self._result(
+            status=ToolStatus.ERROR,
+            data=data or {},
+            text=message,
+            params_input=params_input,
+            time_ms=time_ms,
+            path_resolved=path_resolved,
+            extra_context=extra_context,
+            error_code=error_code,
+            error_message=message,
+        )
     
-    def _build_response(
+    def _result(
         self,
         status: ToolStatus,
         data: Dict[str, Any],
@@ -304,12 +336,14 @@ class Tool(ABC):
         extra_stats: Optional[Dict[str, Any]] = None,
         path_resolved: Optional[str] = None,
         extra_context: Optional[Dict[str, Any]] = None,
-    ) -> str:
+        error_code: ErrorCode | str | None = None,
+        error_message: str | None = None,
+    ) -> ToolResult:
         """
         内部方法：构建标准响应信封
         
         顶层字段严格限制为：status, data, text, stats, context
-        （error 仅在 status="error" 时由 create_error_response 添加）
+        （error 仅在 status="error" 时由 ``error_result`` 添加）
         """
         # 构建 context（必填字段）
         context: Dict[str, Any] = {
@@ -332,15 +366,15 @@ class Tool(ABC):
         if extra_stats:
             stats.update(extra_stats)
         
-        # 构建 payload
-        payload = {
-            "status": status.value,
-            "data": data,
-            "text": text,
-            "stats": stats,
-            "context": context,
-        }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
+        return ToolResult(
+            status=status,
+            data=data,
+            text=text,
+            error_code=error_code,
+            error_message=error_message,
+            stats=stats,
+            context=context,
+        )
     
     # -------------------------------------------------------------------------
     # 其他辅助方法

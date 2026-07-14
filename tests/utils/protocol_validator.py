@@ -97,7 +97,7 @@ class ProtocolValidator:
     }
     
     @classmethod
-    def validate(cls, response_str: str, tool_type: Optional[str] = None) -> ValidationResult:
+    def validate(cls, response_str: Any, tool_type: Optional[str] = None) -> ValidationResult:
         """
         验证响应是否符合协议
         
@@ -110,6 +110,11 @@ class ProtocolValidator:
             ValidationResult: 验证结果
         """
         result = ValidationResult()
+        if not isinstance(response_str, str):
+            from tools.base import ToolResult, serialize_tool_result
+
+            if isinstance(response_str, ToolResult):
+                response_str = serialize_tool_result(response_str)
         
         # V001: JSON 解析
         try:
@@ -330,9 +335,7 @@ class ProtocolValidator:
         
         tool_type = tool_type.lower()
         
-        if tool_type == "ls":
-            cls._validate_ls_data(data, result)
-        elif tool_type == "glob":
+        if tool_type == "glob":
             cls._validate_glob_data(data, result)
         elif tool_type == "grep":
             cls._validate_grep_data(data, result)
@@ -340,35 +343,6 @@ class ProtocolValidator:
             cls._validate_read_data(data, result)
         elif tool_type == "edit":
             cls._validate_edit_data(data, result)
-    
-    @classmethod
-    def _validate_ls_data(cls, data: Dict, result: ValidationResult):
-        """验证 LS 工具 data 字段"""
-        # D001: data.entries 必须是数组
-        if "entries" not in data:
-            result.add_error("D001", "LS 工具 data 必须包含 'entries' 字段")
-            return
-        
-        entries = data["entries"]
-        if not isinstance(entries, list):
-            result.add_error("D001", f"data.entries 必须是数组，实际类型: {type(entries).__name__}")
-            return
-        
-        # D002-D003: 验证 entries 元素结构
-        valid_types = {"file", "dir", "link"}
-        for i, entry in enumerate(entries):
-            if not isinstance(entry, dict):
-                result.add_error("D002", f"entries[{i}] 必须是对象")
-                continue
-            
-            if "path" not in entry:
-                result.add_error("D002", f"entries[{i}] 缺少 'path' 字段")
-            
-            if "type" not in entry:
-                result.add_error("D002", f"entries[{i}] 缺少 'type' 字段")
-            elif entry["type"] not in valid_types:
-                result.add_error("D003", f"entries[{i}].type 值无效: '{entry['type']}'，"
-                               f"允许值: {valid_types}")
     
     @classmethod
     def _validate_glob_data(cls, data: Dict, result: ValidationResult):
@@ -500,7 +474,7 @@ def main():
             try:
                 parsed = json.loads(response_str)
                 print(json.dumps(parsed, ensure_ascii=False, indent=2))
-            except:
+            except Exception:
                 print(response_str[:500] + "..." if len(response_str) > 500 else response_str)
     
     sys.exit(0 if result.passed else 1)

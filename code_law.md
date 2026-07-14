@@ -13,10 +13,7 @@ limited to repository facts and invariants that affect implementation.
   orchestration, and built-in tools.
 - `extensions/` owns optional MCP, skills, and tracing integrations.
 - `prompts/` contains agent and tool prompt text.
-- `tests/` mirrors runtime, tools, extensions, scenarios, and experimental
-  behavior.
-- `experimental/teams/` is research code and is not part of the default
-  single-agent runtime.
+- `tests/` mirrors runtime, tools, extensions, and scenario behavior.
 - `docs/` contains design and portfolio documentation.
 - `demo/` contains deterministic harness demonstrations.
 - `memory/` and `tool-output/` are generated runtime data.

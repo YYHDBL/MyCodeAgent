@@ -110,7 +110,7 @@ class TestToolCallTree:
 
     def test_multiple_tool_calls(self, tool_tree):
         tool_tree.add_tool_call("Read", "a.txt")
-        tool_tree.add_tool_call("Write", "b.txt")
+        tool_tree.add_tool_call("Edit", "b.txt")
         tool_tree.add_tool_call("Grep", "pattern")
         assert len(tool_tree.get_tree().children) == 3
 
@@ -123,7 +123,7 @@ class TestToolCallTree:
         assert "Bash" in rendered
 
     def test_add_detail_writes_key_value(self, tool_tree):
-        branch = tool_tree.add_tool_call("Write", "output.txt")
+        branch = tool_tree.add_tool_call("Edit", "output.txt")
         tool_tree.add_detail("bytes", "1024", parent=branch)
         rendered = _render_to_str(tool_tree.get_tree())
         assert "bytes" in rendered
@@ -244,11 +244,11 @@ class TestEnhancedUI:
         console, sio = console_and_io
         enhanced_ui.console = console
         enhanced_ui.show_tool_call("Read", {"path": "a.txt"})
-        enhanced_ui.show_tool_call("Write", {"path": "b.txt"})
+        enhanced_ui.show_tool_call("Edit", {"path": "b.txt"})
         enhanced_ui.show_tool_tree()
         output = sio.getvalue()
         assert "Read" in output
-        assert "Write" in output
+        assert "Edit" in output
 
     def test_show_tool_tree_empty_is_silent(self, enhanced_ui, console_and_io):
         console, sio = console_and_io
@@ -321,10 +321,3 @@ class TestEnhancedUI:
     def test_stop_thinking_without_start_is_safe(self, enhanced_ui):
         elapsed = enhanced_ui.stop_thinking()
         assert elapsed == 0
-
-    def test_show_team_progress_no_state_is_silent(self, enhanced_ui, console_and_io):
-        console, sio = console_and_io
-        enhanced_ui.console = console
-        enhanced_ui.show_team_progress({})
-        output = sio.getvalue()
-        assert output == ""

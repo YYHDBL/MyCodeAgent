@@ -7,7 +7,7 @@ Follows the Universal Tool Response Protocol (顶层字段仅: status/data/text/
 Usage
 - Use Bash for build/test/run commands or system utilities that are not covered by other tools.
 - Do NOT use shell commands for listing/searching/reading files:
-  - Use LS for listing, Read for file contents, Grep for content search, Glob for filename search.
+  - Use Glob for listing and filename discovery, Read for file contents, and Grep for content search.
 - Avoid interactive commands (vim/nano/top/htop/ssh/git rebase -i, etc.) — they are blocked.
 - Prefer the `directory` parameter over `cd`. If you must use `cd`, it must stay within the project root.
 

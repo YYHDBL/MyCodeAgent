@@ -67,6 +67,7 @@ class ContextBuilder:
 
     tool_registry: "ToolRegistry"  # noqa: F821
     project_root: str
+    resource_root: Optional[str] = None
     system_prompt_override: Optional[str] = None
     mcp_tools_prompt: Optional[str] = None
     skills_prompt: Optional[str] = None
@@ -210,7 +211,7 @@ class ContextBuilder:
         """加载 L1 系统 prompt"""
         if self.system_prompt_override:
             return self.system_prompt_override
-        prompt_path = Path(self.project_root) / "prompts" / "agents_prompts" / "L1_system_prompt.py"
+        prompt_path = self._resource_root() / "prompts" / "agents_prompts" / "L1_system_prompt.py"
         if not prompt_path.exists():
             return ""
         data = runpy.run_path(str(prompt_path))
@@ -219,7 +220,7 @@ class ContextBuilder:
 
     def _load_tool_prompts(self) -> str:
         """加载所有工具的 prompt"""
-        prompts_dir = Path(self.project_root) / "prompts" / "tools_prompts"
+        prompts_dir = self._resource_root() / "prompts" / "tools_prompts"
         prompts: List[str] = []
         allowed_names = None
         if self.tool_prompt_allowlist is not None:
@@ -261,6 +262,9 @@ class ContextBuilder:
                 block.append(f"- {name}\n")
             prompts.append("".join(block))
         return "\n\n".join(p for p in prompts if p)
+
+    def _resource_root(self) -> Path:
+        return Path(self.resource_root or self.project_root)
 
     def _load_code_law(self) -> str:
         """加载 CODE_LAW.md（基于内容 hash 刷新缓存）"""
